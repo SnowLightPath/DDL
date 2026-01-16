@@ -1,0 +1,53 @@
+# Design-Doc Loop (DDL)
+
+Human and LLM share design across sessions.
+
+## The Problem
+
+- Sessions end
+- Context is lost
+- Previous discussions are forgotten
+
+## The Solution
+
+Use Design Documents as shared memory.
+
+```
+Human ←→ Design Document ←→ LLM
+                ↓
+              Code
+```
+
+## The Loop
+
+```
+      Draft
+        ↓
+Design Document ⇄ Code
+   (Realize ↓  ↑ Reflect)
+```
+
+- **Draft**: Idea → Design Document
+- **Realize**: Design Document → Code
+- **Reflect**: Code → Design Document
+
+Realize and Reflect are inverse functions.
+
+## Documentation
+
+- [English](./docs/en/design_philosophy.md)
+- [Japanese](./docs/ja/design_philosophy.md)
+
+## Commands (Optional)
+
+```bash
+cp examples/claude-commands/*.md your-project/.claude/commands/
+```
+
+- `/draft` - Idea → Design Document
+- `/realize` - Design Document → Code
+- `/reflect` - Code → Design Document
+
+## License
+
+[CC BY 4.0](./LICENSE) with publishing restriction
