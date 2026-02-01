@@ -1,14 +1,16 @@
-# Design-Doc Loop (DDL)
+# ✨ Design-Doc Loop (DDL)
 
-Human and LLM share design across sessions.
+> Human and LLM share design across sessions.
 
-## The Problem
+---
+
+## 🎯 The Problem
 
 - Sessions end
 - Context is lost
 - Previous discussions are forgotten
 
-## The Solution
+## 💡 The Solution
 
 Use Design Documents as shared memory.
 
@@ -18,7 +20,7 @@ Human ←→ Design Document ←→ LLM
               Code
 ```
 
-## The Loop
+## 🔄 The Loop
 
 ```
       Draft
@@ -27,27 +29,35 @@ Design Document ⇄ Code
    (Realize ↓  ↑ Reflect)
 ```
 
-- **Draft**: Idea → Design Document
-- **Realize**: Design Document → Code
-- **Reflect**: Code → Design Document
+| Phase | Flow |
+|-------|------|
+| 📝 **Draft** | Idea → Design Document |
+| ⚡ **Realize** | Design Document → Code |
+| 🪞 **Reflect** | Code → Design Document |
 
 Realize and Reflect are inverse functions.
 
-## Documentation
+---
+
+## 📚 Documentation
 
 - [English](./docs/en/design_philosophy.md)
-- [Japanese](./docs/ja/design_philosophy.md)
+- [日本語](./docs/ja/design_philosophy.md)
 
-## Commands (Optional)
+## 🛠️ Commands (Optional)
 
 ```bash
 cp examples/claude-commands/*.md your-project/.claude/commands/
 ```
 
-- `/draft` - Idea → Design Document
-- `/realize` - Design Document → Code
-- `/reflect` - Code → Design Document
+| Command | Action |
+|---------|--------|
+| `/draft` | Idea → Design Document |
+| `/realize` | Design Document → Code |
+| `/reflect` | Code → Design Document |
 
-## License
+---
+
+## 📄 License
 
 [CC BY 4.0](./LICENSE) with publishing restriction
