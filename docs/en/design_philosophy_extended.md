@@ -194,11 +194,18 @@ No tools, discipline only. Most lightweight.
 Incorporate Reflect into PR checklists.
 
 ### Option 4: Tool-Assisted
+
+**Claude Code:**
 ```
 /draft, /realize, /reflect
 ```
+See [examples/claude-commands/](../../examples/claude-commands/)
 
-See [examples/claude-commands/](../../examples/claude-commands/) for ready-to-use Claude Code slash commands.
+**OpenAI Codex:**
+```
+$draft, $realize, $reflect
+```
+See [examples/codex-skills/](../../examples/codex-skills/)
 
 **Warning:** Tools can become shackles. If they obstruct the Intent, discard them.
 

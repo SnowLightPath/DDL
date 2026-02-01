@@ -130,7 +130,7 @@ It's temporary notes for Human and LLM to continue sharing design across session
 
 Ultimately, code becomes the source of truth. Delete DDL documents when no longer needed.
 
-> **Tool-Assisted Option**: See [examples/claude-commands/](../../examples/claude-commands/) for slash commands.
+> **Tool-Assisted Option**: [Claude Code](../../examples/claude-commands/) | [OpenAI Codex](../../examples/codex-skills/)
 
 -----
 

@@ -2,6 +2,8 @@
 
 > Human and LLM share design across sessions.
 
+![DDL Overview](./assets/main.png)
+
 ---
 
 ## 🎯 The Problem
@@ -46,6 +48,8 @@ Realize and Reflect are inverse functions.
 
 ## 🛠️ Commands (Optional)
 
+### Claude Code
+
 ```bash
 cp examples/claude-commands/*.md your-project/.claude/commands/
 ```
@@ -55,6 +59,18 @@ cp examples/claude-commands/*.md your-project/.claude/commands/
 | `/draft` | Idea → Design Document |
 | `/realize` | Design Document → Code |
 | `/reflect` | Code → Design Document |
+
+### OpenAI Codex
+
+```bash
+cp -r examples/codex-skills/* your-project/.codex/skills/
+```
+
+| Skill | Action |
+|-------|--------|
+| `$draft` | Idea → Design Document |
+| `$realize` | Design Document → Code |
+| `$reflect` | Code → Design Document |
 
 ---
 
