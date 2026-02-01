@@ -5,7 +5,7 @@
 
 -----
 
-## Cognitive Foundation
+## 🧩 Cognitive Foundation
 
 ### Extended Mind（拡張された心）
 
@@ -47,7 +47,7 @@ Human ←→ Document ←→ LLM
 
 -----
 
-## Related Concepts
+## 🔗 Related Concepts
 
 DDLは既存のソフトウェア設計の方法論と重なる部分があります。
 
@@ -77,7 +77,7 @@ DDLは既存のソフトウェア設計の方法論と重なる部分があり�
 
 -----
 
-## Practical Examples
+## 💻 Practical Examples
 
 ### Example 1: 完全なループの流れ
 
@@ -138,7 +138,7 @@ DESIGN.md に追加:
 
 -----
 
-## When to Use DDL
+## 🎯 When to Use DDL
 
 ### 有効な状況
 - 複数セッションにまたがるプロジェクト
@@ -153,7 +153,7 @@ DESIGN.md に追加:
 
 -----
 
-## Granularity Guide
+## 📏 Granularity Guide
 
 ```
 DESIGN.md に書くべき:
@@ -171,7 +171,7 @@ DESIGN.md に書くべき:
 
 -----
 
-## Implementation Options
+## 🛠️ Implementation Options
 
 ### Option 1: Pure Discipline
 ツールなし、規律のみ。最も軽量。
@@ -202,7 +202,7 @@ See [examples/claude-commands/](../../examples/claude-commands/) for ready-to-us
 
 -----
 
-## Artifacts
+## 📦 Artifacts
 
 | Name      | Purpose            | 永続性 |
 |-----------|--------------------|--------|
@@ -212,7 +212,7 @@ See [examples/claude-commands/](../../examples/claude-commands/) for ready-to-us
 
 -----
 
-## Lifecycle of DDL Documents
+## ♻️ Lifecycle of DDL Documents
 
 ```
 生成 → 活用 → 統合 → 削除
@@ -222,7 +222,7 @@ DDLドキュメントが永続化しているのは設計がまだ安定して�
 
 -----
 
-## Changelog
+## 📝 Changelog
 
 | Date       | Change                    |
 |------------|---------------------------|

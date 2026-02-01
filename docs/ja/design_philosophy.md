@@ -1,6 +1,6 @@
 # Design-Doc Loop (DDL)
 
-## Intent
+## ✨ Intent
 
 LLMとセッションをまたいで設計方針を共有し続けることが目的です。
 
@@ -13,7 +13,7 @@ DDLドキュメントが成果物ではなく、設計がコードに反映さ�
 
 -----
 
-## Background: The Session Discontinuity Problem
+## 🎯 Background: The Session Discontinuity Problem
 
 人とLLMの協働には、記憶の切断の問題があります。
 
@@ -25,7 +25,7 @@ DDLドキュメントが成果物ではなく、設計がコードに反映さ�
 
 -----
 
-## Core Principle
+## 💡 Core Principle
 
 ```
 Human ←→ Document ←→ LLM
@@ -41,7 +41,7 @@ Human ←→ Document ←→ LLM
 
 -----
 
-## The Loop
+## 🔄 The Loop
 
 ```
       Draft
@@ -82,7 +82,7 @@ RealizeとReflectは概ね逆関数です。
 
 -----
 
-## Human と LLM の役割分担
+## 🤝 Human と LLM の役割分担
 
 DDLにおける我々とLLMは対等な関係です。
 
@@ -95,7 +95,7 @@ DDLにおける我々とLLMは対等な関係です。
 
 -----
 
-## 柔軟に進める
+## 🌊 柔軟に進める
 
 DDLは厳格な手順ではありません。
 
@@ -108,7 +108,7 @@ DDLは厳格な手順ではありません。
 
 -----
 
-## Anti-Patterns
+## ⚠️ Anti-Patterns
 
 | Pattern                      | Problem                          |
 |------------------------------|----------------------------------|
@@ -122,7 +122,7 @@ DDLは厳格な手順ではありません。
 
 -----
 
-## Summary
+## 📋 Summary
 
 DDLは厳密な方法論ではなく、目的やデザインの集まりです。
 
@@ -134,7 +134,7 @@ DDLは厳密な方法論ではなく、目的やデザインの集まりです�
 
 -----
 
-## Changelog
+## 📝 Changelog
 
 | Date       | Change                    |
 |------------|---------------------------|

@@ -1,6 +1,6 @@
 # Design-Doc Loop (DDL)
 
-## Intent
+## ✨ Intent
 
 Human and LLM continue to share design principles across sessions.
 
@@ -13,7 +13,7 @@ DDL documents are not final artifacts—they're temporary notes until the design
 
 -----
 
-## Background: The Session Discontinuity Problem
+## 🎯 Background: The Session Discontinuity Problem
 
 Collaborative development with LLMs has a discontinuity problem:
 
@@ -25,7 +25,7 @@ So we share code design as memos with LLMs.
 
 -----
 
-## Core Principle
+## 💡 Core Principle
 
 ```
 Human ←→ Document ←→ LLM
@@ -41,7 +41,7 @@ Ultimately, code becomes the source of truth. DDL documents get integrated into 
 
 -----
 
-## The Loop
+## 🔄 The Loop
 
 ```
       Draft
@@ -82,7 +82,7 @@ Realize and Reflect are roughly inverse functions.
 
 -----
 
-## Roles: Human and LLM
+## 🤝 Roles: Human and LLM
 
 In DDL, Human and LLM are equal partners.
 
@@ -95,7 +95,7 @@ Human controls the pace and corrects LLM's short-term bias.
 
 -----
 
-## Stay Flexible
+## 🌊 Stay Flexible
 
 DDL is not a strict procedure.
 
@@ -108,7 +108,7 @@ What matters is updating documents after the work (Reflect).
 
 -----
 
-## Anti-Patterns
+## ⚠️ Anti-Patterns
 
 | Pattern                      | Problem                          |
 |------------------------------|----------------------------------|
@@ -122,7 +122,7 @@ What matters is updating documents after the work (Reflect).
 
 -----
 
-## Summary
+## 📋 Summary
 
 DDL is not a strict methodology—it's a collection of purposes and designs.
 
@@ -134,7 +134,7 @@ Ultimately, code becomes the source of truth. Delete DDL documents when no longe
 
 -----
 
-## Changelog
+## 📝 Changelog
 
 | Date       | Change                    |
 |------------|---------------------------|

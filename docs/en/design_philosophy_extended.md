@@ -6,7 +6,7 @@
 
 -----
 
-## Cognitive Foundation
+## 🧩 Cognitive Foundation
 
 ### Extended Mind
 
@@ -49,7 +49,7 @@ vision
 
 -----
 
-## Related Concepts
+## 🔗 Related Concepts
 
 DDL overlaps with existing software design methodologies.
 
@@ -79,7 +79,7 @@ DDL overlaps with existing software design methodologies.
 
 -----
 
-## Practical Examples
+## 💻 Practical Examples
 
 ### Example 1: Complete Loop Flow
 
@@ -140,7 +140,7 @@ Added to DESIGN.md:
 
 -----
 
-## When to Use DDL
+## 🎯 When to Use DDL
 
 ### Effective Situations
 - Projects spanning multiple sessions
@@ -155,7 +155,7 @@ Added to DESIGN.md:
 
 -----
 
-## Granularity Guide
+## 📏 Granularity Guide
 
 ```
 What to write in DESIGN.md:
@@ -173,7 +173,7 @@ What not to write:
 
 -----
 
-## Implementation Options
+## 🛠️ Implementation Options
 
 ### Option 1: Pure Discipline
 No tools, discipline only. Most lightweight.
@@ -204,7 +204,7 @@ See [examples/claude-commands/](../../examples/claude-commands/) for ready-to-us
 
 -----
 
-## Artifacts
+## 📦 Artifacts
 
 | Name      | Purpose            | Persistence |
 |-----------|--------------------|-------------|
@@ -214,7 +214,7 @@ See [examples/claude-commands/](../../examples/claude-commands/) for ready-to-us
 
 -----
 
-## Lifecycle of DDL Documents
+## ♻️ Lifecycle of DDL Documents
 
 ```
 Creation → Use → Integration → Deletion
@@ -224,7 +224,7 @@ If DDL documents persist, it's evidence that the design isn't stable yet.
 
 -----
 
-## Changelog
+## 📝 Changelog
 
 | Date       | Change                    |
 |------------|---------------------------|
