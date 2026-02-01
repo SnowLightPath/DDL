@@ -51,7 +51,7 @@ vision
 
 ## Related Concepts
 
-DDL overlaps with existing methodologies.
+DDL overlaps with existing software design methodologies.
 
 ### Documentation-Driven Development (DocDD)
 

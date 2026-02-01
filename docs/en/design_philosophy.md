@@ -4,7 +4,7 @@
 
 Human and LLM continue to share design principles across sessions.
 
-DDL is not a strict process—it's a collection of Intents.
+DDL is not a rigid process—it's a collection of desired designs.
 
 DDL documents are not final artifacts—they're temporary notes until the design is reflected in code.
 
@@ -17,13 +17,11 @@ DDL documents are not final artifacts—they're temporary notes until the design
 
 Collaborative development with LLMs has a discontinuity problem:
 
-- Sessions end
-- Context doesn't carry over
-- Previous discussions are forgotten
+- Long contexts are difficult to carry over accurately, just like for us
+- Discussions are forgotten, just like for us
+- Sessions with LLMs can unexpectedly disappear
 
-We needed a solution.
-
-The answer is simple: use documents as shared memory between Human and LLM.
+So we share code design as memos with LLMs.
 
 -----
 
@@ -126,9 +124,9 @@ What matters is updating documents after the work (Reflect).
 
 ## Summary
 
-DDL is not a strict methodology—it's a collection of Intents.
+DDL is not a strict methodology—it's a collection of purposes and designs.
 
-It's temporary notes for Human and LLM to continue sharing design principles across sessions.
+It's temporary notes for Human and LLM to continue sharing design across sessions.
 
 Ultimately, code becomes the source of truth. Delete DDL documents when no longer needed.
 

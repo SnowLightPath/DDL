@@ -1,8 +1,7 @@
 # Design-Doc Loop (DDL) - Extended
 
 > このドキュメントは [design_philosophy.md](./design_philosophy.md) の補足資料です。
-> Core版で哲学を理解した後、必要に応じて参照してください。
-> すべてを読む必要はありません。
+> DDLのデザインを理解した後、必要に応じて参照してください。すべてを読む必要はありません。
 
 -----
 
@@ -50,7 +49,7 @@ Human ←→ Document ←→ LLM
 
 ## Related Concepts
 
-DDLは既存の方法論と重なる部分があります。
+DDLは既存のソフトウェア設計の方法論と重なる部分があります。
 
 ### Documentation-Driven Development (DocDD)
 
@@ -227,4 +226,4 @@ DDLドキュメントが永続化しているのは設計がまだ安定して�
 
 | Date       | Change                    |
 |------------|---------------------------|
-| 2025-01-16 | 初版 |
+| 2025-01-4 | 初版 |
