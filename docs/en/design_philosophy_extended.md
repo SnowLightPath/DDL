@@ -11,11 +11,11 @@ This document is intended for dictionary-style lookup.
 
 | Goal | Section |
 |------|---------|
-| Understand theoretical background | §1 Cognitive Foundations |
-| Compare with existing methodologies | §2 Related Methodologies |
-| Systematize operations | §3 Systematization Framework |
-| Get concrete examples | §4 Practical Examples |
-| Make adoption decisions | §5 Adoption Criteria |
+| Understand theoretical background | [§1 Cognitive Foundations](#-1-cognitive-foundations) |
+| Compare with existing methodologies | [§2 Related Methodologies](#-2-related-methodologies) |
+| Systematize operations | [§3 Systematization Framework](#-3-systematization-framework) |
+| Get concrete examples | [§4 Practical Examples](#-4-practical-examples) |
+| Make adoption decisions | [§5 Adoption Criteria](#-5-adoption-criteria) |
 
 No need to read cover-to-cover. Pick what you need.
 
@@ -431,26 +431,26 @@ Integration patterns:
 ## 📚 References
 
 ### Extended Mind
-- Clark, A., & Chalmers, D. (1998). The Extended Mind. *Analysis*, 58(1), 7-19.
-- Clark, A. (2008). *Supersizing the Mind*. Oxford University Press.
+- Clark, A., & Chalmers, D. (1998). [The Extended Mind](https://academic.oup.com/analysis/article-abstract/58/1/7/153111). *Analysis*, 58(1), 7-19.
+- Clark, A. (2008). [*Supersizing the Mind*](https://global.oup.com/academic/product/supersizing-the-mind-9780195333213). Oxford University Press.
 
 ### SECI Model
-- Nonaka, I., & Takeuchi, H. (1995). *The Knowledge-Creating Company*. Oxford University Press.
-- Nonaka, I., Toyama, R., & Konno, N. (2000). SECI, Ba and Leadership. *Long Range Planning*, 33(1).
-- Gourlay, S. (2006). Conceptualizing Knowledge Creation: A Critique of Nonaka's Theory. *Journal of Management Studies*, 43(7), 1415-1436.
+- Nonaka, I., & Takeuchi, H. (1995). [*The Knowledge-Creating Company*](https://global.oup.com/academic/product/the-knowledge-creating-company-9780195092691). Oxford University Press.
+- Nonaka, I., Toyama, R., & Konno, N. (2000). [SECI, Ba and Leadership](https://www.sciencedirect.com/science/article/abs/pii/S0024630199001156). *Long Range Planning*, 33(1), 5-34.
+- Gourlay, S. (2006). [Conceptualizing Knowledge Creation: A Critique of Nonaka's Theory](https://onlinelibrary.wiley.com/doi/abs/10.1111/j.1467-6486.2006.00637.x). *Journal of Management Studies*, 43(7), 1415-1436.
 
 ### Distributed Cognition
-- Hutchins, E. (1995). *Cognition in the Wild*. MIT Press.
-- Flor, N. V., & Hutchins, E. (1991). Analyzing Distributed Cognition in Software Teams. *Empirical Studies of Programmers: Fourth Workshop*.
+- Hutchins, E. (1995). [*Cognition in the Wild*](https://mitpress.mit.edu/9780262581462/cognition-in-the-wild/). MIT Press.
+- Flor, N. V., & Hutchins, E. (1991). Analyzing Distributed Cognition in Software Teams. *Empirical Studies of Programmers: Fourth Workshop*, 36-64.
 
 ### Human-AI Collaboration
-- Sabbah, J., & Li, F. (2025). When Humans and Large Language Models Collaborate, Problem-Finding Illuminates. *Innovation: Organization and Management*. DOI: 10.1080/14479338.2025.2504428
+- Sabbah, J., & Li, F. (2025). [When Humans and Large Language Models Collaborate, Problem-Finding Illuminates](https://doi.org/10.1080/14479338.2025.2504428). *Innovation: Organization and Management*.
 
 ### Related Methodologies
-- Knuth, D. (1984). Literate Programming. *The Computer Journal*, 27(2), 97-111.
-- Nygard, M. (2011). Documenting Architecture Decisions. *Cognitect Blog*.
-- Beck, K. (1999). *Extreme Programming Explained*. Addison-Wesley.
-- Meyer, B. (1992). Applying Design by Contract. *IEEE Computer*, 25(10), 40-51.
+- Knuth, D. (1984). [Literate Programming](https://academic.oup.com/comjnl/article/27/2/97/343244). *The Computer Journal*, 27(2), 97-111.
+- Nygard, M. (2011). [Documenting Architecture Decisions](https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions). *Cognitect Blog*.
+- Beck, K. (1999). [*Extreme Programming Explained*](https://www.oreilly.com/library/view/extreme-programming-explained/0201616416/). Addison-Wesley.
+- Meyer, B. (1992). [Applying Design by Contract](https://ieeexplore.ieee.org/document/161279/). *IEEE Computer*, 25(10), 40-51.
 
 -----
 
