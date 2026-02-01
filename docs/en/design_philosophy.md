@@ -138,4 +138,4 @@ Ultimately, code becomes the source of truth. Delete DDL documents when no longe
 
 | Date       | Change                    |
 |------------|---------------------------|
-| 2025-01-16 | Initial version |
+| 2026-01-04 | Initial version |
