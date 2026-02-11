@@ -48,57 +48,57 @@ Realize and Reflect are inverse functions.
 
 ## 🛠️ Commands (Optional)
 
-### Claude Code
+### 🤖 Claude Code
 
 ```bash
 cp examples/claude-commands/CLAUDE.md your-project/.claude/
 cp examples/claude-commands/*.md your-project/.claude/commands/
 ```
 
-**Core Loop:**
+**🔄 Core Loop:**
 
 | Command | Action |
 |---------|--------|
-| `/draft` | Idea → Design Document |
-| `/realize` | Design Document → Code |
-| `/reflect` | Code → Design Document |
+| 📝 `/draft` | Idea → Design Document |
+| ⚡ `/realize` | Design Document → Code |
+| 🪞 `/reflect` | Code → Design Document |
 
-**Support Commands:**
+**🧩 Support Commands:**
 
 | Command | Action |
 |---------|--------|
-| `/resonate` | Sync multilingual docs |
-| `/commit` | Verified git commit |
-| `/docs` | Documentation audit |
-| `/refactoring` | Code quality audit |
+| 🌊 `/resonate` | Sync multilingual docs |
+| 📦 `/commit` | Verified git commit |
+| 📚 `/docs` | Documentation audit |
+| 🔧 `/refactoring` | Code quality audit |
 
-Commands support Phase-based workflows, Detection Targets, STOP gates, and [Agent Teams](https://code.claude.com/docs/en/agent-teams) for parallel execution across scopes.
+> 🚀 Commands support Phase-based workflows, Detection Targets, STOP gates, and [Agent Teams](https://code.claude.com/docs/en/agent-teams) for parallel execution across scopes.
 
-### OpenAI Codex
+### 🧬 OpenAI Codex
 
 ```bash
 cp examples/codex-skills/AGENTS.md your-project/
 cp -r examples/codex-skills/*/  your-project/.codex/skills/
 ```
 
-**Core Loop:**
+**🔄 Core Loop:**
 
 | Skill | Action |
 |-------|--------|
-| `$draft` | Idea → Design Document |
-| `$realize` | Design Document → Code |
-| `$reflect` | Code → Design Document |
+| 📝 `$draft` | Idea → Design Document |
+| ⚡ `$realize` | Design Document → Code |
+| 🪞 `$reflect` | Code → Design Document |
 
-**Support Skills:**
+**🧩 Support Skills:**
 
 | Skill | Action |
 |-------|--------|
-| `$resonate` | Sync multilingual docs |
-| `$commit` | Verified git commit |
-| `$docs` | Documentation audit |
-| `$refactoring` | Code quality audit |
+| 🌊 `$resonate` | Sync multilingual docs |
+| 📦 `$commit` | Verified git commit |
+| 📚 `$docs` | Documentation audit |
+| 🔧 `$refactoring` | Code quality audit |
 
-Skills follow the same Phase-based structure with Detection Targets and STOP gates. Codex processes scopes sequentially.
+> Skills follow the same Phase-based structure with Detection Targets and STOP gates. Codex processes scopes sequentially.
 
 ---
 
