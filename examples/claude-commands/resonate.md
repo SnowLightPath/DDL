@@ -63,6 +63,20 @@ Apply approved changes to BOTH language versions.
 - Each agent: apply changes to its language version
 - Single pair: apply inline
 
+## Example
+
+```
+Human: /resonate docs/
+
+Claude: Comparing Lang A and Lang B...
+
+| # | Section | Type | Lang A | Lang B | Proposal |
+|---|---------|------|--------|--------|----------|
+| 1 | Intent | D1 Missing Nuance | "share design" | (loses "across sessions") | Lang A → "share design across sessions" |
+
+Apply approved changes?
+```
+
 ## Constraints
 
 - Proposals refine BOTH versions — neither language is strictly "source"
