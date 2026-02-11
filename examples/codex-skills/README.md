@@ -9,6 +9,10 @@ Example implementation of [Design-Doc Loop (DDL)](../../docs/en/design_philosoph
 cp -r examples/codex-skills/draft .codex/skills/
 cp -r examples/codex-skills/realize .codex/skills/
 cp -r examples/codex-skills/reflect .codex/skills/
+cp -r examples/codex-skills/resonate .codex/skills/
+cp -r examples/codex-skills/commit .codex/skills/
+cp -r examples/codex-skills/docs .codex/skills/
+cp -r examples/codex-skills/refactoring .codex/skills/
 
 # Copy AGENTS.md to project root
 cp examples/codex-skills/AGENTS.md .
@@ -16,11 +20,22 @@ cp examples/codex-skills/AGENTS.md .
 
 ## Skills
 
+### Core Loop
+
 | Skill | Intent |
 |-------|--------|
 | `$draft` | Capture ideal experience before implementation |
 | `$realize` | Manifest philosophy as working code |
 | `$reflect` | Update documents based on implementation |
+
+### Support Skills
+
+| Skill | Intent |
+|-------|--------|
+| `$resonate` | Synchronize multilingual document versions |
+| `$commit` | Record verified changes to repository |
+| `$docs` | Audit and fix documentation quality |
+| `$refactoring` | Audit and fix code quality |
 
 ## The Loop
 
@@ -30,6 +45,17 @@ cp examples/codex-skills/AGENTS.md .
 Design Document ⇄ Code
    (Realize ↓  ↑ Reflect)
 ```
+
+## Skill Structure
+
+Every skill follows the same pattern:
+
+1. **Phases** — ordered steps (INIT → READ → EXECUTE → VALIDATE)
+2. **Detection Targets** — automated checks at phase boundaries (D1–D7 per skill)
+3. **STOP gates** — mandatory human approval before mutating shared artifacts
+4. **Constraints** — invariants that must never be violated
+
+> **Note**: Codex processes all scopes **sequentially** (no parallel agent spawning). For parallel execution via Agent Swarm, see the [Claude Code commands](../claude-commands/).
 
 ## Philosophy
 

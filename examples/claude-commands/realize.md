@@ -1,29 +1,66 @@
 # realize
 
-Write code based on design principles.
+Manifest design philosophy as working code.
 
 ## Usage
 
-- `/realize` - Read DESIGN.md, await instruction
-- `/realize <feature>` - Implement specific feature
+- `/realize` — Read `DESIGN.md`, discuss what to build
+- `/realize <feature>` — Implement specific feature
 
-## Behavior
+## Phases
 
-1. Read DESIGN.md (required)
-2. Generate code honoring the principles
-3. If implementation would violate principles—stop and discuss
+### Phase 0: INIT
 
-## Example
+1. Read `CLAUDE.md`
+2. Read `DESIGN.md` — extract scopes, principles, validation commands
+3. If no `DESIGN.md` exists → refuse ("Run `/draft` first")
 
-```
-Human: /realize retry logic
+### Phase 1: READ
 
-Claude: Reading DESIGN.md...
-Principles: Transparency, Exception-based Errors
+**Swarm trigger**: 2+ scopes in `DESIGN.md`
 
-Implementing:
-- Transparent retry (user doesn't see)
-- Throws after max (consistent with exceptions)
+- Spawn `reader-{scope}` agents in parallel
+- Each agent: read its scope, summarize current state vs. design intent
+- Single scope: run inline without spawning
 
-[code]
-```
+Collect read results into a unified context.
+
+### Phase 2: IMPLEMENT
+
+**Swarm trigger**: 2+ independent scopes need changes
+
+- Spawn `impl-{scope}` agents in parallel batches
+- Each agent: generate code honoring the principles for its scope
+- Single scope: implement inline
+
+For each change, verify against principles:
+- If implementation would violate a principle → **STOP**: "Update the principle, or change the approach?"
+- Add rationale as comments where non-obvious
+
+### Phase 3: VALIDATE
+
+Run Detection Target scan (parallel):
+
+| ID | Name | Trigger |
+|----|------|---------|
+| D1 | Principle Violation | Code contradicts a `DESIGN.md` principle |
+| D2 | Ungrounded Feature | Feature exists in code but not in `DESIGN.md` |
+| D3 | Breaking Change | Public API or behavior changed without design update |
+| D4 | Missing Test | New behavior has no corresponding test |
+| D5 | Hardcoded Value | Magic numbers, secrets, or environment-specific values inline |
+
+**STOP gate on D1**: If Principle Violation detected → halt and present conflict to user.
+
+Run all validation commands defined in `DESIGN.md` in parallel.
+
+### Phase 4: REPORT
+
+1. Summarize what was implemented (files, scopes, key decisions)
+2. List any Detection Targets that fired and their resolution
+3. Suggest: "Run `/reflect` to verify alignment"
+
+## Constraints
+
+- Never implement without reading `DESIGN.md` first
+- Validation commands come from `DESIGN.md`, not hardcoded
+- If the philosophy is sound, the code follows naturally

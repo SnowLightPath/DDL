@@ -165,7 +165,10 @@ A framework for more systematic DDL operation. Use as an aid for understanding a
 
 ### 3.1 State Model
 
+DDL operates in two layers: the **Core Loop** and **Support Commands**.
+
 ```
+Core Loop:
         +-----------------------------------+
         |                                   |
         v                                   |
@@ -175,15 +178,29 @@ A framework for more systematic DDL operation. Use as an aid for understanding a
         |                           ^       |
         +---------------------------+-------+
                   (Skip OK)
+
+Support Commands (invokable at any point):
+    +--------+  +------+  +------------+  +---------+
+    |RESONATE|  |COMMIT|  |REFACTORING |  |  DOCS   |
+    +--------+  +------+  +------------+  +---------+
 ```
 
-You can transition from any state to any other. No strict ordering.
+The Core Loop drives design evolution. Support Commands maintain quality around it.
 
 | State | Entry Condition | Exit Condition |
 |-------|-----------------|----------------|
 | DRAFT | New feature or project start | Ideal experience articulated |
 | REALIZE | DESIGN.md exists | Code embodies principles |
 | REFLECT | Code written | Design updated |
+
+| Support Command | Purpose |
+|-----------------|---------|
+| RESONATE | Synchronize multilingual document versions |
+| COMMIT | Record verified changes to repository |
+| DOCS | Audit and fix documentation quality |
+| REFACTORING | Audit and fix code quality |
+
+You can transition from any Core Loop state to any other. No strict ordering. Support Commands can be invoked at any point.
 
 ### 3.2 Session Context Preservation
 
@@ -210,6 +227,69 @@ Perspectives to support Reflect:
 | DRIFT | Code violates principle | Update principle or fix code |
 | NEW_PATTERN | Undocumented pattern found | Add as principle |
 | OUTDATED | Principle without implementation | Delete or implement |
+
+These categories are a subset of the broader Detection Targets system (§3.4).
+
+### 3.4 Detection Targets
+
+Detection Targets are automated checks that run at phase boundaries within each command. They catch problems before they propagate.
+
+Each command defines its own D1–D7 targets specific to its purpose. Cross-cutting targets apply globally:
+
+| ID | Name | Trigger |
+|----|------|---------|
+| D1 | Vague Intent | Task description lacks measurable outcome |
+| D2 | Scope Creep | Change touches files outside stated scope |
+| D3 | Principle Violation | Action contradicts DESIGN.md principles |
+| D4 | Missing Validation | No verification step after mutation |
+| D5 | Leaked Specifics | Project-specific paths/commands hardcoded in framework files |
+| D6 | Silent Failure | Error swallowed without user notification |
+| D7 | Unreviewed Mutation | Shared artifact changed without STOP gate |
+
+Example: `/reflect` defines its own targets (D1 Drift, D2 New Pattern, D3 Outdated Principle, D4 Stale Reference, D5 Self-Contradiction) while also being subject to global targets.
+
+### 3.5 STOP Gates
+
+A STOP gate is a mandatory human approval point. The system halts and presents its findings before making changes to shared artifacts.
+
+```
+Phase N: Analysis complete
+    ↓
+[STOP gate] — Present report, wait for approval
+    ↓
+Phase N+1: Apply approved changes only
+```
+
+Rules:
+- STOP gates are **blocking** — never auto-proceed
+- Every command that mutates shared artifacts (DESIGN.md, code, docs) must have at least one STOP gate
+- The user can approve, reject, or modify each proposed change individually
+
+STOP gates embody DDL's core principle: Human controls the pace. LLMs propose, humans decide.
+
+### 3.6 Agent Swarm
+
+When a task spans multiple independent scopes, parallel agent execution reduces time and improves coverage.
+
+```
+Lead agent
+    ├── survey-{scope-1}  ──┐
+    ├── survey-{scope-2}  ──┤── Parallel execution
+    └── survey-{scope-3}  ──┘
+            ↓
+    Lead integrates results
+            ↓
+    Cross-scope analysis
+```
+
+Rules:
+- Spawn agents only when 2+ independent scopes exist
+- Agent naming: `{role}-{scope}` (e.g., `reader-backend`, `scanner-docs`)
+- Each agent reads only its assigned scope
+- Lead integrates results and runs cross-scope analysis
+- Swarm is optional — single-scope tasks run without spawning
+
+Scopes are defined in DESIGN.md, never hardcoded. This keeps the framework project-agnostic.
 
 -----
 
@@ -376,11 +456,34 @@ Incorporate Reflect into PR checklists. For team development.
 
 ### Option 4: Tool-Assisted
 
-Claude Code: `/draft`, `/realize`, `/reflect`
-→ [examples/claude-commands/](../../examples/claude-commands/)
+Commands implement DDL as Phase-based workflows with Detection Targets, STOP gates, and Agent Swarm support.
 
-OpenAI Codex: `$draft`, `$realize`, `$reflect`
-→ [examples/codex-skills/](../../examples/codex-skills/)
+**Core Loop** — the Draft → Realize → Reflect cycle:
+
+| Command | Intent |
+|---------|--------|
+| `/draft` | Write the user-side experience first |
+| `/realize` | Write code based on design principles |
+| `/reflect` | Update documents based on implementation |
+
+**Support Commands** — invokable at any point:
+
+| Command | Intent |
+|---------|--------|
+| `/resonate` | Synchronize multilingual document versions |
+| `/commit` | Record verified changes to repository |
+| `/docs` | Audit and fix documentation quality |
+| `/refactoring` | Audit and fix code quality |
+
+Each command follows the same structure:
+1. **Phases** — ordered steps (INIT → READ → EXECUTE → VALIDATE)
+2. **Detection Targets** — automated checks at phase boundaries (D1–D7 per command)
+3. **Swarm triggers** — parallel agent execution when 2+ scopes exist
+4. **STOP gates** — mandatory human approval before mutating shared artifacts
+5. **Constraints** — invariants that must never be violated
+
+Claude Code: → [examples/claude-commands/](../../examples/claude-commands/)
+OpenAI Codex: → [examples/codex-skills/](../../examples/codex-skills/)
 
 ### Option 5: Structured Schema
 
