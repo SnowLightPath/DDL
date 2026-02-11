@@ -23,7 +23,6 @@ cp examples/claude-commands/*.md .claude/commands/
 
 | Command | Intent |
 |---------|--------|
-| `/resonate` | Synchronize multilingual document versions |
 | `/commit` | Record verified changes to repository |
 | `/docs` | Audit and fix documentation quality |
 | `/refactoring` | Audit and fix code quality |

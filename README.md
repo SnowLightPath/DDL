@@ -67,7 +67,6 @@ cp examples/claude-commands/*.md your-project/.claude/commands/
 
 | Command | Action |
 |---------|--------|
-| 🌊 `/resonate` | Sync multilingual docs |
 | 📦 `/commit` | Verified git commit |
 | 📚 `/docs` | Documentation audit |
 | 🔧 `/refactoring` | Code quality audit |
@@ -93,7 +92,6 @@ cp -r examples/codex-skills/*/  your-project/.codex/skills/
 
 | Skill | Action |
 |-------|--------|
-| 🌊 `$resonate` | Sync multilingual docs |
 | 📦 `$commit` | Verified git commit |
 | 📚 `$docs` | Documentation audit |
 | 🔧 `$refactoring` | Code quality audit |

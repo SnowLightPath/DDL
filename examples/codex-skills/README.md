@@ -9,7 +9,6 @@ Example implementation of [Design-Doc Loop (DDL)](../../docs/en/design_philosoph
 cp -r examples/codex-skills/draft .codex/skills/
 cp -r examples/codex-skills/realize .codex/skills/
 cp -r examples/codex-skills/reflect .codex/skills/
-cp -r examples/codex-skills/resonate .codex/skills/
 cp -r examples/codex-skills/commit .codex/skills/
 cp -r examples/codex-skills/docs .codex/skills/
 cp -r examples/codex-skills/refactoring .codex/skills/
@@ -32,7 +31,6 @@ cp examples/codex-skills/AGENTS.md .
 
 | Skill | Intent |
 |-------|--------|
-| `$resonate` | Synchronize multilingual document versions |
 | `$commit` | Record verified changes to repository |
 | `$docs` | Audit and fix documentation quality |
 | `$refactoring` | Audit and fix code quality |

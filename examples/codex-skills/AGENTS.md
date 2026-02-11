@@ -7,7 +7,6 @@
 | `$draft` | Write the user-side experience first |
 | `$realize` | Write code based on design principles |
 | `$reflect` | Update documents based on implementation |
-| `$resonate` | Sync multilingual docs |
 | `$commit` | Git commit |
 | `$docs` | Audit and fix documentation |
 | `$refactoring` | Audit and fix code quality |
