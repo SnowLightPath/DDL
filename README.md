@@ -51,8 +51,11 @@ Realize and Reflect are inverse functions.
 ### Claude Code
 
 ```bash
+cp examples/claude-commands/CLAUDE.md your-project/.claude/
 cp examples/claude-commands/*.md your-project/.claude/commands/
 ```
+
+**Core Loop:**
 
 | Command | Action |
 |---------|--------|
@@ -60,17 +63,42 @@ cp examples/claude-commands/*.md your-project/.claude/commands/
 | `/realize` | Design Document → Code |
 | `/reflect` | Code → Design Document |
 
+**Support Commands:**
+
+| Command | Action |
+|---------|--------|
+| `/resonate` | Sync multilingual docs |
+| `/commit` | Verified git commit |
+| `/docs` | Documentation audit |
+| `/refactoring` | Code quality audit |
+
+Commands support Phase-based workflows, Detection Targets, STOP gates, and [Agent Teams](https://code.claude.com/docs/en/agent-teams) for parallel execution across scopes.
+
 ### OpenAI Codex
 
 ```bash
-cp -r examples/codex-skills/* your-project/.codex/skills/
+cp examples/codex-skills/AGENTS.md your-project/
+cp -r examples/codex-skills/*/  your-project/.codex/skills/
 ```
+
+**Core Loop:**
 
 | Skill | Action |
 |-------|--------|
 | `$draft` | Idea → Design Document |
 | `$realize` | Design Document → Code |
 | `$reflect` | Code → Design Document |
+
+**Support Skills:**
+
+| Skill | Action |
+|-------|--------|
+| `$resonate` | Sync multilingual docs |
+| `$commit` | Verified git commit |
+| `$docs` | Documentation audit |
+| `$refactoring` | Code quality audit |
+
+Skills follow the same Phase-based structure with Detection Targets and STOP gates. Codex processes scopes sequentially.
 
 ---
 
