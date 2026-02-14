@@ -2,7 +2,7 @@
 
 > Human and LLM share design across sessions.
 
-![DDL Overview](./assets/main.png)
+![DDL Overview](./assets/main.webp)
 
 ---
 
