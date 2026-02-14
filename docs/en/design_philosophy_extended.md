@@ -12,7 +12,7 @@ This document is intended for dictionary-style lookup.
 | Goal | Section |
 |------|---------|
 | Understand theoretical background | [§1 Cognitive Foundations](#-1-cognitive-foundations) |
-| Compare with existing methodologies | [§2 Related Methodologies](#-2-related-methodologies) (incl. SDD) |
+| Compare with existing methodologies | [§2 Related Methodologies](#-2-related-methodologies) |
 | Systematize operations | [§3 Systematization Framework](#-3-systematization-framework) |
 | Get concrete examples | [§4 Practical Examples](#-4-practical-examples) |
 | Make adoption decisions | [§5 Adoption Criteria](#-5-adoption-criteria) |
