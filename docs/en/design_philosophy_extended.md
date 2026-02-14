@@ -157,33 +157,62 @@ Formalized by Meyer in Eiffel (1986). Makes contracts (invariants) explicit.
 | Level | Code (executable) | Design policy (conceptual) |
 | Enforcement | Runtime checks | Discipline and dialogue |
 
-### 2.5 Spec-Driven Development (SDD)
+### 2.5 AI-Era Development Paradigms (2025)
 
-SDD emerged in 2025 as a response to AI-assisted coding. The core idea: write specifications in natural language, then let AI generate code from them.
+Three structured approaches to AI-assisted development emerged in 2025, each from a different origin and solving a different problem.
 
-SDD is not one methodology. Multiple tools (GitHub Spec Kit, Kiro, Tessl) label themselves SDD but differ significantly in workflow, scope, and ambition. Thoughtworks (2025) explicitly notes this fragmentation.
+| Origin | Paradigm | Core Problem |
+|--------|----------|-------------|
+| Product development | Spec-Driven Development (SDD) | AI generates wrong code without specs |
+| Enterprise development | AI-Driven Development Life Cycle (AI-DLC) | SDLC doesn't account for AI as primary executor |
+| Research / exploratory development | Design-Doc Loop (DDL) | Design intent is lost across sessions |
 
-| Aspect | SDD | DDL |
-|--------|-----|-----|
-| Problem addressed | AI code quality control | Cognitive continuity across sessions |
-| Direction | One-way (Spec→Code) | Bidirectional (Doc⇄Code) |
-| Role of human | Spec author; AI executes | Equal partner; roles shift per phase |
-| Starting point | Specification first | Experience first (Draft) |
-| Document lifecycle | Spec is the source of truth | Document is temporary; code becomes truth |
-| Feedback loop | Spec→Generate→Validate | Draft→Realize→Reflect |
+All three share a common background: unstructured AI coding ("vibe coding") doesn't scale. Each structures the Human-AI relationship differently.
 
-**What SDD solves that DDL doesn't address:**
-SDD provides structured guardrails for AI code generation—interface contracts, schema validation, drift detection. When the goal is "generate correct code from a spec," SDD tools are purpose-built.
+#### SDD in Brief
 
-**What DDL solves that SDD doesn't address:**
-- Session discontinuity (LLM forgets context between sessions)
-- Philosophy evolution (design principles change through implementation)
-- Bidirectional learning (code teaches back to design)
+Write specifications in natural language, then let AI generate code from them. Not one methodology—multiple tools (GitHub Spec Kit, Kiro, Tessl) differ significantly (Thoughtworks, 2025). The spec is the source of truth; code is derived.
 
-**Complementary use:**
-DDL's Realize phase can incorporate SDD-style specification. Writing a spec before implementation is compatible with DDL—it's one way to Realize. The difference: DDL expects the spec to be rewritten after implementation reveals new understanding (Reflect), while SDD treats the spec as authoritative.
+#### AI-DLC in Brief
 
-The "waterfall criticism" (Marmelab, 2025) applies to SDD's one-way flow but not to DDL's loop structure. DDL explicitly designs for the case where implementation contradicts the plan.
+AWS-originated methodology (Raja SP et al., 2025) that redesigns the entire SDLC with AI as primary executor. Three phases: Inception (mob elaboration → requirements), Construction (mob construction → code), Operation (AI-monitored deployment). Redefines agile terminology: sprints → bolts (hours/days), epics → units of work. Human role: validate and approve AI proposals.
+
+#### Structural Comparison
+
+| Aspect | SDD | AI-DLC | DDL |
+|--------|-----|--------|-----|
+| Problem | AI code quality | Development velocity | Cognitive continuity |
+| AI role | Generator | Teammate proposing artifacts | Equal partner |
+| Human role | Spec author | Validator / approver | Co-thinker; role shifts per phase |
+| Direction | Spec→Code (one-way) | AI proposes→Human approves | Doc⇄Code (bidirectional) |
+| Knowledge flow | Specification→Code | AI artifacts→Human review | Design philosophy⇄Implementation |
+| Iteration unit | Spec lifecycle | Bolt (hours/days) | Reflect loop (no fixed cadence) |
+| Document lifecycle | Spec is source of truth | Artifacts are process byproducts | Document is temporary; code becomes truth |
+| Scale assumption | Team with product spec | Enterprise (10–100+ engineers) | Small team / individual (1–5) |
+
+#### Session Discontinuity
+
+Each approach handles the session problem differently:
+
+| Paradigm | Strategy | Mechanism |
+|----------|----------|-----------|
+| SDD | Persist the spec | Code is regenerable from spec; spec survives sessions |
+| AI-DLC | Persist process artifacts | Requirements, stories, units stored in repository |
+| DDL | Design as shared memory | DESIGN.md is the cognitive bridge between sessions |
+
+SDD and AI-DLC treat persistence as a side effect of their workflow. DDL treats it as the central design problem.
+
+#### Complementary Use
+
+These paradigms occupy different layers and can coexist:
+
+- DDL's Realize phase can use SDD-style specification—writing a spec before implementation is one way to Realize
+- AI-DLC's mob elaboration can incorporate DDL's Reflect to feed implementation discoveries back into requirements
+- SDD and AI-DLC don't address philosophy evolution (design principles changing through implementation); DDL does
+
+The "waterfall criticism" (Marmelab, 2025) applies to SDD's one-way flow. AI-DLC mitigates this with short bolts. DDL sidesteps it entirely with its bidirectional loop.
+
+DDL's role fluidity works in small-team exploratory contexts. In enterprise contexts requiring audit trails and clear accountability, AI-DLC's fixed roles (AI proposes, human approves) may be more appropriate. This is not a weakness—it reflects different operating constraints.
 
 -----
 
@@ -577,11 +606,11 @@ Integration patterns:
 ### Human-AI Collaboration
 - Sabbah, J., & Li, F. (2025). [When Humans and Large Language Models Collaborate, Problem-Finding Illuminates](https://doi.org/10.1080/14479338.2025.2504428). *Innovation: Organization and Management*.
 
-### Spec-Driven Development
+### AI-Era Development Paradigms
 - Thoughtworks (2025). [Spec-Driven Development: Unpacking one of 2025's key new AI-assisted engineering practices](https://www.thoughtworks.com/en-us/insights/blog/agile-engineering-practices/spec-driven-development-unpacking-2025-new-engineering-practices).
 - Fowler, M. et al. (2025). [Understanding Spec-Driven-Development: Kiro, spec-kit, and Tessl](https://martinfowler.com/articles/exploring-gen-ai/sdd-3-tools.html). *martinfowler.com*.
-- InfoQ (2025). [Spec Driven Development: When Architecture Becomes Executable](https://www.infoq.com/articles/spec-driven-development/).
 - Marmelab (2025). [Spec-Driven Development: The Waterfall Strikes Back](https://marmelab.com/blog/2025/11/12/spec-driven-development-waterfall-strikes-back.html).
+- AWS (2025). [AI-Driven Development Life Cycle: Reimagining Software Engineering](https://aws.amazon.com/blogs/devops/ai-driven-development-life-cycle/). *AWS DevOps Blog*.
 
 ### Related Methodologies
 - Knuth, D. (1984). [Literate Programming](https://academic.oup.com/comjnl/article/27/2/97/343244). *The Computer Journal*, 27(2), 97-111.
@@ -595,5 +624,5 @@ Integration patterns:
 
 | Date | Change |
 |------|--------|
-| 2026-02-14 | Add §2.5 Spec-Driven Development (SDD) comparison |
+| 2026-02-14 | Expand §2.5 to three-way comparison (SDD / AI-DLC / DDL) |
 | 2026-01-04 | Initial version |

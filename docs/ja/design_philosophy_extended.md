@@ -157,33 +157,62 @@ Meyer が Eiffel（1986）で形式化。契約（不変条件）を明示しま
 | レベル | コード（実行可能） | 設計方針（概念） |
 | 強制力 | ランタイムチェック | 規律・対話 |
 
-### 2.5 Spec-Driven Development (SDD)
+### 2.5 AI時代の開発パラダイム（2025）
 
-SDD は 2025 年に AI 支援コーディングへの対応として登場しました。中核的なアイデア：自然言語で仕様を書き、AI にコードを生成させる。
+2025年に AI 支援開発への3つの構造的アプローチが登場しました。それぞれ異なる出自を持ち、異なる問題を解決します。
 
-SDD は単一の方法論ではありません。複数のツール（GitHub Spec Kit, Kiro, Tessl）が SDD を名乗っていますが、ワークフロー、スコープ、野心が大きく異なります。Thoughtworks (2025) はこの断片化を明示的に指摘しています。
+| 出自 | パラダイム | 中核的な問題 |
+|------|-----------|-------------|
+| プロダクト開発 | Spec-Driven Development (SDD) | 仕様なしでは AI が誤ったコードを生成する |
+| エンタープライズ開発 | AI-Driven Development Life Cycle (AI-DLC) | SDLC が AI を主要な実行者として想定していない |
+| 研究・探索的開発 | Design-Doc Loop (DDL) | セッション間で設計意図が失われる |
 
-| 観点 | SDD | DDL |
-|------|-----|-----|
-| 解決する問題 | AI コード品質の制御 | セッション間の認知的連続性 |
-| 方向性 | 一方向（Spec→Code） | 双方向（Doc⇄Code） |
-| 人間の役割 | 仕様の著者; AI が実行 | 対等なパートナー; フェーズごとに役割が変化 |
-| 起点 | 仕様が先 | 体験が先（Draft） |
-| ドキュメントのライフサイクル | 仕様が正（source of truth） | ドキュメントは一時的; コードが正になる |
-| フィードバックループ | Spec→Generate→Validate | Draft→Realize→Reflect |
+三者に共通する背景：非構造的な AI コーディング（"vibe coding"）はスケールしない。それぞれが Human-AI の関係を異なる形で構造化しています。
 
-**SDD が解決し、DDL が扱わない問題：**
-SDD は AI コード生成のための構造的ガードレールを提供します — インターフェース契約、スキーマ検証、ドリフト検出。「仕様から正しいコードを生成する」ことが目的なら、SDD ツールはそのために作られています。
+#### SDD の概要
 
-**DDL が解決し、SDD が扱わない問題：**
-- セッション断絶（LLM がセッション間で文脈を忘れる）
-- 設計哲学の進化（設計原則が実装を通じて変化する）
-- 双方向の学習（コードが設計にフィードバックする）
+自然言語で仕様を書き、AI にコードを生成させる。単一の方法論ではなく、複数のツール（GitHub Spec Kit, Kiro, Tessl）が大きく異なります（Thoughtworks, 2025）。仕様が正（source of truth）であり、コードはそこから導出されます。
 
-**補完的な利用：**
-DDL の Realize フェーズで SDD 的な仕様記述を取り入れることは可能です。実装前に仕様を書くことは DDL と矛盾しません — Realize の一つの方法です。違いは、DDL では実装が新たな理解を明らかにした後に仕様が書き換えられること（Reflect）を想定しているのに対し、SDD は仕様を権威的なものとして扱う点です。
+#### AI-DLC の概要
 
-「ウォーターフォール批判」（Marmelab, 2025）は SDD の一方向フローには当てはまりますが、DDL のループ構造には当てはまりません。DDL は実装が計画と矛盾するケースを明示的に設計しています。
+AWS 発の方法論（Raja SP ら, 2025）で、AI を主要な実行者として SDLC 全体を再設計しています。3フェーズ構成：Inception（モブエラボレーション → 要件）、Construction（モブコンストラクション → コード）、Operation（AI 監視下のデプロイ）。アジャイル用語を再定義：スプリント → ボルト（時間〜日単位）、エピック → 作業単位（Units of Work）。人間の役割は AI の提案を検証・承認することです。
+
+#### 構造的比較
+
+| 観点 | SDD | AI-DLC | DDL |
+|------|-----|--------|-----|
+| 問題 | AI コード品質 | 開発速度 | 認知的連続性 |
+| AI の役割 | 生成器 | 成果物を提案するチームメイト | 対等なパートナー |
+| 人間の役割 | 仕様の著者 | 検証者・承認者 | 共同思考者; フェーズごとに役割が変化 |
+| 方向性 | Spec→Code（一方向） | AI が提案→人間が承認 | Doc⇄Code（双方向） |
+| 知識の流れ | 仕様→コード | AI 成果物→人間のレビュー | 設計哲学⇄実装 |
+| イテレーション単位 | 仕様のライフサイクル | ボルト（時間〜日単位） | Reflect ループ（固定周期なし） |
+| ドキュメントのライフサイクル | 仕様が正 | 成果物はプロセスの副産物 | ドキュメントは一時的; コードが正になる |
+| 想定規模 | プロダクト仕様を持つチーム | エンタープライズ（10〜100人以上） | 少人数チーム・個人（1〜5人） |
+
+#### セッション断絶への対応
+
+各アプローチはセッション断絶問題に異なる方法で対処しています：
+
+| パラダイム | 戦略 | メカニズム |
+|-----------|------|-----------|
+| SDD | 仕様を永続化 | コードは仕様から再生成可能; 仕様がセッションを超えて存続 |
+| AI-DLC | プロセス成果物を永続化 | 要件・ストーリー・ユニットをリポジトリに保存 |
+| DDL | 設計を共有記憶として活用 | DESIGN.md がセッション間の認知的な橋渡し |
+
+SDD と AI-DLC は永続化をワークフローの副作用として扱っています。DDL はそれを中心的な設計問題として扱っています。
+
+#### 補完関係
+
+これらのパラダイムは異なるレイヤーに位置しており、共存可能です：
+
+- DDL の Realize フェーズで SDD 的な仕様記述を使える — 実装前に仕様を書くことは Realize の一つの方法
+- AI-DLC のモブエラボレーションに DDL の Reflect を組み込むことで、実装の発見を要件にフィードバックできる
+- SDD と AI-DLC は設計哲学の進化（実装を通じて設計原則が変化すること）を扱わない; DDL はそれを扱う
+
+「ウォーターフォール批判」（Marmelab, 2025）は SDD の一方向フローに当てはまります。AI-DLC は短いボルトでこれを軽減しています。DDL は双方向ループにより、この問題自体を回避しています。
+
+DDL の役割流動性は少人数の探索的開発の文脈で機能します。監査証跡と明確な説明責任が求められるエンタープライズ文脈では、AI-DLC の固定的な役割分担（AI が提案し、人間が承認する）の方が適切な場合があります。これは弱点ではなく、異なる運用制約を反映しています。
 
 -----
 
@@ -577,11 +606,11 @@ DDL ドキュメントが長期間残っているのは、設計がまだ安定�
 ### Human-AI Collaboration
 - Sabbah, J., & Li, F. (2025). [When Humans and Large Language Models Collaborate, Problem-Finding Illuminates](https://doi.org/10.1080/14479338.2025.2504428). *Innovation: Organization and Management*.
 
-### Spec-Driven Development
+### AI-Era Development Paradigms
 - Thoughtworks (2025). [Spec-Driven Development: Unpacking one of 2025's key new AI-assisted engineering practices](https://www.thoughtworks.com/en-us/insights/blog/agile-engineering-practices/spec-driven-development-unpacking-2025-new-engineering-practices).
 - Fowler, M. et al. (2025). [Understanding Spec-Driven-Development: Kiro, spec-kit, and Tessl](https://martinfowler.com/articles/exploring-gen-ai/sdd-3-tools.html). *martinfowler.com*.
-- InfoQ (2025). [Spec Driven Development: When Architecture Becomes Executable](https://www.infoq.com/articles/spec-driven-development/).
 - Marmelab (2025). [Spec-Driven Development: The Waterfall Strikes Back](https://marmelab.com/blog/2025/11/12/spec-driven-development-waterfall-strikes-back.html).
+- AWS (2025). [AI-Driven Development Life Cycle: Reimagining Software Engineering](https://aws.amazon.com/blogs/devops/ai-driven-development-life-cycle/). *AWS DevOps Blog*.
 
 ### Related Methodologies
 - Knuth, D. (1984). [Literate Programming](https://academic.oup.com/comjnl/article/27/2/97/343244). *The Computer Journal*, 27(2), 97-111.
@@ -595,5 +624,5 @@ DDL ドキュメントが長期間残っているのは、設計がまだ安定�
 
 | Date | Change |
 |------|--------|
-| 2026-02-14 | §2.5 Spec-Driven Development (SDD) 比較を追加 |
+| 2026-02-14 | §2.5 を三者比較（SDD / AI-DLC / DDL）に拡張 |
 | 2026-01-04 | 初版 |
