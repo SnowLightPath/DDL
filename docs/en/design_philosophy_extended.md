@@ -12,7 +12,7 @@ This document is intended for dictionary-style lookup.
 | Goal | Section |
 |------|---------|
 | Understand theoretical background | [§1 Cognitive Foundations](#-1-cognitive-foundations) |
-| Compare with existing methodologies | [§2 Related Methodologies](#-2-related-methodologies) |
+| Compare with existing methodologies | [§2 Related Methodologies](#-2-related-methodologies) (incl. SDD) |
 | Systematize operations | [§3 Systematization Framework](#-3-systematization-framework) |
 | Get concrete examples | [§4 Practical Examples](#-4-practical-examples) |
 | Make adoption decisions | [§5 Adoption Criteria](#-5-adoption-criteria) |
@@ -156,6 +156,34 @@ Formalized by Meyer in Eiffel (1986). Makes contracts (invariants) explicit.
 |--------|-----|-----|
 | Level | Code (executable) | Design policy (conceptual) |
 | Enforcement | Runtime checks | Discipline and dialogue |
+
+### 2.5 Spec-Driven Development (SDD)
+
+SDD emerged in 2025 as a response to AI-assisted coding. The core idea: write specifications in natural language, then let AI generate code from them.
+
+SDD is not one methodology. Multiple tools (GitHub Spec Kit, Kiro, Tessl) label themselves SDD but differ significantly in workflow, scope, and ambition. Thoughtworks (2025) explicitly notes this fragmentation.
+
+| Aspect | SDD | DDL |
+|--------|-----|-----|
+| Problem addressed | AI code quality control | Cognitive continuity across sessions |
+| Direction | One-way (Spec→Code) | Bidirectional (Doc⇄Code) |
+| Role of human | Spec author; AI executes | Equal partner; roles shift per phase |
+| Starting point | Specification first | Experience first (Draft) |
+| Document lifecycle | Spec is the source of truth | Document is temporary; code becomes truth |
+| Feedback loop | Spec→Generate→Validate | Draft→Realize→Reflect |
+
+**What SDD solves that DDL doesn't address:**
+SDD provides structured guardrails for AI code generation—interface contracts, schema validation, drift detection. When the goal is "generate correct code from a spec," SDD tools are purpose-built.
+
+**What DDL solves that SDD doesn't address:**
+- Session discontinuity (LLM forgets context between sessions)
+- Philosophy evolution (design principles change through implementation)
+- Bidirectional learning (code teaches back to design)
+
+**Complementary use:**
+DDL's Realize phase can incorporate SDD-style specification. Writing a spec before implementation is compatible with DDL—it's one way to Realize. The difference: DDL expects the spec to be rewritten after implementation reveals new understanding (Reflect), while SDD treats the spec as authoritative.
+
+The "waterfall criticism" (Marmelab, 2025) applies to SDD's one-way flow but not to DDL's loop structure. DDL explicitly designs for the case where implementation contradicts the plan.
 
 -----
 
@@ -549,6 +577,12 @@ Integration patterns:
 ### Human-AI Collaboration
 - Sabbah, J., & Li, F. (2025). [When Humans and Large Language Models Collaborate, Problem-Finding Illuminates](https://doi.org/10.1080/14479338.2025.2504428). *Innovation: Organization and Management*.
 
+### Spec-Driven Development
+- Thoughtworks (2025). [Spec-Driven Development: Unpacking one of 2025's key new AI-assisted engineering practices](https://www.thoughtworks.com/en-us/insights/blog/agile-engineering-practices/spec-driven-development-unpacking-2025-new-engineering-practices).
+- Fowler, M. et al. (2025). [Understanding Spec-Driven-Development: Kiro, spec-kit, and Tessl](https://martinfowler.com/articles/exploring-gen-ai/sdd-3-tools.html). *martinfowler.com*.
+- InfoQ (2025). [Spec Driven Development: When Architecture Becomes Executable](https://www.infoq.com/articles/spec-driven-development/).
+- Marmelab (2025). [Spec-Driven Development: The Waterfall Strikes Back](https://marmelab.com/blog/2025/11/12/spec-driven-development-waterfall-strikes-back.html).
+
 ### Related Methodologies
 - Knuth, D. (1984). [Literate Programming](https://academic.oup.com/comjnl/article/27/2/97/343244). *The Computer Journal*, 27(2), 97-111.
 - Nygard, M. (2011). [Documenting Architecture Decisions](https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions). *Cognitect Blog*.
@@ -561,4 +595,5 @@ Integration patterns:
 
 | Date | Change |
 |------|--------|
+| 2026-02-14 | Add §2.5 Spec-Driven Development (SDD) comparison |
 | 2026-01-04 | Initial version |

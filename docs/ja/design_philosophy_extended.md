@@ -12,7 +12,7 @@
 | 目的 | 参照セクション |
 |------|---------------|
 | 理論的背景を知りたい | [§1 認知科学的基盤](#-1-認知科学的基盤) |
-| 既存手法との関係を整理したい | [§2 関連する方法論](#-2-関連する方法論) |
+| 既存手法との関係を整理したい | [§2 関連する方法論](#-2-関連する方法論)（SDD含む） |
 | 運用を体系化したい | [§3 システム化フレームワーク](#-3-システム化フレームワーク) |
 | 具体例がほしい | [§4 実践例](#-4-実践例) |
 | 導入判断をしたい | [§5 適用判断](#-5-適用判断) |
@@ -156,6 +156,34 @@ Meyer が Eiffel（1986）で形式化。契約（不変条件）を明示しま
 |------|-----|-----|
 | レベル | コード（実行可能） | 設計方針（概念） |
 | 強制力 | ランタイムチェック | 規律・対話 |
+
+### 2.5 Spec-Driven Development (SDD)
+
+SDD は 2025 年に AI 支援コーディングへの対応として登場しました。中核的なアイデア：自然言語で仕様を書き、AI にコードを生成させる。
+
+SDD は単一の方法論ではありません。複数のツール（GitHub Spec Kit, Kiro, Tessl）が SDD を名乗っていますが、ワークフロー、スコープ、野心が大きく異なります。Thoughtworks (2025) はこの断片化を明示的に指摘しています。
+
+| 観点 | SDD | DDL |
+|------|-----|-----|
+| 解決する問題 | AI コード品質の制御 | セッション間の認知的連続性 |
+| 方向性 | 一方向（Spec→Code） | 双方向（Doc⇄Code） |
+| 人間の役割 | 仕様の著者; AI が実行 | 対等なパートナー; フェーズごとに役割が変化 |
+| 起点 | 仕様が先 | 体験が先（Draft） |
+| ドキュメントのライフサイクル | 仕様が正（source of truth） | ドキュメントは一時的; コードが正になる |
+| フィードバックループ | Spec→Generate→Validate | Draft→Realize→Reflect |
+
+**SDD が解決し、DDL が扱わない問題：**
+SDD は AI コード生成のための構造的ガードレールを提供します — インターフェース契約、スキーマ検証、ドリフト検出。「仕様から正しいコードを生成する」ことが目的なら、SDD ツールはそのために作られています。
+
+**DDL が解決し、SDD が扱わない問題：**
+- セッション断絶（LLM がセッション間で文脈を忘れる）
+- 設計哲学の進化（設計原則が実装を通じて変化する）
+- 双方向の学習（コードが設計にフィードバックする）
+
+**補完的な利用：**
+DDL の Realize フェーズで SDD 的な仕様記述を取り入れることは可能です。実装前に仕様を書くことは DDL と矛盾しません — Realize の一つの方法です。違いは、DDL では実装が新たな理解を明らかにした後に仕様が書き換えられること（Reflect）を想定しているのに対し、SDD は仕様を権威的なものとして扱う点です。
+
+「ウォーターフォール批判」（Marmelab, 2025）は SDD の一方向フローには当てはまりますが、DDL のループ構造には当てはまりません。DDL は実装が計画と矛盾するケースを明示的に設計しています。
 
 -----
 
@@ -549,6 +577,12 @@ DDL ドキュメントが長期間残っているのは、設計がまだ安定�
 ### Human-AI Collaboration
 - Sabbah, J., & Li, F. (2025). [When Humans and Large Language Models Collaborate, Problem-Finding Illuminates](https://doi.org/10.1080/14479338.2025.2504428). *Innovation: Organization and Management*.
 
+### Spec-Driven Development
+- Thoughtworks (2025). [Spec-Driven Development: Unpacking one of 2025's key new AI-assisted engineering practices](https://www.thoughtworks.com/en-us/insights/blog/agile-engineering-practices/spec-driven-development-unpacking-2025-new-engineering-practices).
+- Fowler, M. et al. (2025). [Understanding Spec-Driven-Development: Kiro, spec-kit, and Tessl](https://martinfowler.com/articles/exploring-gen-ai/sdd-3-tools.html). *martinfowler.com*.
+- InfoQ (2025). [Spec Driven Development: When Architecture Becomes Executable](https://www.infoq.com/articles/spec-driven-development/).
+- Marmelab (2025). [Spec-Driven Development: The Waterfall Strikes Back](https://marmelab.com/blog/2025/11/12/spec-driven-development-waterfall-strikes-back.html).
+
 ### Related Methodologies
 - Knuth, D. (1984). [Literate Programming](https://academic.oup.com/comjnl/article/27/2/97/343244). *The Computer Journal*, 27(2), 97-111.
 - Nygard, M. (2011). [Documenting Architecture Decisions](https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions). *Cognitect Blog*.
@@ -561,4 +595,5 @@ DDL ドキュメントが長期間残っているのは、設計がまだ安定�
 
 | Date | Change |
 |------|--------|
+| 2026-02-14 | §2.5 Spec-Driven Development (SDD) 比較を追加 |
 | 2026-01-04 | 初版 |
