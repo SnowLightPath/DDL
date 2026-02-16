@@ -4,56 +4,54 @@ Manifest design philosophy as working code.
 
 ## Usage
 
-- `/realize` — Read `DESIGN.md`, discuss what to build
+- `/realize` — Read `design.md`, discuss what to build
 - `/realize <feature>` — Implement specific feature
 
 ## Phases
 
 ### Phase 0: INIT
 
-1. Read `CLAUDE.md`
-2. Read `DESIGN.md` — extract scopes, principles, validation commands
-3. If no `DESIGN.md` exists → refuse ("Run `/draft` first")
+1. Read `.claude/commands/DDL-PROTOCOL-SKILL.md`
+2. Read `CLAUDE.md`
+3. Read `design.md` — extract scopes, principles, validation commands
+4. If no `design.md` exists → refuse ("Run `/draft` first")
 
 ### Phase 1: READ
 
-**Swarm trigger**: 2+ scopes in `DESIGN.md`
-
-- Spawn `reader-{scope}` agents in parallel
-- Each agent: read its scope, summarize current state vs. design intent
-- Single scope: run inline without spawning
++++SWARM: 2+ scopes in design.md
+  spawn: reader-{scope}
+  each: read its scope, summarize current state vs. design intent
 
 Collect read results into a unified context.
 
 ### Phase 2: IMPLEMENT
 
-**Swarm trigger**: 2+ independent scopes need changes
-
-- Spawn `impl-{scope}` agents in parallel batches
-- Each agent: generate code honoring the principles for its scope
-- Single scope: implement inline
++++SWARM: 2+ independent scopes need changes
+  spawn: impl-{scope}
+  each: generate code honoring the principles for its scope
 
 For each change, verify against principles:
-- If implementation would violate a principle → **STOP**: "Update the principle, or change the approach?"
+
++++STOP: on D1
+
 - Add rationale as comments where non-obvious
 
 ### Phase 3: VALIDATE
 
-Run Detection Target scan (parallel):
++++DETECT:
+  D1: Principle Violation — Code contradicts a design.md principle
+  D2: Ungrounded Feature — Feature exists in code but not in design.md
+  D3: Breaking Change — Public API or behavior changed without design update
+  D4: Missing Test — New behavior has no corresponding test
+  D5: Hardcoded Value — Magic numbers, secrets, or environment-specific values inline
 
-| ID | Name | Trigger |
-|----|------|---------|
-| D1 | Principle Violation | Code contradicts a `DESIGN.md` principle |
-| D2 | Ungrounded Feature | Feature exists in code but not in `DESIGN.md` |
-| D3 | Breaking Change | Public API or behavior changed without design update |
-| D4 | Missing Test | New behavior has no corresponding test |
-| D5 | Hardcoded Value | Magic numbers, secrets, or environment-specific values inline |
++++STOP: on D1
 
-**STOP gate on D1**: If Principle Violation detected → halt and present conflict to user.
-
-Run all validation commands defined in `DESIGN.md` in parallel.
+Run all validation commands defined in `design.md` in parallel.
 
 ### Phase 4: REPORT
+
++++STOP: always
 
 1. Summarize what was implemented (files, scopes, key decisions)
 2. List any Detection Targets that fired and their resolution
@@ -61,6 +59,6 @@ Run all validation commands defined in `DESIGN.md` in parallel.
 
 ## Constraints
 
-- Never implement without reading `DESIGN.md` first
-- Validation commands come from `DESIGN.md`, not hardcoded
-- If the philosophy is sound, the code follows naturally
++++NEVER: Implement without reading design.md first
++++NEVER: Hardcode validation commands — they come from design.md
++++NEVER: Force code against the philosophy — if it is sound, the code follows naturally

@@ -41,10 +41,10 @@ Design Document ⇄ Code
 Every command follows the same pattern:
 
 1. **Phases** — ordered steps (INIT → READ → EXECUTE → VALIDATE)
-2. **Detection Targets** — automated checks at phase boundaries (D1–D7 per command)
-3. **Swarm triggers** — parallel agent execution when 2+ scopes exist
-4. **STOP gates** — mandatory human approval before mutating shared artifacts
-5. **Constraints** — invariants that must never be violated
+2. **+++DETECT** — automated checks at phase boundaries (D1–D7 per command)
+3. **+++SWARM** — parallel agent execution when 2+ scopes exist
+4. **+++STOP** — mandatory human approval before mutating shared artifacts
+5. **+++NEVER** — invariants that must never be violated
 
 ## Philosophy
 

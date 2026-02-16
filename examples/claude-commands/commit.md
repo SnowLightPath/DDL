@@ -11,40 +11,38 @@ Record verified code changes to the repository.
 
 ### Phase 0: INIT
 
-1. Read `CLAUDE.md`
-2. Run `git status` and `git diff --staged` to understand current state
+1. Read `.claude/commands/DDL-PROTOCOL-SKILL.md`
+2. Read `CLAUDE.md`
+3. Read `design.md` — extract scopes, validation commands
+4. Run `git status` and `git diff --staged` to understand current state
 
 ### Phase 1: VERIFY
 
 Run validation checks in parallel:
 
-1. Run all validation commands defined in `DESIGN.md` (if any)
+1. Run all validation commands defined in `design.md` (if any)
 2. Secret scan: check staged files for API keys, tokens, credentials
 3. Check for untracked files that should be included
 
-Run Detection Target scan (parallel):
++++DETECT:
+  D1: Failing Check — A validation command from design.md fails
+  D2: Secret Leak — Staged file contains API key, token, or credential
+  D3: Unrelated Change — Staged files span unrelated scopes without justification
+  D4: Missing File — A new file is referenced but not staged
+  D5: AI Attribution — Commit message or code contains AI co-author tags
 
-| ID | Name | Trigger |
-|----|------|---------|
-| D1 | Failing Check | A validation command from `DESIGN.md` fails |
-| D2 | Secret Leak | Staged file contains API key, token, or credential |
-| D3 | Unrelated Change | Staged files span unrelated scopes without justification |
-| D4 | Missing File | A new file is referenced but not staged |
-| D5 | AI Attribution | Commit message or code contains AI co-author tags |
-
-**STOP on D1/D2**: If Failing Check or Secret Leak detected → halt immediately.
++++STOP: on D1
++++STOP: on D2
 
 ### Phase 2: REVIEW
 
-**STOP gate** — Present commit summary to user for approval.
++++STOP: always
 
-Summary format:
-```
++++Report:
 Files: <list of staged files>
-Scope: <affected scopes from DESIGN.md>
+Scope: <affected scopes from design.md>
 Message: <proposed commit message>
 Detection: <any targets that fired>
-```
 
 Wait for user approval before proceeding.
 
@@ -63,6 +61,6 @@ Only if user specified `remote` or explicitly requested:
 
 ## Constraints
 
-- NEVER add AI attribution to commit messages
-- NEVER skip STOP gate even for small changes
-- Validation commands come from `DESIGN.md`, not hardcoded
++++NEVER: Add AI attribution to commit messages
++++NEVER: Skip +++STOP even for small changes
++++NEVER: Hardcode validation commands — they come from design.md
