@@ -8,73 +8,158 @@ description: "Use this skill when executing or authoring DDL commands (draft, re
 Design-Doc Loop. Human-LLM collaborative workflow protocol.
 Commands are source of truth. This skill describes how to read and write them.
 
-## Quick Reference
+Markdown headings (`#`, `##`, `###`) mark document structure. `+++` marks behavioral directives inside phase bodies.
 
-| Directive | Syntax | Purpose |
-|-----------|--------|---------|
-| Phase | `### Phase <N>: <n>` | Ordered execution step (markdown heading) |
-| +++STOP | `+++STOP: always` or `+++STOP: on D<N>` | Block until human approves |
-| +++DETECT | `+++DETECT:` + `D<N>: <n> — <trigger>` | Parallel violation scan |
-| +++SWARM | `+++SWARM: <cond>` + `spawn:` + `each:` | Conditional parallel fork |
-| +++NEVER | `+++NEVER: <prohibition>` | Invariant constraint |
-| +++Report | `+++Report:` + table rows | Output template for STOP gate |
+---
 
-`+++` marks behavioral directives inside phase bodies. Phase headings stay as `###`.
+## 1. Directive Reference
 
-## Grammar (BNF)
+| Directive | Syntax | Count | Rule |
+|-----------|--------|-------|------|
+| `# header` | `# command-name` followed by one-line intent | 1 | Required |
+| `## usage` | `## Usage` followed by dash-list of invocations | 1+ lines | Required |
+| `### phase` | `### Phase 0: INIT`, `### Phase 1: SURVEY`, etc. | 4–6 | N starts at 0, ascending. Phase 0 INIT is required: load SKILL → CLAUDE.md → design.md in that order. Canonical names: INIT, SURVEY/READ, WORK/IMPLEMENT, REPORT, EXECUTE, VERIFY |
+| `+++STOP` | `+++STOP: always` or `+++STOP: on D1` | 1+ | `always` required at REPORT phase. `on D{n}` halts when that DETECT fires. Never auto-proceed past a STOP gate |
+| `+++DETECT` | `+++DETECT:` followed by indented `D1: name — trigger` lines | 5–7 | D starts at 1, ascending, unique per command. Trigger must be operationally verifiable. All targets run in parallel within their phase |
+| `+++SWARM` | `+++SWARM: condition` followed by `team:`, `spawn:`, `type:`, `max:`, `batch:`, `each:`, `collect:` block. See §2 | 0+ | Maps to Claude Code Agent Teams. Condition evaluated against design.md. Single scope or condition false: execute inline, no team |
+| `+++NEVER` | `+++NEVER: prohibition in imperative form` | 2–4 | Global constraints in CLAUDE.md. Local constraints in command file |
+| `+++Report` | `+++Report:` followed by markdown table rows | 0–1 | Output template presented to human at STOP gate |
 
-```bnf
-<command>    ::= <header> <usage> "## Phases" <phase>{4,6} "## Constraints" <never>{2,4}
-<header>     ::= "# " <command-name> NL <intent-line> NL
-<usage>      ::= "## Usage" NL <usage-line>+
-<phase>      ::= "### Phase " <N> ": " <n> NL <step>* <directive>*
-<directive>  ::= <stop> | <detect> | <swarm> | <report>
-<stop>       ::= "+++STOP: " ("always" | "on D" <N>) NL
-<detect>     ::= "+++DETECT:" NL ("  D" <N> ": " <n> " — " <trigger> NL){1,7}
-<swarm>      ::= "+++SWARM: " <cond> NL "  spawn: " <role> NL "  each: " <task> NL
-<never>      ::= "+++NEVER: " <text> NL
-<report>     ::= "+++Report:" NL <table-row>+
+---
+
+## 2. SWARM — Agent Teams Integration
+
++++SWARM is the bridge between DDL commands and Claude Code Agent Teams. When a phase contains +++SWARM and its condition is met, the executing agent becomes team lead and orchestrates independent teammates — each a full Claude Code session with its own context window, communicating via shared task list and direct messaging.
+
+### 2.1 Syntax
+
+```
++++SWARM: 2+ scopes in design.md
+  team: command-phase
+  spawn: role-{scope}
+  type: Explore
+  max: 5
+  batch: auto
+  each: |
+    Task description per teammate.
+    {scope} resolves to actual scope name at runtime.
+    Report findings to team-lead when done.
+  collect: lead synthesizes all teammate results
 ```
 
-## Element Rules
+### 2.2 Fields
 
-### Phase
-- N = 0 ascending. 4–6 per command.
-- **Phase 0: INIT is required.** Must read DDL-PROTOCOL-SKILL.md, then `CLAUDE.md`, then `design.md`.
-- Canonical names: INIT → SURVEY/READ/DISCOVER → WORK/IMPLEMENT/AUDIT → REPORT → EXECUTE/APPLY → VERIFY
+| Field | Position | Required | Description |
+|-------|----------|----------|-------------|
+| condition | first line after `+++SWARM:` | yes | Predicate evaluated against design.md. If false, skip SWARM and execute inline |
+| `team` | block body | yes | Agent Teams team name. Convention: `command-phase` (e.g. `reflect-survey`, `realize-execute`) |
+| `spawn` | block body | yes | Teammate name pattern. `{scope}` expands per matching scope in design.md |
+| `type` | block body | no | Agent type for teammates. Default: `general-purpose`. Options: `Explore` (read-only, fast), `Plan` (architecture), `Bash` (commands only), or plugin types (e.g. `compound-engineering:review:security-sentinel`) |
+| `max` | block body | no | Maximum concurrent teammates. Default: 5. Controls cost and resource usage |
+| `batch` | block body | no | How to group scopes when scope count exceeds `max`. Default: `auto`. See §2.3 |
+| `each` | block body | yes | Prompt template for each teammate. `{scope}` or `{scopes}` (when batched) resolve at runtime. Must instruct teammate to report results to team-lead |
+| `collect` | block body | no | How lead integrates results after all teammates complete. Default: synthesize and present in next phase |
 
-### +++STOP
-- Every command needs `+++STOP: always` at its REPORT phase.
-- `+++STOP: on D<N>` halts only when that detect target fires.
-- Never auto-proceed past a STOP gate.
+### 2.3 Dynamic Scaling
 
-### +++DETECT
-- N = 1 ascending, unique per command. 5–7 recommended.
-- Trigger must be operationally verifiable (not vague).
-- All targets run in parallel within their phase.
+The team lead evaluates scope count against `max` and `batch` to determine teammate allocation:
 
-### +++SWARM
-- Condition: typically `2+ scopes in design.md`.
-- `{scope}` resolves from design.md at runtime.
-- Role: `verb-{scope}` (e.g., `reader-backend`, `scanner-docs`).
-- Single scope → inline, no SWARM.
-- Lead integrates after all agents complete.
+```
+scope_count = number of design.md scopes matching condition
 
-### +++NEVER
-- 2–4 per command. Imperative form.
-- Global NEVERs in CLAUDE.md; command NEVERs in command file.
+if scope_count == 0:
+    skip SWARM entirely
+elif scope_count == 1:
+    execute inline, no team
+elif scope_count <= max:
+    1 teammate per scope
+elif batch == "auto":
+    lead groups related scopes by proximity/dependency
+    ceil(scope_count / max) scopes per teammate
+    {scope} in prompt becomes {scopes} (comma-separated list)
+elif batch == "none":
+    first `max` scopes run in parallel
+    remaining scopes queued as tasks, claimed when a teammate finishes
+elif batch == "by-tag":
+    group scopes by their tag in design.md
+    one teammate per tag group (capped at max)
+```
 
-## Command Template
+| scope_count | max | batch | Result |
+|-------------|-----|-------|--------|
+| 0 | — | — | Skip SWARM |
+| 1 | — | — | Inline, no team |
+| 3 | 5 | any | 3 teammates, 1 scope each |
+| 8 | 5 | `auto` | 5 teammates, lead groups 8 scopes into 5 batches |
+| 8 | 5 | `none` | 5 teammates start, 3 scopes queued as tasks |
+| 12 | 4 | `by-tag` | Scopes grouped by tag, up to 4 teammates |
+
+### 2.4 Execution Lifecycle
+
+When the agent encounters `+++SWARM` and condition is true with 2+ scopes:
+
+**Step 1 — Create team**
+
+```
+Teammate({ operation: "spawnTeam", team_name: "{team}" })
+```
+
+**Step 2 — Scale**
+
+Apply §2.3 logic. Determine teammate count and scope assignment. If batching with `batch: none` and overflow scopes exist, create tasks for them:
+
+```
+TaskCreate({ subject: "Process {scope}", description: "{each with scope resolved}" })
+```
+
+**Step 3 — Spawn teammates**
+
+For each teammate determined in Step 2:
+
+```
+Task({
+  team_name: "{team}",
+  name: "{spawn with scope resolved}",
+  subagent_type: "{type}",
+  prompt: "{each with scope/scopes resolved}",
+  run_in_background: true
+})
+```
+
+Note: `subagent_type` is the Claude Code API parameter name for spawning into Agent Teams. The spawned instances are teammates — they communicate via shared task list and direct messaging, not fire-and-forget subagents.
+
+**Step 4 — Monitor**
+
+Lead monitors teammate progress via inbox and task list. If `batch: none` with queued tasks, teammates self-claim from task list as they complete their initial scope.
+
+**Step 5 — Collect**
+
+Lead executes `collect` logic: synthesize findings from all teammates into unified output for the next phase.
+
+**Step 6 — Shutdown**
+
+```
+// Request shutdown for each teammate
+Teammate({ operation: "requestShutdown", target_agent_id: "{teammate}" })
+// Wait for each: {"type": "shutdown_approved"}
+
+// Clean up team resources
+Teammate({ operation: "cleanup" })
+```
+
+---
+
+## 3. Command Template
 
 ```markdown
-# <command-name>
+# command-name
 
-<One-line intent.>
+One-line intent.
 
 ## Usage
 
-- `/<command>` — <default>
-- `/<command> <arg>` — <specific>
+- `/command` — default behavior
+- `/command arg` — specific behavior
 
 ## Phases
 
@@ -82,123 +167,60 @@ Commands are source of truth. This skill describes how to read and write them.
 
 1. Read `.claude/commands/DDL-PROTOCOL-SKILL.md`
 2. Read `CLAUDE.md`
-3. Read `design.md` — extract <relevant items>
-4. If no `design.md` → <fallback>
+3. Read `design.md` — extract relevant items
+4. If no `design.md` → fallback behavior
 
-### Phase 1: <SURVEY/READ/DISCOVER>
+### Phase 1: SURVEY
 
 +++SWARM: 2+ scopes in design.md
-  spawn: <role>-{scope}
-  each: <task per scope>
+  team: command-survey
+  spawn: reader-{scope}
+  type: Explore
+  max: 5
+  batch: auto
+  each: |
+    Scan {scope} for relevant items.
+    Report findings to team-lead when done.
+  collect: lead merges all scope findings
 
-### Phase 2: <WORK/IMPLEMENT/AUDIT>
+### Phase 2: WORK
 
-<Core activity>
+Core activity here.
 
 +++DETECT:
-  D1: <n> — <trigger>
-  D2: <n> — <trigger>
-  D3: <n> — <trigger>
-  D4: <n> — <trigger>
-  D5: <n> — <trigger>
+  D1: name — trigger condition
+  D2: name — trigger condition
+  D3: name — trigger condition
+  D4: name — trigger condition
+  D5: name — trigger condition
 
-### Phase 3: <REPORT>
+### Phase 3: REPORT
 
 +++STOP: always
 
 +++Report:
-| # | <col> | <col> | <col> |
+| # | col | col | col |
 
-### Phase 4: <EXECUTE/APPLY> (if applicable)
+### Phase 4: EXECUTE (if applicable)
 
 +++SWARM: 2+ approved changes across scopes
-  spawn: <role>-{scope}
-  each: apply approved changes
+  team: command-execute
+  spawn: writer-{scope}
+  type: general-purpose
+  max: 5
+  batch: auto
+  each: |
+    Apply approved changes to {scope}.
+    Report completion to team-lead when done.
+  collect: lead verifies all changes applied
 
-### Phase 5: <VERIFY> (if applicable)
+### Phase 5: VERIFY (if applicable)
 
 Re-scan. Summarize. Suggest next command.
 
 ## Constraints
 
-+++NEVER: <prohibition>
-+++NEVER: <prohibition>
-+++NEVER: <prohibition>
++++NEVER: prohibition
++++NEVER: prohibition
++++NEVER: prohibition
 ```
-
-## Project File Structure
-
-```
-CLAUDE.md          ← Project config, command registry, global DETECT/NEVER
-  ↑
-commands/*.md      ← Individual commands using +++directives
-  ↑
-design.md          ← Scopes, principles, validation commands
-```
-
-Each layer references only its immediate parent.
-
-## design.md Contract
-
-| Item | Used by | How |
-|------|---------|-----|
-| Scopes | All | +++SWARM spawn, parallelization |
-| Principles | realize, reflect, draft | +++DETECT triggers, +++STOP conditions |
-| Validation cmds | realize, refactoring, commit | VERIFY phase execution |
-| Doc paths | docs, resonate | Discovery phase |
-
-If absent: `/draft` asks or defaults. `/realize`, `/reflect` refuse. Others scan project root.
-
-## CLAUDE.md Template
-
-```markdown
-# <Project Name>
-
-## Protocol
-→ DDL-PROTOCOL
-→ Read `.claude/commands/DDL-PROTOCOL-SKILL.md` before executing any command
-
-## Commands
-| Command | Intent |
-|---------|--------|
-
-## Structure
-- <project layout>
-
-## Detection Targets
-+++DETECT:
-  D1: <n> — <trigger>
-  D2: <n> — <trigger>
-
-## Behavior
-### On session start
-### On any task
-### On swarm
-### On completion
-
-## Constraints
-+++NEVER: <prohibition>
-+++NEVER: <prohibition>
-```
-
-## Execution Checklist
-
-When executing a DDL command:
-
-1. **INIT**: Read DDL-PROTOCOL-SKILL.md → Read CLAUDE.md → Read design.md → Extract scopes/principles
-2. **SURVEY**: If 2+ scopes → SWARM; else inline
-3. **WORK**: Execute core task. Run +++DETECT in parallel. If +++STOP: on D<N> fires → halt, present to human
-4. **REPORT**: Present +++Report table. +++STOP: always. Wait for human
-5. **EXECUTE** (if approved): SWARM if multi-scope, else inline
-6. **VERIFY** (if applicable): Re-scan, confirm, suggest next command
-
-When authoring a new DDL command:
-
-1. Write one-line intent
-2. Define 4–6 phases starting with INIT
-3. Add 5–7 +++DETECT targets with verifiable triggers
-4. Add +++STOP: always at REPORT (mandatory)
-5. Add conditional +++STOP: on D<N> where human judgment needed
-6. Add +++SWARM at phases with parallelizable scopes
-7. Add 2–4 +++NEVER constraints
-8. Verify: Phase 0 reads DDL-PROTOCOL-SKILL.md, then CLAUDE.md, then design.md

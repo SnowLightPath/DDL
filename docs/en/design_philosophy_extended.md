@@ -324,7 +324,7 @@ Rules:
 
 STOP gates embody DDL's core principle: Human controls the pace. LLMs propose, humans decide.
 
-### 3.6 Agent Swarm
+### 3.6 Agent Teams (SWARM)
 
 When a task spans multiple independent scopes, parallel agent execution reduces time and improves coverage.
 
@@ -513,7 +513,7 @@ Incorporate Reflect into PR checklists. For team development.
 
 ### Option 4: Tool-Assisted
 
-Commands implement DDL as Phase-based workflows with Detection Targets, STOP gates, and Agent Swarm support.
+Commands implement DDL as Phase-based workflows with Detection Targets, STOP gates, and Agent Teams (+++SWARM) support.
 
 **Core Loop** — the Draft → Realize → Reflect cycle:
 
@@ -535,7 +535,7 @@ Commands implement DDL as Phase-based workflows with Detection Targets, STOP gat
 Each command follows the same structure:
 1. **Phases** — ordered steps (INIT → READ → EXECUTE → VALIDATE)
 2. **Detection Targets** — automated checks at phase boundaries (D1–D7 per command)
-3. **Swarm triggers** — parallel agent execution when 2+ scopes exist
+3. **+++SWARM** — Agent Teams integration for parallel execution when 2+ scopes exist
 4. **STOP gates** — mandatory human approval before mutating shared artifacts
 5. **Constraints** — invariants that must never be violated
 
