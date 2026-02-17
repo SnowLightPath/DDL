@@ -19,16 +19,28 @@ Manifest design philosophy as working code.
 ### Phase 1: READ
 
 +++SWARM: 2+ scopes in design.md
+  team: realize-read
   spawn: reader-{scope}
-  each: read its scope, summarize current state vs. design intent
-
-Collect read results into a unified context.
+  type: Explore
+  max: 5
+  batch: auto
+  each: |
+    Read its scope, summarize current state vs. design intent.
+    Report findings to team-lead when done.
+  collect: lead collects read results into a unified context
 
 ### Phase 2: IMPLEMENT
 
 +++SWARM: 2+ independent scopes need changes
+  team: realize-implement
   spawn: impl-{scope}
-  each: generate code honoring the principles for its scope
+  type: general-purpose
+  max: 5
+  batch: auto
+  each: |
+    Generate code honoring the principles for its scope.
+    Report completion to team-lead when done.
+  collect: lead verifies each implementation against principles
 
 For each change, verify against principles:
 

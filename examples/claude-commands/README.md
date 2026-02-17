@@ -38,11 +38,11 @@ Design Document ⇄ Code
 
 ## Command Structure
 
-Every command follows the same pattern:
+Every command follows the DDL-PROTOCOL defined in `DDL-PROTOCOL-SKILL.md`:
 
 1. **Phases** — ordered steps (INIT → READ → EXECUTE → VALIDATE)
 2. **+++DETECT** — automated checks at phase boundaries (D1–D7 per command)
-3. **+++SWARM** — parallel agent execution when 2+ scopes exist
+3. **+++SWARM** — Agent Teams integration (`team:`, `spawn:`, `type:`, `each:`, `collect:`) when 2+ scopes exist
 4. **+++STOP** — mandatory human approval before mutating shared artifacts
 5. **+++NEVER** — invariants that must never be violated
 

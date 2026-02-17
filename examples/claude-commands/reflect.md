@@ -19,12 +19,17 @@ Update documents based on implementation results.
 ### Phase 1: READ
 
 +++SWARM: 2+ scopes in design.md
+  team: reflect-read
   spawn: reader-{scope}
-  each: scan its scope for current implementation state
+  type: Explore
+  max: 5
+  batch: auto
+  each: |
+    Scan its scope for current implementation state.
+    Report findings to team-lead when done.
+  collect: lead collects read results into a unified context
 
 Additionally: spawn `reader-design` to self-inspect `design.md` for internal consistency.
-
-Collect read results into a unified context.
 
 ### Phase 2: COMPARE
 
@@ -58,8 +63,15 @@ Wait for user to approve, reject, or modify each recommendation.
 ### Phase 4: APPLY
 
 +++SWARM: 2+ approved changes across scopes
+  team: reflect-apply
   spawn: writer-{scope}
-  each: apply only approved changes to its scope
+  type: general-purpose
+  max: 5
+  batch: auto
+  each: |
+    Apply only approved changes to its scope.
+    Report completion to team-lead when done.
+  collect: lead summarizes what changed
 
 After applying:
 1. Summarize what changed

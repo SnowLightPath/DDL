@@ -19,10 +19,15 @@ Write the ideal experience before implementation exists.
 ### Phase 1: UNDERSTAND
 
 +++SWARM: 2+ scopes in design.md
+  team: draft-survey
   spawn: survey-{scope}
-  each: scan its scope for existing behavior, APIs, user touchpoints
-
-Collect survey results into a unified context.
+  type: Explore
+  max: 5
+  batch: auto
+  each: |
+    Scan its scope for existing behavior, APIs, user touchpoints.
+    Report findings to team-lead when done.
+  collect: lead collects survey results into a unified context
 
 ### Phase 2: DRAFT
 

@@ -324,7 +324,7 @@ Phase N+1: 承認された変更のみ適用
 
 STOP gate は DDL の核心原則を具現化しています：我々がペースを制御する。LLM は提案し、人間が決定する。
 
-### 3.6 Agent Swarm
+### 3.6 Agent Teams (SWARM)
 
 タスクが複数の独立したスコープにまたがる場合、エージェントの並列実行で時間を短縮し、カバレッジを向上させます。
 
@@ -513,7 +513,7 @@ PR チェックリストに Reflect を組み込む。チーム開発向け。
 
 ### Option 4: Tool-Assisted
 
-コマンドは DDL を Phase ベースのワークフローとして実装し、Detection Targets、STOP gates、Agent Swarm をサポートします。
+コマンドは DDL を Phase ベースのワークフローとして実装し、Detection Targets、STOP gates、Agent Teams (+++SWARM) をサポートします。
 
 **コアループ** — Draft → Realize → Reflect サイクル：
 
@@ -535,7 +535,7 @@ PR チェックリストに Reflect を組み込む。チーム開発向け。
 各コマンドは共通の構造に従います：
 1. **Phases** — 順序付きステップ（INIT → READ → EXECUTE → VALIDATE）
 2. **Detection Targets** — フェーズ境界の自動チェック（コマンドごとに D1–D7）
-3. **Swarm triggers** — 2つ以上のスコープが存在する場合の並列エージェント実行
+3. **+++SWARM** — 2つ以上のスコープが存在する場合のAgent Teams並列実行
 4. **STOP gates** — 共有アーティファクト変更前の必須人間承認
 5. **Constraints** — 決して違反してはならない不変条件
 

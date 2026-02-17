@@ -53,7 +53,7 @@ Every skill follows the same pattern:
 3. **STOP gates** — mandatory human approval before mutating shared artifacts
 4. **Constraints** — invariants that must never be violated
 
-> **Note**: Codex processes all scopes **sequentially** (no parallel agent spawning). For parallel execution via Agent Swarm, see the [Claude Code commands](../claude-commands/).
+> **Note**: Codex processes all scopes **sequentially** (no parallel agent spawning). For parallel execution via Agent Teams (+++SWARM), see the [Claude Code commands](../claude-commands/).
 
 ## Philosophy
 
