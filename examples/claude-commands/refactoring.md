@@ -18,6 +18,7 @@ Audit and fix code quality issues.
 
 ### Phase 1: SCAN
 
+```
 +++SWARM: 2+ scopes in design.md
   team: refactoring-scan
   spawn: scanner-{scope}
@@ -28,6 +29,7 @@ Audit and fix code quality issues.
     Analyze its scope for code quality issues.
     Report findings to team-lead when done.
   collect: lead collects scan results for cross-scope analysis
+```
 
 +++DETECT:
   D1: Dead Code — Functions, variables, or files never referenced
@@ -52,6 +54,7 @@ Wait for user to approve, reject, or modify each fix.
 
 ### Phase 3: EXECUTE
 
+```
 +++SWARM: 2+ approved fixes across independent scopes
   team: refactoring-execute
   spawn: fixer-{scope}
@@ -62,6 +65,7 @@ Wait for user to approve, reject, or modify each fix.
     Apply approved refactors to its scope.
     Report completion to team-lead when done.
   collect: lead verifies refactors and runs validation
+```
 
 ### Phase 4: VERIFY
 

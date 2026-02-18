@@ -50,6 +50,7 @@ Every command defines its own D1–D7. Cross-cutting targets below apply globall
 
 ### On swarm
 
+```
 +++SWARM: 2+ independent scopes exist
   team: {command}-{phase}
   spawn: {role}-{scope}
@@ -58,6 +59,7 @@ Every command defines its own D1–D7. Cross-cutting targets below apply globall
     Read only its assigned scope.
     Report findings to team-lead when done.
   collect: lead integrates results and runs cross-scope analysis
+```
 
 ### On completion
 
