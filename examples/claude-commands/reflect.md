@@ -1,6 +1,6 @@
 # reflect
 
-Update documents based on implementation results.
+Detect divergence between implementation and design.md, then reconcile.
 
 ## Usage
 
@@ -27,12 +27,10 @@ Update documents based on implementation results.
   max: 5
   batch: auto
   each: |
-    Scan its scope for current implementation state.
+    Scan {scope} for current implementation state.
     Report findings to team-lead when done.
-  collect: lead collects read results into a unified context
+  collect: lead also inspects design.md for internal consistency, then integrates all results
 ```
-
-Additionally: spawn `reader-design` to self-inspect `design.md` for internal consistency.
 
 ### Phase 2: COMPARE
 
@@ -74,7 +72,7 @@ Wait for user to approve, reject, or modify each recommendation.
   max: 5
   batch: auto
   each: |
-    Apply only approved changes to its scope.
+    Apply only approved changes to {scope}.
     Report completion to team-lead when done.
   collect: lead summarizes what changed
 ```

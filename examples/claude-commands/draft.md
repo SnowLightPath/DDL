@@ -27,7 +27,7 @@ Write the ideal experience before implementation exists.
   max: 5
   batch: auto
   each: |
-    Scan its scope for existing behavior, APIs, user touchpoints.
+    Scan {scope} for existing behavior, APIs, user touchpoints.
     Report findings to team-lead when done.
   collect: lead collects survey results into a unified context
 ```
@@ -46,16 +46,21 @@ Write the ideal experience before implementation exists.
   D4: Principle Conflict — Draft contradicts existing design.md principle
   D5: Orphan Principle — Draft implies a principle not yet in design.md
 
-### Phase 3: SAVE
++++STOP: on D4
+
+### Phase 3: REPORT
 
 +++STOP: always
 
 1. Present the draft to user for approval
-2. Save approved experience to `design.md`
-3. Suggest: "Run `/realize` to implement this experience"
+
+### Phase 4: EXECUTE
+
+1. Save approved experience to `design.md`
+2. Suggest: "Run `/realize` to implement this experience"
 
 ## Constraints
 
 +++NEVER: Write implementation code during /draft
 +++NEVER: Hardcode scopes — they come from design.md
-+++NEVER: Continue past D4 — stop and resolve conflict before saving
++++NEVER: Save draft with unresolved principle conflict

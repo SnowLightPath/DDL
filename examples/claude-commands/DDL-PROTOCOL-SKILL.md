@@ -19,7 +19,7 @@ Markdown headings (`#`, `##`, `###`) mark document structure. `+++` marks execut
 |-----------|--------|-------|------|
 | `# header` | `# command-name` followed by one-line intent | 1 | Required |
 | `## usage` | `## Usage` followed by dash-list of invocations | 1+ lines | Required |
-| `### phase` | `### Phase 0: INIT`, `### Phase 1: SURVEY`, etc. | 4–6 | N starts at 0, ascending. Phase 0 INIT is required: load SKILL → CLAUDE.md → design.md in that order. Canonical names: INIT, SURVEY/READ, WORK/IMPLEMENT, REPORT, EXECUTE, VERIFY |
+| `### phase` | `### Phase 0: INIT`, `### Phase 1: SURVEY`, etc. | 4–6 | N starts at 0, ascending. Phase 0 INIT is required: load SKILL → CLAUDE.md → design.md in that order. Recommended role names: INIT, SURVEY/READ, WORK/IMPLEMENT, REPORT, EXECUTE, VERIFY. Commands may use domain-specific names (e.g. SCAN, COMPARE, COMMIT) that map to these roles |
 | `+++STOP` | `+++STOP: always` or `+++STOP: on D1` | 1+ | `always` required at REPORT phase. `on D{n}` halts when that DETECT fires. Never auto-proceed past a STOP gate |
 | `+++DETECT` | `+++DETECT:` followed by indented `D1: name — trigger` lines | 5–7 | D starts at 1, ascending, unique per command. Trigger must be operationally verifiable. All targets run in parallel within their phase |
 | `+++SWARM` | `+++SWARM: condition` followed by `team:`, `spawn:`, `type:`, `max:`, `batch:`, `each:`, `collect:` block. See §2 | 0+ | Instruction: create Agent Team. Evaluate condition against design.md. If false or single scope: execute inline. If true with 2+ scopes: execute §2.4 procedure (TeamCreate → Task × N → Monitor → Collect → Shutdown) |
@@ -56,7 +56,7 @@ When you encounter `+++SWARM` in a phase and its condition evaluates to true wit
 | condition | first line after `+++SWARM:` | yes | Predicate evaluated against design.md. If false, skip SWARM and execute inline |
 | `team` | block body | yes | Agent Teams team name. Convention: `command-phase` (e.g. `reflect-survey`, `realize-execute`) |
 | `spawn` | block body | yes | Teammate name pattern. `{scope}` expands per matching scope in design.md |
-| `type` | block body | no | Agent type for teammates. Default: `general-purpose`. Options: `Explore` (read-only, fast), `Plan` (architecture), `Bash` (commands only), or plugin types (e.g. `compound-engineering:review:security-sentinel`) |
+| `type` | block body | no | Agent type for teammates. Default: `general-purpose`. Common: `Explore` (read-only, fast). Extensible to other agent types as needed |
 | `max` | block body | no | Maximum concurrent teammates. Default: 5. Controls cost and resource usage |
 | `batch` | block body | no | How to group scopes when scope count exceeds `max`. Default: `auto`. See §2.3 |
 | `each` | block body | yes | Prompt template for each teammate. `{scope}` or `{scopes}` (when batched) resolve at runtime. Must instruct teammate to report results to team-lead |
@@ -82,9 +82,6 @@ elif batch == "auto":
 elif batch == "none":
     first `max` scopes run in parallel
     remaining scopes queued as tasks, claimed when a teammate finishes
-elif batch == "by-tag":
-    group scopes by their tag in design.md
-    one teammate per tag group (capped at max)
 ```
 
 | scope_count | max | batch | Result |
@@ -94,7 +91,6 @@ elif batch == "by-tag":
 | 3 | 5 | any | 3 teammates, 1 scope each |
 | 8 | 5 | `auto` | 5 teammates, lead groups 8 scopes into 5 batches |
 | 8 | 5 | `none` | 5 teammates start, 3 scopes queued as tasks |
-| 12 | 4 | `by-tag` | Scopes grouped by tag, up to 4 teammates |
 
 ### 2.4 Execution Procedure
 

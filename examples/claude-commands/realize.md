@@ -27,7 +27,7 @@ Manifest design philosophy as working code.
   max: 5
   batch: auto
   each: |
-    Read its scope, summarize current state vs. design intent.
+    Read {scope}, summarize current state vs. design intent.
     Report findings to team-lead when done.
   collect: lead collects read results into a unified context
 ```
@@ -43,12 +43,13 @@ Manifest design philosophy as working code.
   max: 5
   batch: auto
   each: |
-    Generate code honoring the principles for its scope.
+    Generate code honoring the principles for {scope}.
     Report completion to team-lead when done.
   collect: lead verifies each implementation against principles
 ```
 
 For each change, verify against principles:
+- Add rationale as comments where non-obvious
 
 +++DETECT:
   D1: Principle Violation — Code contradicts a design.md principle
@@ -57,9 +58,7 @@ For each change, verify against principles:
   D4: Missing Test — New behavior has no corresponding test
   D5: Hardcoded Value — Magic numbers, secrets, or environment-specific values inline
 
-+++STOP: on D1
-
-- Add rationale as comments where non-obvious
++++STOP: on D1 (Principle Violation — from Phase 2 DETECT)
 
 ### Phase 3: VALIDATE
 
