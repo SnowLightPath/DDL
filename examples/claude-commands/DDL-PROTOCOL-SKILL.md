@@ -98,12 +98,12 @@ elif batch == "by-tag":
 
 ### 2.4 Execution Procedure
 
-+++SWARM の条件が真のとき、以下の手続きを順に実行せよ。
-各code blockはツール呼び出しテンプレートである。変数を解決し実行せよ。
+When the +++SWARM condition evaluates to true, execute the following procedure in order.
+Each code block is a tool call template. Resolve variables and execute.
 
 **Step 1 — Create team**
 
-TeamCreate でチームを作成する:
+Create a team with TeamCreate:
 
 ```
 TeamCreate({ team_name: "{team}" })
@@ -111,8 +111,8 @@ TeamCreate({ team_name: "{team}" })
 
 **Step 2 — Scale**
 
-§2.3 に従いスコープ数を評価し、チームメイト数とスコープ割当を決定する。
-`batch: none` でオーバーフローがある場合、タスクを作成する:
+Evaluate scope count per §2.3 to determine teammate count and scope assignment.
+If `batch: none` and there is overflow, create tasks:
 
 ```
 TaskCreate({ subject: "Process {scope}", description: "{each with scope resolved}" })
@@ -120,7 +120,7 @@ TaskCreate({ subject: "Process {scope}", description: "{each with scope resolved
 
 **Step 3 — Spawn teammates**
 
-Step 2 で決定した各スコープについて、Task でチームメイトを spawn する:
+For each scope determined in Step 2, spawn a teammate with Task:
 
 ```
 Task({
@@ -134,16 +134,16 @@ Task({
 
 **Step 4 — Monitor**
 
-TaskList と自動配信メッセージでチームメイトの進捗を監視する。
-`batch: none` でキュー済みタスクがある場合、チームメイトは完了次第 TaskList から自己claim する。
+Monitor teammate progress via TaskList and automatic message delivery.
+If `batch: none` with queued tasks, teammates self-claim from TaskList upon completion.
 
 **Step 5 — Collect**
 
-全チームメイト完了後、`collect:` フィールドの指示に従い結果を統合する。
+After all teammates complete, integrate results following the `collect:` field instructions.
 
 **Step 6 — Shutdown**
 
-各チームメイトにシャットダウンを要求し、チームリソースを削除する:
+Request shutdown for each teammate and delete team resources:
 
 ```
 SendMessage({ type: "shutdown_request", recipient: "{teammate-name}" })

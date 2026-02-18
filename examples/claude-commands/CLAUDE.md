@@ -46,8 +46,6 @@ Every command defines its own D1–D7. Cross-cutting targets below apply globall
 2. Run the command's Phase sequence
 3. Scan for Detection Targets at each phase boundary
 
-+++NEVER: Skip a +++STOP
-
 ### On swarm
 
 +++SWARM: 2+ independent scopes exist
