@@ -50,18 +50,18 @@ Manifest design philosophy as working code.
 
 For each change, verify against principles:
 
-+++STOP: on D1
-
-- Add rationale as comments where non-obvious
-
-### Phase 3: VALIDATE
-
 +++DETECT:
   D1: Principle Violation — Code contradicts a design.md principle
   D2: Ungrounded Feature — Feature exists in code but not in design.md
   D3: Breaking Change — Public API or behavior changed without design update
   D4: Missing Test — New behavior has no corresponding test
   D5: Hardcoded Value — Magic numbers, secrets, or environment-specific values inline
+
++++STOP: on D1
+
+- Add rationale as comments where non-obvious
+
+### Phase 3: VALIDATE
 
 +++STOP: on D1
 
