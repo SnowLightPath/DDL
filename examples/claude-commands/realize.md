@@ -18,6 +18,7 @@ Manifest design philosophy as working code.
 
 ### Phase 1: READ
 
+```
 +++SWARM: 2+ scopes in design.md
   team: realize-read
   spawn: reader-{scope}
@@ -28,9 +29,11 @@ Manifest design philosophy as working code.
     Read its scope, summarize current state vs. design intent.
     Report findings to team-lead when done.
   collect: lead collects read results into a unified context
+```
 
 ### Phase 2: IMPLEMENT
 
+```
 +++SWARM: 2+ independent scopes need changes
   team: realize-implement
   spawn: impl-{scope}
@@ -41,6 +44,7 @@ Manifest design philosophy as working code.
     Generate code honoring the principles for its scope.
     Report completion to team-lead when done.
   collect: lead verifies each implementation against principles
+```
 
 For each change, verify against principles:
 

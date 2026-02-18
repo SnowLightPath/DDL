@@ -52,6 +52,8 @@ design.mdは仕様を複製せず、参照する。
 3. Read `design.md` — extract ...
 ```
 
+SWARMブロックはコードブロック（`` ``` ``）で囲む。DDL-PROTOCOL-SKILL.md §2.1の記法に準拠する。
+
 ### P2: コマンドの独立性
 
 各コマンドは自己完結した定義を持つ。Phase数・Phase名・Detection Target・Constraintはコマンドファイル内で完結し、外部参照を必要としない。`+++`プレフィクスはPhase本体内の振る舞い指定（ディレクティブ）に付与し、markdown見出しの構造と分離する。

@@ -18,6 +18,7 @@ Audit and fix documentation quality.
 
 ### Phase 1: DISCOVER
 
+```
 +++SWARM: 2+ scopes in design.md
   team: docs-discover
   spawn: scanner-{scope}
@@ -28,6 +29,7 @@ Audit and fix documentation quality.
     Inventory documentation files and scan source for public APIs, exports, types in {scope}.
     Report findings to team-lead when done.
   collect: lead collects discovery results into a unified context
+```
 
 ### Phase 2: AUDIT
 
@@ -59,6 +61,7 @@ Wait for user to approve, reject, or modify each fix.
 
 ### Phase 4: FIX
 
+```
 +++SWARM: 2+ approved fixes across different files
   team: docs-fix
   spawn: writer-{scope}
@@ -69,6 +72,7 @@ Wait for user to approve, reject, or modify each fix.
     Apply approved fixes to its documentation files.
     Report completion to team-lead when done.
   collect: lead verifies all fixes applied correctly
+```
 
 ### Phase 5: VERIFY
 
