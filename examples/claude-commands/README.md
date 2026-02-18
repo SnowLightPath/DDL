@@ -6,7 +6,7 @@ Example implementation of [Design-Doc Loop (DDL)](../../docs/en/design_philosoph
 
 ```bash
 cp examples/claude-commands/CLAUDE.md .claude/
-cp examples/claude-commands/*.md .claude/commands/
+cp examples/claude-commands/{draft,realize,reflect,commit,docs,refactoring,DDL-PROTOCOL-SKILL}.md .claude/commands/
 ```
 
 ## Commands
