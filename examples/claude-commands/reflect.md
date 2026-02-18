@@ -18,8 +18,9 @@ Update documents based on implementation results.
 
 ### Phase 1: READ
 
-```
 +++SWARM: 2+ scopes in design.md
+
+```
   team: reflect-read
   spawn: reader-{scope}
   type: Explore
@@ -64,8 +65,9 @@ Wait for user to approve, reject, or modify each recommendation.
 
 ### Phase 4: APPLY
 
-```
 +++SWARM: 2+ approved changes across scopes
+
+```
   team: reflect-apply
   spawn: writer-{scope}
   type: general-purpose
