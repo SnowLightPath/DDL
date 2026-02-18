@@ -20,12 +20,12 @@ Audit and fix documentation quality.
 
 +++SWARM: 2+ scopes in design.md
   team: docs-discover
-  spawn: scanner-docs, scanner-{scope}
+  spawn: scanner-{scope}
   type: Explore
   max: 5
   batch: auto
   each: |
-    Inventory documentation files (scanner-docs); scan source for public APIs, exports, types (scanner-{scope}).
+    Inventory documentation files and scan source for public APIs, exports, types in {scope}.
     Report findings to team-lead when done.
   collect: lead collects discovery results into a unified context
 
