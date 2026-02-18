@@ -7,7 +7,7 @@ metadata:
 
 # reflect
 
-Update documents based on implementation results.
+Detect divergence between implementation and DESIGN.md, then reconcile.
 
 ## Usage
 
@@ -24,34 +24,62 @@ Update documents based on implementation results.
 
 ### Phase 1: READ
 
-For each scope in `DESIGN.md`, sequentially scan current implementation state. Then self-inspect `DESIGN.md` for internal consistency.
++++SWARM: 2+ scopes in DESIGN.md
+
+```
+  team: reflect-read
+  spawn: reader-{scope}
+  type: Explore
+  max: 5
+  batch: auto
+  each: |
+    Scan {scope} for current implementation state.
+  collect: lead also inspects DESIGN.md for internal consistency, then integrates all results
+```
 
 ### Phase 2: COMPARE
 
-Compare implementation against `DESIGN.md` principles. Classify divergences:
-- **Code drifted** — implementation violates principle
-- **Philosophy outdated** — code shows better approach
-- **New pattern** — code introduced something `DESIGN.md` doesn't cover
+Lead integrates results and performs cross-scope analysis:
 
-Run Detection Target scan:
+1. Compare each scope's implementation against `DESIGN.md` principles
+2. Classify divergences:
+   - **Code drifted** — implementation violates principle
+   - **Philosophy outdated** — code shows better approach
+   - **New pattern** — code introduced something `DESIGN.md` doesn't cover
 
-| ID | Name | Trigger |
-|----|------|---------|
-| D1 | Drift | Implementation contradicts a stated principle |
-| D2 | New Pattern | Code exhibits a pattern not captured in `DESIGN.md` |
-| D3 | Outdated Principle | Principle references removed/changed behavior |
-| D4 | Stale Reference | `DESIGN.md` links or paths no longer exist |
-| D5 | Self-Contradiction | Two principles in `DESIGN.md` conflict with each other |
++++DETECT:
+  D1: Drift — Implementation contradicts a stated principle
+  D2: New Pattern — Code exhibits a pattern not captured in DESIGN.md
+  D3: Outdated Principle — Principle references removed/changed behavior
+  D4: Stale Reference — DESIGN.md links or paths no longer exist
+  D5: Self-Contradiction — Two principles in DESIGN.md conflict with each other
 
 ### Phase 3: REPORT
 
-**STOP gate** — Present divergence report to user. Do NOT modify `DESIGN.md` without approval.
++++STOP: always
+
+Do NOT modify `DESIGN.md` without approval.
+
++++Report:
+| # | Type | Principle | Finding | Recommendation |
+|---|------|-----------|---------|----------------|
 
 Wait for user to approve, reject, or modify each recommendation.
 
 ### Phase 4: APPLY
 
-Apply only approved changes.
++++SWARM: 2+ approved changes across scopes
+
+```
+  team: reflect-apply
+  spawn: writer-{scope}
+  type: general-purpose
+  max: 5
+  batch: auto
+  each: |
+    Apply only approved changes to {scope}.
+  collect: lead summarizes what changed
+```
 
 After applying:
 1. Summarize what changed
@@ -59,6 +87,6 @@ After applying:
 
 ## Constraints
 
-- Never modify `DESIGN.md` without STOP gate approval
-- Can reflect on `DESIGN.md` itself (meta-reflection)
-- Scopes come from `DESIGN.md`, not hardcoded paths
++++NEVER: Modify DESIGN.md without +++STOP approval
++++NEVER: Hardcode scopes — they come from DESIGN.md
++++NEVER: Skip meta-reflection — can reflect on DESIGN.md itself
