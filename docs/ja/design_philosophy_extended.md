@@ -56,12 +56,12 @@ DDL:  Human Brain <-> DESIGN.md <-> LLM
 
 ```
 +---------------+---------------+
-| Socialization | External.     |
-|    (share)    | (articulate)  |
+|  Socialization| Externalize   |
+|    (share)    |  (articulate) |
 | Tacit -> Tacit| Tacit -> Form |
 +---------------+---------------+
-| Internal.     | Combination   |
-|   (embody)    | (systematic)  |
+| Internalize   | Combination   |
+|   (embody)    | (systematize) |
 | Form -> Tacit | Form -> Form  |
 +---------------+---------------+
 ```
@@ -88,7 +88,7 @@ Flor & Hutchins (1992) はペアプログラミングを分析し、システム
     |                |                |
  Intuition       Shared           Pattern
  Long-term       Memory           Recognition
- Values          Persist          Tech Know
+ Values          Persist          Tech Knowledge
 ```
 
 どこに何を任せるか。この分担を意識することが DDL の核です。
