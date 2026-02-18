@@ -18,8 +18,9 @@ Audit and fix code quality issues.
 
 ### Phase 1: SCAN
 
-```
 +++SWARM: 2+ scopes in design.md
+
+```
   team: refactoring-scan
   spawn: scanner-{scope}
   type: Explore
@@ -54,8 +55,9 @@ Wait for user to approve, reject, or modify each fix.
 
 ### Phase 3: EXECUTE
 
-```
 +++SWARM: 2+ approved fixes across independent scopes
+
+```
   team: refactoring-execute
   spawn: fixer-{scope}
   type: general-purpose

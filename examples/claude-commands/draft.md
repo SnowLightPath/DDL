@@ -18,8 +18,9 @@ Write the ideal experience before implementation exists.
 
 ### Phase 1: UNDERSTAND
 
-```
 +++SWARM: 2+ scopes in design.md
+
+```
   team: draft-survey
   spawn: survey-{scope}
   type: Explore

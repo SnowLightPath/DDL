@@ -18,8 +18,9 @@ Audit and fix documentation quality.
 
 ### Phase 1: DISCOVER
 
-```
 +++SWARM: 2+ scopes in design.md
+
+```
   team: docs-discover
   spawn: scanner-{scope}
   type: Explore
@@ -61,8 +62,9 @@ Wait for user to approve, reject, or modify each fix.
 
 ### Phase 4: FIX
 
-```
 +++SWARM: 2+ approved fixes across different files
+
+```
   team: docs-fix
   spawn: writer-{scope}
   type: general-purpose

@@ -34,8 +34,9 @@ When you encounter `+++SWARM` in a phase and its condition evaluates to true wit
 
 ### 2.1 Syntax
 
-```
 +++SWARM: 2+ scopes in design.md
+
+```
   team: command-phase
   spawn: role-{scope}
   type: Explore
@@ -153,7 +154,7 @@ TeamDelete()
 
 ## 3. Command Template
 
-```markdown
+````markdown
 # command-name
 
 One-line intent.
@@ -175,6 +176,8 @@ One-line intent.
 ### Phase 1: SURVEY
 
 +++SWARM: 2+ scopes in design.md
+
+```
   team: command-survey
   spawn: reader-{scope}
   type: Explore
@@ -184,6 +187,7 @@ One-line intent.
     Scan {scope} for relevant items.
     Report findings to team-lead when done.
   collect: lead merges all scope findings
+```
 
 ### Phase 2: WORK
 
@@ -206,6 +210,8 @@ Core activity here.
 ### Phase 4: EXECUTE (if applicable)
 
 +++SWARM: 2+ approved changes across scopes
+
+```
   team: command-execute
   spawn: writer-{scope}
   type: general-purpose
@@ -215,6 +221,7 @@ Core activity here.
     Apply approved changes to {scope}.
     Report completion to team-lead when done.
   collect: lead verifies all changes applied
+```
 
 ### Phase 5: VERIFY (if applicable)
 
@@ -225,4 +232,4 @@ Re-scan. Summarize. Suggest next command.
 +++NEVER: prohibition
 +++NEVER: prohibition
 +++NEVER: prohibition
-```
+````

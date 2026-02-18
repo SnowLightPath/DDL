@@ -18,8 +18,9 @@ Manifest design philosophy as working code.
 
 ### Phase 1: READ
 
-```
 +++SWARM: 2+ scopes in design.md
+
+```
   team: realize-read
   spawn: reader-{scope}
   type: Explore
@@ -33,8 +34,9 @@ Manifest design philosophy as working code.
 
 ### Phase 2: IMPLEMENT
 
-```
 +++SWARM: 2+ independent scopes need changes
+
+```
   team: realize-implement
   spawn: impl-{scope}
   type: general-purpose
