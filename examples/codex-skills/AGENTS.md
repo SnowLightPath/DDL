@@ -13,27 +13,43 @@
 
 ## Structure
 
-- `DESIGN.md` - Design principles (temporary)
+- `DESIGN.md` - Design Document
+
+## Directive Reference
+
+| Directive | Syntax | Rule |
+|-----------|--------|------|
+| `### phase` | `### Phase 0: INIT`, `### Phase 1: SURVEY`, etc. | Phase 0 INIT required: load AGENTS.md → DESIGN.md. 4–6 phases per skill |
+| `+++STOP` | `+++STOP: always` or `+++STOP: on D1` | `always` required at REPORT phase. Never auto-proceed past a STOP gate |
+| `+++DETECT` | `+++DETECT:` followed by indented `D1: name — trigger` lines | 5–7 per skill. Run at each phase boundary |
+| `+++SWARM` | `+++SWARM: condition` followed by operand block | **Sequential fallback** — see below |
+| `+++NEVER` | `+++NEVER: prohibition` | Local constraints per skill |
+| `+++Report` | `+++Report:` followed by markdown table rows | Output template presented at STOP gate |
+
+## +++SWARM Handling
+
+Codex does not support Agent Teams. When a skill defines `+++SWARM: condition`:
+
+1. Evaluate the condition against `DESIGN.md`
+2. If condition is false or single scope → execute `each:` task inline
+3. If condition is true with 2+ scopes → execute `each:` task **sequentially** for each matching scope
+
+The `team:`, `spawn:`, `max:`, `batch:`, `collect:` fields are metadata only — they document what would be parallelized. Only `each:` is executed as the task template per scope.
 
 ## Detection Targets
 
 Every skill defines its own D1–D7. Cross-cutting targets below apply **globally**.
 
-| ID | Name | Trigger |
-|----|------|---------|
-| D1 | Vague Intent | Task description lacks measurable outcome |
-| D2 | Scope Creep | Change touches files outside stated scope |
-| D3 | Principle Violation | Action contradicts `DESIGN.md` principles |
-| D4 | Missing Validation | No verification step after mutation |
-| D5 | Leaked Specifics | Project-specific paths/commands hardcoded in framework files |
-| D6 | Silent Failure | Error swallowed without user notification |
-| D7 | Unreviewed Mutation | Shared artifact changed without STOP gate |
++++DETECT:
+  G1: Vague Intent — Task description lacks measurable outcome
+  G2: Scope Creep — Change touches files outside stated scope
+  G3: Principle Violation — Action contradicts `DESIGN.md` principles
+  G4: Missing Validation — No verification step after mutation
+  G5: Leaked Specifics — Project-specific paths/commands hardcoded in framework files
+  G6: Silent Failure — Error swallowed without user notification
+  G7: Unreviewed Mutation — Shared artifact changed without +++STOP
 
 ## Behavior
-
-### Execution model
-
-Codex processes all scopes **sequentially** (one at a time). When multiple scopes are defined in `DESIGN.md`, iterate through them in order. There is no parallel agent spawning.
 
 ### On session start
 
@@ -43,7 +59,7 @@ Codex processes all scopes **sequentially** (one at a time). When multiple scope
 ### On any task
 
 1. Identify which scopes (from `DESIGN.md`) are affected
-2. Run the skill's Phase sequence, processing each scope sequentially
+2. Run the skill's Phase sequence
 3. Scan for Detection Targets at each phase boundary
 4. Never skip a STOP gate
 
@@ -55,7 +71,6 @@ Codex processes all scopes **sequentially** (one at a time). When multiple scope
 
 ## Constraints
 
-- **No hardcoded paths** — scopes come from `DESIGN.md`
-- **No hardcoded commands** — validation commands come from `DESIGN.md`
-- **STOP gates are blocking** — never auto-proceed past a STOP gate
-- **Attribution** — never add AI attribution to commits or generated code
++++NEVER: Hardcode paths or commands — scopes and validation come from DESIGN.md
++++NEVER: Auto-proceed past a +++STOP
++++NEVER: Add AI attribution to commits or generated code
