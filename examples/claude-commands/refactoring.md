@@ -27,7 +27,7 @@ Audit and fix code quality issues.
   max: 5
   batch: auto
   each: |
-    Analyze its scope for code quality issues.
+    Analyze {scope} for code quality issues.
     Report findings to team-lead when done.
   collect: lead collects scan results for cross-scope analysis
 ```
@@ -64,7 +64,7 @@ Wait for user to approve, reject, or modify each fix.
   max: 5
   batch: auto
   each: |
-    Apply approved refactors to its scope.
+    Apply approved refactors to {scope}.
     Report completion to team-lead when done.
   collect: lead verifies refactors and runs validation
 ```

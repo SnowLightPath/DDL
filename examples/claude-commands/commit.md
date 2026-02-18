@@ -39,10 +39,12 @@ Run validation checks in parallel:
 +++STOP: always
 
 +++Report:
-Files: <list of staged files>
-Scope: <affected scopes from design.md>
-Message: <proposed commit message>
-Detection: <any targets that fired>
+| Field | Value |
+|-------|-------|
+| Files | {list of changed files} |
+| Scope | {affected design.md scopes} |
+| Message | {commit message} |
+| Detection | {any targets that fired} |
 
 Wait for user approval before proceeding.
 

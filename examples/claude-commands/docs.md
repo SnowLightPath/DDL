@@ -55,8 +55,8 @@ Lead integrates results and checks:
 Do NOT fix without approval.
 
 +++Report:
-| # | File | Type | Finding | Fix |
-|---|------|------|---------|-----|
+| # | File:Line | Type | Finding | Suggested Fix |
+|---|-----------|------|---------|---------------|
 
 Wait for user to approve, reject, or modify each fix.
 
@@ -71,7 +71,7 @@ Wait for user to approve, reject, or modify each fix.
   max: 5
   batch: auto
   each: |
-    Apply approved fixes to its documentation files.
+    Apply approved fixes to {scope} documentation.
     Report completion to team-lead when done.
   collect: lead verifies all fixes applied correctly
 ```

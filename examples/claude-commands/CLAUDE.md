@@ -25,13 +25,13 @@
 Every command defines its own D1–D7. Cross-cutting targets below apply globally.
 
 +++DETECT:
-  D1: Vague Intent — Task description lacks measurable outcome
-  D2: Scope Creep — Change touches files outside stated scope
-  D3: Principle Violation — Action contradicts design.md principles
-  D4: Missing Validation — No verification step after mutation
-  D5: Leaked Specifics — Project-specific paths/commands hardcoded in framework files
-  D6: Silent Failure — Error swallowed without user notification
-  D7: Unreviewed Mutation — Shared artifact changed without +++STOP
+  G1: Vague Intent — Task description lacks measurable outcome
+  G2: Scope Creep — Change touches files outside stated scope
+  G3: Principle Violation — Action contradicts design.md principles
+  G4: Missing Validation — No verification step after mutation
+  G5: Leaked Specifics — Project-specific paths/commands hardcoded in framework files
+  G6: Silent Failure — Error swallowed without user notification
+  G7: Unreviewed Mutation — Shared artifact changed without +++STOP
 
 ## Behavior
 
@@ -46,20 +46,6 @@ Every command defines its own D1–D7. Cross-cutting targets below apply globall
 2. Run the command's Phase sequence
 3. Scan for Detection Targets at each phase boundary
 
-### On swarm
-
-+++SWARM: 2+ independent scopes exist
-
-```
-  team: {command}-{phase}
-  spawn: {role}-{scope}
-  type: Explore
-  each: |
-    Read only its assigned scope.
-    Report findings to team-lead when done.
-  collect: lead integrates results and runs cross-scope analysis
-```
-
 ### On completion
 
 1. Summarize what changed (files, lines, scopes)
@@ -68,8 +54,7 @@ Every command defines its own D1–D7. Cross-cutting targets below apply globall
 
 ## Constraints
 
-+++NEVER: Hardcode paths — scopes come from design.md
-+++NEVER: Hardcode commands — validation commands come from design.md
++++NEVER: Hardcode paths or commands — scopes and validation come from design.md
 +++NEVER: Auto-proceed past a +++STOP
 +++NEVER: Spawn agents for single-scope tasks — swarm is optional
 +++NEVER: Add AI attribution to commits or generated code
