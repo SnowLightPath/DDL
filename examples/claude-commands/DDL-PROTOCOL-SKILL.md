@@ -6,9 +6,10 @@ description: "Use this skill when executing or authoring DDL commands (draft, re
 # DDL-PROTOCOL
 
 Design-Doc Loop. Human-LLM collaborative workflow protocol.
-Commands are source of truth. This skill describes how to read and write them.
 
-Markdown headings (`#`, `##`, `###`) mark document structure. `+++` marks behavioral directives inside phase bodies.
+Commands are programs. This skill is the instruction set. `+++` directives are instructions — when the processor (you) encounters one, execute its defined procedure. Code blocks within directive definitions are tool call templates: resolve variables and execute them.
+
+Markdown headings (`#`, `##`, `###`) mark document structure. `+++` marks executable instructions inside phase bodies.
 
 ---
 
@@ -21,15 +22,15 @@ Markdown headings (`#`, `##`, `###`) mark document structure. `+++` marks behavi
 | `### phase` | `### Phase 0: INIT`, `### Phase 1: SURVEY`, etc. | 4–6 | N starts at 0, ascending. Phase 0 INIT is required: load SKILL → CLAUDE.md → design.md in that order. Canonical names: INIT, SURVEY/READ, WORK/IMPLEMENT, REPORT, EXECUTE, VERIFY |
 | `+++STOP` | `+++STOP: always` or `+++STOP: on D1` | 1+ | `always` required at REPORT phase. `on D{n}` halts when that DETECT fires. Never auto-proceed past a STOP gate |
 | `+++DETECT` | `+++DETECT:` followed by indented `D1: name — trigger` lines | 5–7 | D starts at 1, ascending, unique per command. Trigger must be operationally verifiable. All targets run in parallel within their phase |
-| `+++SWARM` | `+++SWARM: condition` followed by `team:`, `spawn:`, `type:`, `max:`, `batch:`, `each:`, `collect:` block. See §2 | 0+ | Maps to Claude Code Agent Teams. Condition evaluated against design.md. Single scope or condition false: execute inline, no team |
+| `+++SWARM` | `+++SWARM: condition` followed by `team:`, `spawn:`, `type:`, `max:`, `batch:`, `each:`, `collect:` block. See §2 | 0+ | Instruction: create Agent Team. Evaluate condition against design.md. If false or single scope: execute inline. If true with 2+ scopes: execute §2.4 procedure (TeamCreate → Task × N → Monitor → Collect → Shutdown) |
 | `+++NEVER` | `+++NEVER: prohibition in imperative form` | 2–4 | Global constraints in CLAUDE.md. Local constraints in command file |
 | `+++Report` | `+++Report:` followed by markdown table rows | 0–1 | Output template presented to human at STOP gate |
 
 ---
 
-## 2. SWARM — Agent Teams Integration
+## 2. +++SWARM Instruction
 
-+++SWARM is the bridge between DDL commands and Claude Code Agent Teams. When a phase contains +++SWARM and its condition is met, the executing agent becomes team lead and orchestrates independent teammates — each a full Claude Code session with its own context window, communicating via shared task list and direct messaging.
+When you encounter `+++SWARM` in a phase and its condition evaluates to true with 2+ scopes, execute the procedure defined in §2.4. The operand block (`team:`, `spawn:`, `type:`, `max:`, `batch:`, `each:`, `collect:`) provides parameters for each step.
 
 ### 2.1 Syntax
 
@@ -94,19 +95,23 @@ elif batch == "by-tag":
 | 8 | 5 | `none` | 5 teammates start, 3 scopes queued as tasks |
 | 12 | 4 | `by-tag` | Scopes grouped by tag, up to 4 teammates |
 
-### 2.4 Execution Lifecycle
+### 2.4 Execution Procedure
 
-When the agent encounters `+++SWARM` and condition is true with 2+ scopes:
++++SWARM の条件が真のとき、以下の手続きを順に実行せよ。
+各code blockはツール呼び出しテンプレートである。変数を解決し実行せよ。
 
 **Step 1 — Create team**
 
+TeamCreate でチームを作成する:
+
 ```
-Teammate({ operation: "spawnTeam", team_name: "{team}" })
+TeamCreate({ team_name: "{team}" })
 ```
 
 **Step 2 — Scale**
 
-Apply §2.3 logic. Determine teammate count and scope assignment. If batching with `batch: none` and overflow scopes exist, create tasks for them:
+§2.3 に従いスコープ数を評価し、チームメイト数とスコープ割当を決定する。
+`batch: none` でオーバーフローがある場合、タスクを作成する:
 
 ```
 TaskCreate({ subject: "Process {scope}", description: "{each with scope resolved}" })
@@ -114,7 +119,7 @@ TaskCreate({ subject: "Process {scope}", description: "{each with scope resolved
 
 **Step 3 — Spawn teammates**
 
-For each teammate determined in Step 2:
+Step 2 で決定した各スコープについて、Task でチームメイトを spawn する:
 
 ```
 Task({
@@ -126,25 +131,22 @@ Task({
 })
 ```
 
-Note: `subagent_type` is the Claude Code API parameter name for spawning into Agent Teams. The spawned instances are teammates — they communicate via shared task list and direct messaging, not fire-and-forget subagents.
-
 **Step 4 — Monitor**
 
-Lead monitors teammate progress via inbox and task list. If `batch: none` with queued tasks, teammates self-claim from task list as they complete their initial scope.
+TaskList と自動配信メッセージでチームメイトの進捗を監視する。
+`batch: none` でキュー済みタスクがある場合、チームメイトは完了次第 TaskList から自己claim する。
 
 **Step 5 — Collect**
 
-Lead executes `collect` logic: synthesize findings from all teammates into unified output for the next phase.
+全チームメイト完了後、`collect:` フィールドの指示に従い結果を統合する。
 
 **Step 6 — Shutdown**
 
-```
-// Request shutdown for each teammate
-Teammate({ operation: "requestShutdown", target_agent_id: "{teammate}" })
-// Wait for each: {"type": "shutdown_approved"}
+各チームメイトにシャットダウンを要求し、チームリソースを削除する:
 
-// Clean up team resources
-Teammate({ operation: "cleanup" })
+```
+SendMessage({ type: "shutdown_request", recipient: "{teammate-name}" })
+TeamDelete()
 ```
 
 ---

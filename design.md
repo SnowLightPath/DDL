@@ -26,6 +26,8 @@ README.mdは本スコープ外とする。
 
 ### P1: DDL-PROTOCOL-SKILL.mdが単一の定義元
 
+DDL-PROTOCOL-SKILL.mdは命令セットアーキテクチャ（ISA）である。コマンドファイルはプログラム、`+++`ディレクティブは命令、code block内のツール呼び出しはマイクロコードとして、LLMがプロセッサとして実行する。
+
 全コマンドの構造（Phase, `+++`ディレクティブ, SWARM構文）はDDL-PROTOCOL-SKILL.mdで定義される。
 design.mdは仕様を複製せず、参照する。
 
