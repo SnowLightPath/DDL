@@ -157,9 +157,9 @@ Formalized by Meyer in Eiffel (1986). Makes contracts (invariants) explicit.
 | Level | Code (executable) | Design policy (conceptual) |
 | Enforcement | Runtime checks | Discipline and dialogue |
 
-### 2.5 AI-Era Development Paradigms (2025)
+### 2.5 AI-Era Development Paradigms (2025–2026)
 
-Three structured approaches to AI-assisted development emerged in 2025, each from a different origin and solving a different problem.
+Three structured approaches to AI-assisted development emerged in 2025–2026, each from a different origin and solving a different problem.
 
 | Origin | Paradigm | Core Problem |
 |--------|----------|-------------|
