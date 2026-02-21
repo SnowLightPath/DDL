@@ -2,12 +2,36 @@
 
 Detailed tool chain procedures for each output format. The lead agent selects the appropriate pipeline based on the `format` field in `scribe.md` or the file extension in the `/scribe:realize` argument.
 
+Tool chains align with Anthropic official skills (`github.com/anthropics/skills`). If the official skill is installed, read and follow its SKILL.md. Otherwise, use the fallback procedures below.
+
+---
+
+## Official Skill Detection
+
+Before running a format pipeline, check if the corresponding official skill is available:
+
+```bash
+# Check for official skills (installed via github.com/anthropics/skills)
+for skill in pdf docx pptx xlsx; do
+  if [ -f "$HOME/.claude/skills/$skill/SKILL.md" ] || \
+     [ -f ".claude/skills/$skill/SKILL.md" ]; then
+    echo "FOUND: $skill"
+  else
+    echo "NOT_FOUND: $skill (using fallback pipeline)"
+  fi
+done
+```
+
+If found: read the skill's SKILL.md and follow its procedures.
+If not found: use the fallback procedures defined in this file.
+
 ---
 
 ## Markdown (.md)
 
 **Pipeline**: Direct write
 **Tools**: Write
+**Official skill**: None needed
 
 ```
 1. Write each section as markdown to the output file
@@ -18,66 +42,143 @@ Detailed tool chain procedures for each output format. The lead agent selects th
 
 ## PDF (.pdf)
 
-**Pipeline**: MD → pandoc → PDF
-**Tools**: Write, Bash
+**Pipeline**: Python + reportlab
+**Tools**: Bash (python3)
+**Official skill**: `pdf` — uses reportlab, pypdf, pdfplumber
 
-**Prerequisites**: `pandoc` must be installed. For PDF output, pandoc requires a PDF engine (pdflatex, xelatex, or wkhtmltopdf).
+**Fallback procedure** (when `pdf` skill is not installed):
 
-```bash
-# Step 1: Write merged markdown to temporary file
-# → _scribe_tmp/{document-name}.md
+```python
+from reportlab.lib.pagesizes import letter, A4
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.units import cm
 
-# Step 2: Convert with pandoc
-pandoc _scribe_tmp/{document-name}.md \
-  -o {output-name}.pdf \
-  --pdf-engine=xelatex \
-  -V geometry:margin=2.5cm \
-  -V mainfont="Hiragino Sans" \
-  --toc \
-  --number-sections
+doc = SimpleDocTemplate("{output_path}", pagesize=A4,
+    topMargin=2.5*cm, bottomMargin=2.5*cm,
+    leftMargin=2.5*cm, rightMargin=2.5*cm)
+styles = getSampleStyleSheet()
+story = []
 
-# Step 3: Clean up temporary files
-rm -rf _scribe_tmp/
+# Title
+story.append(Paragraph(document_title, styles['Title']))
+story.append(Spacer(1, 12))
+
+# Sections
+for section in sections:
+    story.append(Paragraph(section.heading, styles['Heading1']))
+    story.append(Paragraph(section.content, styles['Normal']))
+    story.append(Spacer(1, 12))
+
+doc.build(story)
 ```
 
-**Fallback if no PDF engine**: Generate HTML instead and inform user:
-```bash
-pandoc _scribe_tmp/{document-name}.md -o {output-name}.html --standalone --toc
-```
+**Important**: Never use Unicode subscript/superscript characters in reportlab — use `<sub>` and `<super>` tags in Paragraph objects instead.
 
-**For Japanese documents**: Use `--pdf-engine=xelatex` with `-V CJKmainfont` for CJK font support.
+**For Japanese documents**: Use a CJK-compatible font. Register with `pdfmetrics.registerFont()` if needed.
 
 ---
 
 ## Word (.docx)
 
-**Pipeline**: MD → pandoc → DOCX
-**Tools**: Write, Bash
+**Pipeline**: JavaScript + docx-js (npm)
+**Tools**: Bash (node)
+**Official skill**: `docx` — uses docx-js for creation, XML unpack/pack for editing
+
+**Fallback procedure** (when `docx` skill is not installed):
 
 ```bash
-pandoc _scribe_tmp/{document-name}.md \
-  -o {output-name}.docx \
-  --toc \
-  --number-sections \
-  --reference-doc={template}.docx  # optional: custom template
+# Ensure docx-js is available
+npm list -g docx 2>/dev/null || npm install -g docx
 ```
 
-**With custom styling**: If a `.docx` reference template exists in the project, use `--reference-doc` to apply corporate styles.
+```javascript
+const { Document, Packer, Paragraph, TextRun, HeadingLevel,
+        AlignmentType, PageBreak } = require('docx');
+const fs = require('fs');
+
+const doc = new Document({
+  styles: {
+    default: { document: { run: { font: "Arial", size: 24 } } },
+    paragraphStyles: [
+      { id: "Heading1", name: "Heading 1", basedOn: "Normal", next: "Normal",
+        quickFormat: true,
+        run: { size: 32, bold: true, font: "Arial" },
+        paragraph: { spacing: { before: 240, after: 240 }, outlineLevel: 0 } },
+      { id: "Heading2", name: "Heading 2", basedOn: "Normal", next: "Normal",
+        quickFormat: true,
+        run: { size: 28, bold: true, font: "Arial" },
+        paragraph: { spacing: { before: 180, after: 180 }, outlineLevel: 1 } },
+    ]
+  },
+  sections: [{
+    properties: {
+      page: {
+        size: { width: 12240, height: 15840 },  // US Letter in DXA
+        margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 }
+      }
+    },
+    children: [
+      // Title
+      new Paragraph({ heading: HeadingLevel.HEADING_1,
+        children: [new TextRun(document_title)] }),
+      // Sections
+      ...sections.map(s => [
+        new Paragraph({ heading: HeadingLevel.HEADING_2,
+          children: [new TextRun(s.heading)] }),
+        new Paragraph({ children: [new TextRun(s.content)] }),
+      ]).flat()
+    ]
+  }]
+});
+
+Packer.toBuffer(doc).then(buffer => {
+  fs.writeFileSync("{output_path}", buffer);
+});
+```
+
+**Critical rules**: Never use `\n` (use separate Paragraphs). Never use Unicode bullets (use `LevelFormat.BULLET`). Always set page size explicitly. Use `WidthType.DXA` for table widths (never PERCENTAGE).
 
 ---
 
 ## HTML (.html)
 
-**Pipeline**: MD → pandoc → HTML
-**Tools**: Write, Bash
+**Pipeline**: Python markdown or direct write
+**Tools**: Write, Bash (python3)
+**Official skill**: None
 
+```python
+import markdown
+
+# Convert merged markdown to HTML
+with open("_scribe_tmp/{document}.md") as f:
+    md_content = f.read()
+
+html_body = markdown.markdown(md_content, extensions=['tables', 'toc', 'fenced_code'])
+
+html = f"""<!DOCTYPE html>
+<html lang="{language}">
+<head>
+  <meta charset="UTF-8">
+  <title>{document_title}</title>
+  <style>
+    body {{ font-family: sans-serif; max-width: 800px; margin: 0 auto; padding: 2rem; }}
+    table {{ border-collapse: collapse; width: 100%; }}
+    th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
+  </style>
+</head>
+<body>
+{html_body}
+</body>
+</html>"""
+
+with open("{output_path}", "w") as f:
+    f.write(html)
+```
+
+**Fallback**: If `markdown` module is not available, use pandoc if detected:
 ```bash
-pandoc _scribe_tmp/{document-name}.md \
-  -o {output-name}.html \
-  --standalone \
-  --toc \
-  --number-sections \
-  --css={stylesheet}.css  # optional
+which pandoc && pandoc _scribe_tmp/{document}.md -o {output_path} --standalone --toc
 ```
 
 ---
@@ -86,79 +187,84 @@ pandoc _scribe_tmp/{document-name}.md \
 
 **Pipeline**: Python + openpyxl
 **Tools**: Bash (python3)
+**Official skill**: `xlsx` — uses openpyxl, pandas
 
-**Prerequisites**: `openpyxl` must be installed. If not, install at runtime:
-```bash
-pip3 install openpyxl --quiet
-```
-
-**Generation approach**:
-1. Parse `scribe.md` outline — each section becomes a worksheet or a section within a worksheet
-2. Read source data files (CSV, existing XLSX) referenced in `## Sources`
-3. Generate the workbook using openpyxl:
-   - Create worksheets per section
-   - Insert data tables with headers
-   - Apply basic formatting (bold headers, auto-width columns)
-   - Add charts if data supports visualization (matplotlib → image → embed)
+**Fallback procedure** (when `xlsx` skill is not installed):
 
 ```python
 from openpyxl import Workbook
-from openpyxl.styles import Font, Alignment
+from openpyxl.styles import Font, Alignment, PatternFill
 
 wb = Workbook()
-# Create worksheet per section
+
 for section in sections:
     ws = wb.create_sheet(title=section.name)
-    # Write header row
+    # Header row
     for col, header in enumerate(section.headers, 1):
         cell = ws.cell(row=1, column=col, value=header)
         cell.font = Font(bold=True)
-    # Write data rows
+        cell.fill = PatternFill('solid', fgColor='D5E8F0')
+    # Data rows
     for row_idx, row_data in enumerate(section.data, 2):
         for col, value in enumerate(row_data, 1):
             ws.cell(row=row_idx, column=col, value=value)
+    # Auto-width columns
+    for col in ws.columns:
+        max_len = max(len(str(cell.value or "")) for cell in col)
+        ws.column_dimensions[col[0].column_letter].width = min(max_len + 2, 50)
 
-wb.save(output_path)
+# Remove default empty sheet
+if "Sheet" in wb.sheetnames:
+    del wb["Sheet"]
+
+wb.save("{output_path}")
 ```
+
+**Important**: Always use Excel formulas (`=SUM(...)`) instead of hardcoding calculated values. Use `recalc.py` from the official skill if available to recalculate formula values.
 
 ---
 
 ## PowerPoint (.pptx)
 
-**Pipeline**: Python + python-pptx
-**Tools**: Bash (python3)
+**Pipeline**: JavaScript + pptxgenjs (npm)
+**Tools**: Bash (node)
+**Official skill**: `pptx` — uses pptxgenjs for creation, XML unpack/pack for editing
 
-**Prerequisites**: `python-pptx` must be installed. If not:
+**Fallback procedure** (when `pptx` skill is not installed):
+
 ```bash
-pip3 install python-pptx --quiet
+# Ensure pptxgenjs is available
+npm list -g pptxgenjs 2>/dev/null || npm install -g pptxgenjs
 ```
 
-**Generation approach**:
-1. Each section in `scribe.md` outline becomes a slide or slide group
-2. Subsections become bullet points or additional slides
-3. Data visualizations from sources become embedded images
+```javascript
+const pptxgen = require('pptxgenjs');
+const prs = new pptxgen();
 
-```python
-from pptx import Presentation
-from pptx.util import Inches, Pt
+// Title slide
+let slide = prs.addSlide();
+slide.addText(document_title, {
+  x: 0.5, y: 1.5, w: 9, h: 2,
+  fontSize: 36, bold: true, align: 'center'
+});
 
-prs = Presentation()
+// Content slides per section
+for (const section of sections) {
+  slide = prs.addSlide();
+  slide.addText(section.heading, {
+    x: 0.5, y: 0.3, w: 9, h: 0.8,
+    fontSize: 28, bold: true
+  });
+  slide.addText(section.bullets.map(b => ({ text: b, options: { bullet: true } })), {
+    x: 0.5, y: 1.3, w: 9, h: 5,
+    fontSize: 16
+  });
+}
 
-# Title slide
-slide = prs.slides.add_slide(prs.slide_layouts[0])
-slide.shapes.title.text = document_title
-slide.placeholders[1].text = subtitle
-
-# Content slides per section
-for section in sections:
-    slide = prs.slides.add_slide(prs.slide_layouts[1])
-    slide.shapes.title.text = section.name
-    body = slide.placeholders[1]
-    for point in section.bullet_points:
-        body.text_frame.add_paragraph().text = point
-
-prs.save(output_path)
+prs.writeFile({ fileName: "{output_path}" });
 ```
+
+**Design tips**: Pick a bold color palette specific to the topic. Use varied layouts (two-column, icon+text rows, large stat callouts). Every slide needs a visual element — avoid text-only slides. See the official `pptx` skill for comprehensive design guidelines.
 
 ---
 
@@ -200,18 +306,38 @@ prs.save(output_path)
 
 ## Dependency Management
 
-Before executing a pipeline, check if required tools are available:
+Before executing a pipeline, check required tools:
 
 ```bash
-# Check pandoc
-which pandoc || echo "MISSING: pandoc — install via brew install pandoc"
-
-# Check PDF engine (for PDF output)
-which xelatex || which pdflatex || which wkhtmltopdf || echo "MISSING: PDF engine"
-
-# Check Python libraries (for XLSX/PPTX)
+# Python libraries (pre-installed in Claude Cowork sandbox)
+python3 -c "from reportlab.lib.pagesizes import A4" 2>/dev/null || echo "MISSING: reportlab — pip3 install reportlab"
 python3 -c "import openpyxl" 2>/dev/null || echo "MISSING: openpyxl — pip3 install openpyxl"
-python3 -c "from pptx import Presentation" 2>/dev/null || echo "MISSING: python-pptx — pip3 install python-pptx"
+python3 -c "import markdown" 2>/dev/null || echo "MISSING: markdown — pip3 install markdown"
+
+# npm packages (for DOCX/PPTX)
+npm list -g docx 2>/dev/null || echo "MISSING: docx — npm install -g docx"
+npm list -g pptxgenjs 2>/dev/null || echo "MISSING: pptxgenjs — npm install -g pptxgenjs"
+
+# Optional accelerator (not required)
+which pandoc && echo "OPTIONAL: pandoc available" || echo "INFO: pandoc not found (not required)"
 ```
 
 If a dependency is missing, inform the user with the install command and ask whether to install it automatically.
+
+---
+
+## Recommended: Install Official Skills
+
+For the best document generation experience, install the official Anthropic skills:
+
+```bash
+# Clone the official skills repository
+git clone https://github.com/anthropics/skills.git ~/.claude/skills-repo
+
+# Symlink document skills
+for skill in pdf docx pptx xlsx doc-coauthoring; do
+  ln -sf ~/.claude/skills-repo/skills/$skill ~/.claude/skills/$skill
+done
+```
+
+These skills provide comprehensive procedures, helper scripts, QA workflows, and design guidelines that far exceed the fallback pipelines above.

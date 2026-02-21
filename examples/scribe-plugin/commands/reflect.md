@@ -20,11 +20,14 @@ Review document quality, check alignment with scribe.md, and improve.
 
 1. Read `${CLAUDE_PLUGIN_ROOT}/skills/document-writing/SKILL.md`
 2. Read `scribe.md` — extract the original design (outline, meta, sources)
-3. Read the target document from `$ARGUMENTS` (or most recently generated output):
+3. Read the target document from `$ARGUMENTS` (or most recently generated output).
+   If official Anthropic skills are installed (`~/.claude/skills/` or `.claude/skills/`), use their read procedures. Otherwise use fallback:
    - For `.md`: read directly
-   - For `.pdf/.docx/.html`: convert back to text via pandoc for analysis
-   - For `.xlsx`: read via Python + openpyxl
-   - For `.pptx`: read via Python + python-pptx
+   - For `.pdf`: use `pdfplumber` for text/table extraction (`import pdfplumber`)
+   - For `.docx`: use `pandoc --track-changes=all` or XML unpack for analysis
+   - For `.html`: read directly as text
+   - For `.xlsx`: use `pandas` (`pd.read_excel()`) or `openpyxl` with `data_only=True`
+   - For `.pptx`: use `markitdown` (`python -m markitdown`) for text extraction
    - For `.pen`: use Pencil MCP `batch_get` to read content
    - For Confluence: use Atlassian MCP `getConfluencePage`
 4. If no `scribe.md` exists → read document standalone, infer structure

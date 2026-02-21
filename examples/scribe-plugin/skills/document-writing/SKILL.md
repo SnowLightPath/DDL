@@ -38,7 +38,7 @@ scribe.md Outline          SWARM mapping
 # Document Title
 
 ## Meta
-- format: pdf
+- format: docx
 - language: ja
 - audience: executive
 - tone: formal
@@ -77,16 +77,18 @@ scribe.md Outline          SWARM mapping
 
 Each output format has a specific tool chain. See `references/format-pipelines.md` for detailed procedures.
 
-| Format | Pipeline | Tools |
-|--------|----------|-------|
-| `.md` | Direct write | Write tool |
-| `.pdf` | MD → pandoc → PDF | Write + Bash(pandoc) |
-| `.docx` | MD → pandoc → DOCX | Write + Bash(pandoc) |
-| `.html` | MD → pandoc → HTML | Write + Bash(pandoc) |
-| `.xlsx` | Python + openpyxl | Bash(python3) |
-| `.pptx` | Python + python-pptx | Bash(python3) |
-| `.pen` | Pencil MCP tools | MCP tools |
-| `confluence` | Atlassian MCP | MCP tools |
+| Format | Pipeline | Tools | Official Skill |
+|--------|----------|-------|----------------|
+| `.md` | Direct write | Write tool | — |
+| `.pdf` | Python + reportlab | Bash(python3) | `pdf` |
+| `.docx` | JavaScript + docx-js | Bash(node) | `docx` |
+| `.html` | Python + markdown | Bash(python3) | — |
+| `.xlsx` | Python + openpyxl | Bash(python3) | `xlsx` |
+| `.pptx` | JavaScript + pptxgenjs | Bash(node) | `pptx` |
+| `.pen` | Pencil MCP tools | MCP tools | — |
+| `confluence` | Atlassian MCP | MCP tools | — |
+
+Official skills: `github.com/anthropics/skills`. When installed, the CONVERT phase reads and follows the skill's SKILL.md instead of the fallback pipeline.
 
 ## Parallel Writing Procedure
 

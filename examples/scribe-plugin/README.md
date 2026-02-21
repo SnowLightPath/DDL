@@ -38,7 +38,7 @@ Edit `.claude/CLAUDE.md` to set your project name and customize detection target
        ↓
   /scribe:realize        Write & export
        ↓
-  report.pdf             Output file
+  report.docx            Output file
        ↓
   /scribe:reflect        Review & improve
        ↓
@@ -50,21 +50,21 @@ Edit `.claude/CLAUDE.md` to set your project name and customize detection target
 | Command | Intent | Example |
 |---------|--------|---------|
 | `/scribe:draft` | Design document outline, audience, format | `/scribe:draft quarterly report` |
-| `/scribe:realize` | Write and export the document | `/scribe:realize report.pdf` |
-| `/scribe:reflect` | Review quality and improve | `/scribe:reflect report.pdf` |
+| `/scribe:realize` | Write and export the document | `/scribe:realize report.docx` |
+| `/scribe:reflect` | Review quality and improve | `/scribe:reflect report.docx` |
 
 ## Supported Formats
 
-| Format | Extension | Tool Chain |
-|--------|-----------|------------|
-| Markdown | `.md` | Direct write |
-| PDF | `.pdf` | pandoc + xelatex |
-| Word | `.docx` | pandoc |
-| HTML | `.html` | pandoc |
-| Excel | `.xlsx` | Python + openpyxl |
-| PowerPoint | `.pptx` | Python + python-pptx |
-| Pencil Design | `.pen` | Pencil MCP |
-| Confluence | `--confluence` | Atlassian MCP |
+| Format | Extension | Tool Chain | Official Skill |
+|--------|-----------|------------|----------------|
+| Markdown | `.md` | Direct write | — |
+| PDF | `.pdf` | Python + reportlab | [`pdf`](https://github.com/anthropics/skills/tree/main/skills/pdf) |
+| Word | `.docx` | JS + docx-js | [`docx`](https://github.com/anthropics/skills/tree/main/skills/docx) |
+| HTML | `.html` | Python + markdown | — |
+| Excel | `.xlsx` | Python + openpyxl | [`xlsx`](https://github.com/anthropics/skills/tree/main/skills/xlsx) |
+| PowerPoint | `.pptx` | JS + pptxgenjs | [`pptx`](https://github.com/anthropics/skills/tree/main/skills/pptx) |
+| Pencil Design | `.pen` | Pencil MCP | — |
+| Confluence | `--confluence` | Atlassian MCP | — |
 
 ## How It Works
 
@@ -81,7 +81,7 @@ Creates `scribe.md` — a document design file:
 # Q4 Quarterly Report
 
 ## Meta
-- format: pdf
+- format: docx
 - audience: executive
 - tone: formal
 - language: ja
@@ -98,21 +98,21 @@ Creates `scribe.md` — a document design file:
 ### 2. Write the document
 
 ```bash
-/scribe:realize quarterly-report.pdf
+/scribe:realize quarterly-report.docx
 ```
 
 Scribe reads `scribe.md` and writes sections **in parallel** using SWARM:
 
 ```
 writer-1: §1 Sales Analysis    ─→ ┐
-writer-2: §2 Project Progress  ─→ ├─→ Lead merges → pandoc → PDF
+writer-2: §2 Project Progress  ─→ ├─→ Lead merges → docx-js → DOCX
 writer-3: §3 Next Steps        ─→ ┘
 ```
 
 ### 3. Review and improve
 
 ```bash
-/scribe:reflect quarterly-report.pdf
+/scribe:reflect quarterly-report.docx
 ```
 
 Reviews quality, consistency, and completeness. Suggests improvements.
@@ -131,14 +131,28 @@ The lead agent merges sections, unifies tone, resolves cross-references, and con
 
 | Tool | Required For | Install |
 |------|-------------|---------|
-| pandoc | PDF, DOCX, HTML | `brew install pandoc` |
-| xelatex | PDF output | `brew install --cask mactex` |
+| reportlab | PDF output | `pip3 install reportlab` |
+| docx (npm) | DOCX output | `npm install -g docx` |
+| pptxgenjs (npm) | PPTX output | `npm install -g pptxgenjs` |
 | openpyxl | XLSX output | `pip3 install openpyxl` |
-| python-pptx | PPTX output | `pip3 install python-pptx` |
+| markdown | HTML output | `pip3 install markdown` |
 | Pencil MCP | .pen output | Configure in MCP settings |
 | Atlassian MCP | Confluence | Configure in MCP settings |
 
 Only install what you need. The plugin checks dependencies at runtime and prompts for missing tools.
+
+### Recommended: Official Anthropic Skills
+
+For the best output quality, install the official [document skills](https://github.com/anthropics/skills):
+
+```bash
+git clone https://github.com/anthropics/skills.git ~/.claude/skills-repo
+for skill in pdf docx pptx xlsx doc-coauthoring; do
+  ln -sf ~/.claude/skills-repo/skills/$skill ~/.claude/skills/$skill
+done
+```
+
+When installed, Scribe automatically uses these skills for format conversion instead of its built-in fallback pipelines.
 
 ## Philosophy
 

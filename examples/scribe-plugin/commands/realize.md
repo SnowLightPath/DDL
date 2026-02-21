@@ -11,9 +11,9 @@ Write the document following scribe.md, output in the specified format.
 
 ## Usage
 
-- `/scribe:realize report.pdf` — Write and export as PDF
+- `/scribe:realize report.docx` — Write and export as Word
 - `/scribe:realize notes.md` — Write as Markdown
-- `/scribe:realize proposal.docx` — Write and export as Word
+- `/scribe:realize proposal.pdf` — Write and export as PDF
 - `/scribe:realize dashboard.xlsx` — Generate as Excel spreadsheet
 - `/scribe:realize deck.pptx` — Generate as PowerPoint
 - `/scribe:realize wireframe.pen` — Create as Pencil design
@@ -27,14 +27,19 @@ Write the document following scribe.md, output in the specified format.
 2. Read `scribe.md` — extract title, meta, outline, sources
 3. If no `scribe.md` exists → refuse ("Run `/scribe:draft` first")
 4. Parse `$ARGUMENTS` to determine output filename and format (file extension or `--confluence` flag)
-5. Check format pipeline dependencies:
+5. Check for official Anthropic skills (`github.com/anthropics/skills`):
+   - Look for `pdf`, `docx`, `pptx`, `xlsx` skills in `~/.claude/skills/` or `.claude/skills/`
+   - If found for the target format → will use official skill in Phase 3
+   - If not found → will use fallback pipeline from `format-pipelines.md`
+6. Check format pipeline dependencies:
 
 ```bash
-# Verify tools for the target format
-which pandoc || echo "MISSING: pandoc"
-# For PDF: check PDF engine
-# For XLSX: python3 -c "import openpyxl"
-# For PPTX: python3 -c "from pptx import Presentation"
+# Python libraries (pre-installed in Claude Cowork sandbox)
+python3 -c "from reportlab.lib.pagesizes import A4" 2>/dev/null || echo "MISSING: reportlab"
+python3 -c "import openpyxl" 2>/dev/null || echo "MISSING: openpyxl"
+# npm packages (for DOCX/PPTX)
+npm list -g docx 2>/dev/null || echo "MISSING: docx"
+npm list -g pptxgenjs 2>/dev/null || echo "MISSING: pptxgenjs"
 ```
 
 If dependencies are missing, report and ask user whether to install.
@@ -105,6 +110,11 @@ For inline execution (1 section or sequential), write sections directly in order
 ### Phase 3: CONVERT
 
 Execute the format pipeline based on the target format.
+
+**Step 1: Check for official skill**
+If an official Anthropic skill was detected in Phase 0 for the target format, read its SKILL.md and follow its procedures.
+
+**Step 2: Otherwise, use fallback pipeline**
 Read `${CLAUDE_PLUGIN_ROOT}/skills/document-writing/references/format-pipelines.md` for the specific procedure.
 
 **Markdown (.md)**:
@@ -112,28 +122,28 @@ Read `${CLAUDE_PLUGIN_ROOT}/skills/document-writing/references/format-pipelines.
 cp _scribe_tmp/{document}.md {output_path}
 ```
 
-**PDF (.pdf)**:
-```bash
-pandoc _scribe_tmp/{document}.md -o {output_path} \
-  --pdf-engine=xelatex --toc --number-sections \
-  -V geometry:margin=2.5cm
+**PDF (.pdf)**: Use `reportlab` (Python). Official skill: `pdf`.
+```python
+from reportlab.platypus import SimpleDocTemplate, Paragraph
+from reportlab.lib.styles import getSampleStyleSheet
+# Build PDF from sections (see format-pipelines.md for full procedure)
 ```
 
-**Word (.docx)**:
+**Word (.docx)**: Use `docx-js` (npm). Official skill: `docx`.
 ```bash
-pandoc _scribe_tmp/{document}.md -o {output_path} \
-  --toc --number-sections
+node -e "const {Document,Packer,...} = require('docx'); ..."
+# Build DOCX from sections (see format-pipelines.md for full procedure)
 ```
 
-**HTML (.html)**:
-```bash
-pandoc _scribe_tmp/{document}.md -o {output_path} \
-  --standalone --toc --number-sections
+**HTML (.html)**: Use Python `markdown` module.
+```python
+import markdown
+# Convert merged markdown to standalone HTML (see format-pipelines.md)
 ```
 
-**Excel (.xlsx)**: Generate via Python + openpyxl script.
+**Excel (.xlsx)**: Use `openpyxl` (Python). Official skill: `xlsx`.
 
-**PowerPoint (.pptx)**: Generate via Python + python-pptx script.
+**PowerPoint (.pptx)**: Use `pptxgenjs` (npm). Official skill: `pptx`.
 
 **Pencil (.pen)**: Use Pencil MCP tools (open_document, batch_design, get_screenshot).
 
