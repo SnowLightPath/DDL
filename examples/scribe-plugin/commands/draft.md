@@ -24,6 +24,8 @@ Design the document outline, audience, tone, and sources before writing.
 
 ### Phase 1: DISCOVER
 
+If the official `doc-coauthoring` skill is installed (`~/.claude/skills/doc-coauthoring/`), reference its Context Gathering stage for structured information collection from the user.
+
 If user references source files or data:
 
 1. Scan referenced files to understand available content
