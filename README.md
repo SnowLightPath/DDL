@@ -100,7 +100,7 @@ cp -r examples/codex-skills/*/  your-project/.codex/skills/
 
 ### 📄 Scribe Plugin
 
-Document writing workflow as a Claude Code plugin.
+Document writing workflow for [Claude Code](https://code.claude.com/) and [Claude Cowork](https://claude.com/).
 
 ```bash
 # Add marketplace
@@ -118,7 +118,7 @@ claude plugin install scribe@snow-light-place
 | ⚡ `/scribe:realize` | Write and export the document |
 | 🪞 `/scribe:reflect` | Review and improve |
 
-> Supports PDF, DOCX, HTML, XLSX, PPTX, Pencil (.pen), and Confluence output. Parallel section writing with [Agent Teams](https://code.claude.com/docs/en/agent-teams).
+> Supports PDF, DOCX, HTML, XLSX, PPTX, Pencil (.pen), and Confluence output. Parallel section writing with [Agent Teams](https://code.claude.com/docs/en/agent-teams). Works in both Claude Code (CLI) and Claude Cowork (Web).
 
 ---
 
