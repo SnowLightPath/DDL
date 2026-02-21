@@ -38,7 +38,7 @@ Edit `.claude/CLAUDE.md` to set your project name and customize detection target
        ↓
   /scribe:realize        Write & export
        ↓
-  report.docx            Output file
+  report.docx       ←→   Human & LLM edit
        ↓
   /scribe:reflect        Review & improve
        ↓
