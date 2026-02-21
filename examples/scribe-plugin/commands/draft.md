@@ -53,15 +53,15 @@ Collaborate with user to design the document:
 
 1. If `$ARGUMENTS` is provided, use it as the initial topic/description
 2. Ask: "What document do you want to write? Who will read it?"
-2. Determine meta settings:
+3. Determine meta settings:
    - **format**: What output format? (md, pdf, docx, html, xlsx, pptx, pen, confluence)
    - **audience**: Who will read this?
    - **tone**: formal, casual, technical, or executive?
    - **language**: What language?
-3. Build the outline together:
+4. Build the outline together:
    - Propose section structure based on template and sources
    - Iterate with user until the structure feels right
-4. Identify sources to reference in each section
+5. Identify sources to reference in each section
 
 +++DETECT:
   D1: Vague Outline — Section has no subsections or topic description

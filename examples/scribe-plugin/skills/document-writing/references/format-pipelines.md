@@ -53,12 +53,26 @@ from reportlab.lib.pagesizes import letter, A4
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import cm
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+import os, subprocess
 
 doc = SimpleDocTemplate("{output_path}", pagesize=A4,
     topMargin=2.5*cm, bottomMargin=2.5*cm,
     leftMargin=2.5*cm, rightMargin=2.5*cm)
 styles = getSampleStyleSheet()
 story = []
+
+# CJK font setup (when language is ja)
+font_path = os.path.expanduser("~/.claude/fonts/NotoSansJP.ttf")
+if not os.path.exists(font_path):
+    os.makedirs(os.path.dirname(font_path), exist_ok=True)
+    subprocess.run(["curl", "-fsSL", "-o", font_path,
+        "https://github.com/google/fonts/raw/main/ofl/notosansjp/NotoSansJP%5Bwght%5D.ttf"
+    ], check=True, timeout=60)
+pdfmetrics.registerFont(TTFont("NotoSansJP", font_path))
+for s in ("Title", "Heading1", "Normal"):
+    styles[s].fontName = "NotoSansJP"
 
 # Title
 story.append(Paragraph(document_title, styles['Title']))
@@ -75,7 +89,7 @@ doc.build(story)
 
 **Important**: Never use Unicode subscript/superscript characters in reportlab — use `<sub>` and `<super>` tags in Paragraph objects instead.
 
-**For Japanese documents**: Use a CJK-compatible font. Register with `pdfmetrics.registerFont()` if needed.
+**For Japanese documents**: The CJK font block above downloads Noto Sans JP to `~/.claude/fonts/NotoSansJP.ttf` (cached across runs) and applies it to Title/Heading1/Normal styles. Include the CJK font block only when `{language}` starts with `ja`. For other CJK languages, adapt the font accordingly.
 
 ---
 
