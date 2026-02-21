@@ -1,6 +1,6 @@
 # ✨ Scribe Plugin
 
-> Document writing workflow for [Claude Code](https://code.claude.com/) and [Claude Cowork](https://claude.com/).
+> Document writing workflow for [Claude Cowork](https://claude.com/product/cowork) and [Claude Code](https://code.claude.com/).
 
 Draft outlines, write documents in parallel by section, output in any format.
 
