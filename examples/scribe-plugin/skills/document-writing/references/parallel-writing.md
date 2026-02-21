@@ -1,37 +1,39 @@
-# Parallel Writing Methodology
+# Parallel Writing — `collect:` Microcode
 
-How Scribe uses SWARM to write document sections concurrently.
+How Scribe assembles document sections after parallel compilation.
+
+SWARM execution follows DDL-PROTOCOL-SKILL.md §2.4 (TeamCreate → Scale → Spawn → Monitor → Collect → Shutdown). This document defines the document-specific `collect:` microcode — the merge procedure executed by the lead agent after all writer agents complete.
 
 ---
 
-## Concept
-
-Traditional document writing is sequential: write Section 1, then Section 2, etc. Scribe breaks this pattern by treating each section as an independent scope that can be written in parallel.
+## Compilation Model
 
 ```
 Sequential (traditional):
-  §1 ──→ §2 ──→ §3 ──→ §4 ──→ merge
+  §1 ──→ §2 ──→ §3 ──→ §4 ──→ output
   [======================== total time]
 
-Parallel (Scribe SWARM):
+Parallel (SWARM §2.4):
   §1 ──→ ┐
-  §2 ──→ ├──→ merge ──→ unify
+  §2 ──→ ├──→ collect: (link + optimize + codegen)
   §3 ──→ ┤
   §4 ──→ ┘
-  [==== write][=merge=]
+  [==== compile][== collect ==]
 ```
+
+Each section is a **compilation unit**. Writer agents compile sections independently. The `collect:` microcode then links, optimizes, and generates the target format.
 
 ---
 
-## When to Parallelize
+## Dynamic Scaling
 
-The SWARM condition evaluates the number of top-level sections in `scribe.md`:
+The SWARM condition evaluates section count per DDL-PROTOCOL §2.3:
 
-| Section count | Action |
-|---------------|--------|
-| 0–1 | Write inline, no SWARM |
-| 2–5 | 1 writer per section |
-| 6+ | Batch related sections (max 5 writers) |
+| Section count | max | Result |
+|---------------|-----|--------|
+| 0–1 | — | Inline, no SWARM |
+| 2–5 | 5 | 1 writer per section |
+| 6+ | 5 | Lead batches related sections (§2.3 `batch: auto`) |
 
 Sections are identified by `### N. Title` entries under `## Outline` in `scribe.md`.
 
@@ -39,12 +41,12 @@ Sections are identified by `### N. Title` entries under `## Outline` in `scribe.
 
 ## Writer Agent Context
 
-Each writer agent receives:
+Each writer agent (compilation unit processor) receives:
 
 1. **Section outline**: The specific section and its subsections from `scribe.md`
 2. **Meta settings**: tone, audience, language, style constraints
 3. **Source references**: Only the sources relevant to that section
-4. **Cross-reference hints**: Section titles of other sections for forward/backward references
+4. **Cross-reference hints**: Section titles of other sections (external symbols for forward/backward references)
 5. **Word budget**: If `max-words` is set, proportionally divided by section
 
 ### Writer Prompt Template
@@ -71,7 +73,7 @@ Word budget: approximately {word_budget} words.
 Instructions:
 - Write in markdown format
 - Use the heading level appropriate for this section (## for top-level)
-- Include placeholders like [→ See §N] for cross-references
+- Include placeholders like [→ See §N] for cross-references (unresolved symbols)
 - Do not repeat content that belongs in other sections
 - Match the specified tone consistently
 
@@ -80,13 +82,13 @@ Report completed section text to team-lead when done.
 
 ---
 
-## Lead Agent: Merge Procedure
+## `collect:` Microcode — Merge Procedure
 
-After all writer agents complete, the lead agent performs:
+After all writer agents complete (§2.4 Step 5), the lead agent executes the following merge procedure. This is the `collect:` field's microcode — the link + optimize + codegen passes.
 
-### Step 1: Assemble
+### Pass 1: Assemble (Link)
 
-Concatenate all sections in outline order, with consistent heading hierarchy:
+Concatenate all compilation units in outline order:
 
 ```markdown
 # Document Title
@@ -101,15 +103,15 @@ Concatenate all sections in outline order, with consistent heading hierarchy:
 ...content...
 ```
 
-### Step 2: Resolve Cross-References
+### Pass 2: Resolve Cross-References (Symbol Resolution)
 
-Replace all `[→ See §N]` placeholders with actual markdown links or section references:
+Replace all unresolved symbols (`[→ See §N]`) with actual links:
 
 ```
 [→ See §2]  →  [See Section 2: Analysis](#2-analysis)
 ```
 
-### Step 3: Unify Tone
+### Pass 3: Unify Tone (Optimization)
 
 Read through the merged document and fix:
 - Inconsistent terminology (same concept named differently across sections)
@@ -117,58 +119,34 @@ Read through the merged document and fix:
 - Perspective changes (first person → third person)
 - Tense inconsistencies
 
-### Step 4: Add Document Furniture
+### Pass 4: Add Document Furniture
 
 Based on the format and template:
 - **Table of contents** (for documents with 3+ sections)
 - **Executive summary** (for `report` template with `executive` audience)
-- **Headers/footers** (document title, page numbers — handled by pandoc)
+- **Headers/footers** (document title, page numbers — handled by format pipeline)
 - **Bibliography/references** (if citations are used)
 
-### Step 5: Format Conversion
+### Pass 5: Code Generation (Format Conversion)
 
-Execute the appropriate format pipeline from `format-pipelines.md`.
+Execute the target backend from `format-pipelines.md`. If an official Anthropic skill is installed for the target format, read and follow its SKILL.md instead.
+
+Write merged document to `_scribe_tmp/{document}.md`, then convert to target format.
 
 ---
 
 ## Handling Dependencies Between Sections
 
-Some sections naturally depend on others (e.g., "Conclusions" depends on "Analysis"). Handle this with:
+Some compilation units have dependencies (e.g., "Conclusions" depends on "Analysis"). Handle with:
 
-**Option A: Two-pass writing**
-1. First pass: All sections write independently with cross-reference placeholders
-2. Second pass: Dependent sections are revised with context from their dependencies
+**Option A: Two-pass compilation**
+1. First pass: All sections compile independently with unresolved symbols
+2. Second pass: Dependent sections are recompiled with resolved context from their dependencies
 
-**Option B: Sequential dependency chain**
+**Option B: Dependency-ordered scheduling**
 Mark dependencies in `scribe.md`:
 ```markdown
 ### 3. Conclusions
 - depends: [1, 2]
 ```
-Write independent sections in parallel first, then write dependent sections with full context.
-
----
-
-## SWARM Block Template
-
-```
-+++SWARM: 2+ sections in scribe.md
-
-  team: realize-write
-  spawn: writer-{section}
-  type: general-purpose
-  max: 5
-  batch: auto
-  each: |
-    Write section "{section}" for document "{title}".
-    Follow meta settings: tone={tone}, audience={audience}, language={language}.
-    Use sources relevant to this section.
-    Include [→ See §N] placeholders for cross-references.
-    Report completed section to team-lead when done.
-  collect: |
-    Lead assembles sections in outline order.
-    Resolves cross-references.
-    Unifies tone and terminology.
-    Adds document furniture (TOC, summary).
-    Converts to target format via format pipeline.
-```
+Compile independent sections in parallel first, then compile dependent sections with full context. This maps to §2.3 `batch: auto` where the lead groups dependent sections into later batches.
