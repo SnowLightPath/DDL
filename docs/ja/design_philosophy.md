@@ -130,7 +130,7 @@ DDLは厳密な方法論ではなく、目的やデザインの集まりです�
 
 最終的にコードが正（source of truth）となります。DDLドキュメントは不要になったら削除します。
 
-> **Tool-Assisted Option**: [Claude Code](../../examples/claude-commands/) (`/draft`, `/realize`, `/reflect` + サポートコマンド) | [OpenAI Codex](../../examples/codex-skills/) (`$draft`, `$realize`, `$reflect` + サポートスキル)
+> **Tool-Assisted Option**: [Claude Code](../../examples/claude-commands/) (`/draft`, `/realize`, `/reflect` + サポートコマンド) | [OpenAI Codex](../../examples/codex-skills/) (`$draft`, `$realize`, `$reflect` + サポートスキル) | [Scribe Plugin](../../examples/scribe-plugin/) (ドキュメント執筆: `claude plugin install scribe@snow-light-place`)
 
 -----
 

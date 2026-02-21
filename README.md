@@ -98,6 +98,28 @@ cp -r examples/codex-skills/*/  your-project/.codex/skills/
 
 > Skills follow the same Phase-based structure with Detection Targets and STOP gates. Codex processes scopes sequentially.
 
+### 📄 Scribe Plugin
+
+Document writing workflow as a Claude Code plugin.
+
+```bash
+# Add marketplace
+claude plugin marketplace add SnowLightPath/snow-light-place
+
+# Install plugin
+claude plugin install scribe@snow-light-place
+```
+
+**🔄 Document Loop:**
+
+| Command | Action |
+|---------|--------|
+| 📝 `/scribe:draft` | Design the document outline |
+| ⚡ `/scribe:realize` | Write and export the document |
+| 🪞 `/scribe:reflect` | Review and improve |
+
+> Supports PDF, DOCX, HTML, XLSX, PPTX, Pencil (.pen), and Confluence output. Parallel section writing with [Agent Teams](https://code.claude.com/docs/en/agent-teams).
+
 ---
 
 ## 📄 License

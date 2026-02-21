@@ -1,0 +1,9 @@
+{
+  "name": "scribe",
+  "version": "1.0.0",
+  "description": "Document writing workflow: draft outlines, realize documents in any format (MD, PDF, DOCX, XLSX, PPTX, .pen, Confluence), reflect to improve quality. Parallel section writing with SWARM.",
+  "author": {
+    "name": "DDL Project"
+  },
+  "keywords": ["document", "writing", "parallel", "pandoc", "pdf", "docx", "confluence"]
+}
