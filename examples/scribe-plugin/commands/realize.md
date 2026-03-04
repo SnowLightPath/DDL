@@ -1,6 +1,6 @@
 ---
 description: Write and generate the document in the specified format
-allowed-tools: Read, Write, Edit, Grep, Glob, Bash, Task
+allowed-tools: Read, Write, Edit, Grep, Glob, Bash, Task, mcp__pencil__open_document, mcp__pencil__batch_design, mcp__pencil__get_screenshot, mcp__atlassian__createConfluencePage, mcp__atlassian__updateConfluencePage
 argument-hint: <filename.ext> or --confluence "Space/Title"
 disable-model-invocation: true
 ---

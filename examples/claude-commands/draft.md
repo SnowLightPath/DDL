@@ -12,7 +12,7 @@ Write the ideal experience before implementation exists.
 ### Phase 0: INIT
 
 1. Read `.claude/commands/DDL-PROTOCOL-SKILL.md`
-2. Read `CLAUDE.md`
+2. Read `.claude/CLAUDE.md`
 3. Read `design.md` — extract scopes and existing principles
 4. If no `design.md` exists → ask user to create one or proceed with defaults
 

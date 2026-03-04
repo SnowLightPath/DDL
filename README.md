@@ -52,7 +52,7 @@ Realize and Reflect are inverse functions.
 
 ```bash
 cp examples/claude-commands/CLAUDE.md your-project/.claude/
-cp examples/claude-commands/*.md your-project/.claude/commands/
+cp examples/claude-commands/{DDL-PROTOCOL-SKILL.md,draft.md,realize.md,reflect.md,docs.md,refactoring.md,commit.md} your-project/.claude/commands/
 ```
 
 **🔄 Core Loop:**
@@ -77,7 +77,8 @@ cp examples/claude-commands/*.md your-project/.claude/commands/
 
 ```bash
 cp examples/codex-skills/AGENTS.md your-project/
-cp -r examples/codex-skills/*/  your-project/.codex/skills/
+cp -r examples/codex-skills/.agents your-project/
+cp -r examples/codex-skills/.codex your-project/
 ```
 
 **🔄 Core Loop:**
@@ -96,7 +97,7 @@ cp -r examples/codex-skills/*/  your-project/.codex/skills/
 | 📚 `$docs` | Documentation audit |
 | 🔧 `$refactoring` | Code quality audit |
 
-> Skills follow the same Phase-based structure with Detection Targets and STOP gates. Codex processes scopes sequentially.
+> Skills follow the same Phase-based structure with Detection Targets and STOP gates. Codex runs scopes in parallel when `[agents]` is configured, otherwise sequential fallback.
 
 ### 📄 Scribe Plugin
 

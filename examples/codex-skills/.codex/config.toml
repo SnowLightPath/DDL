@@ -1,0 +1,18 @@
+# DDL multi-agent configuration
+# Enable multi-agent: run `/experimental` in Codex CLI, then enable multi_agent
+#
+# Agent roles map to +++SWARM `type:` fields in SKILL.md:
+#   Explore         → explorer (read-only survey/read phases)
+#   general-purpose → worker   (workspace-write execute/implement phases)
+
+[agents]
+max_threads = 5
+max_depth = 1
+
+[agents.explorer]
+description = "Read-only scope exploration for DDL survey phases"
+config_file = "agents/explorer.toml"
+
+[agents.worker]
+description = "Implementation agent for DDL execute phases"
+config_file = "agents/worker.toml"

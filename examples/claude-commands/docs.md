@@ -12,7 +12,7 @@ Audit and fix documentation quality.
 ### Phase 0: INIT
 
 1. Read `.claude/commands/DDL-PROTOCOL-SKILL.md`
-2. Read `CLAUDE.md`
+2. Read `.claude/CLAUDE.md`
 3. Read `design.md` — extract scopes and documentation paths
 4. Discover all documentation files (`.md`, `.txt`, etc.)
 

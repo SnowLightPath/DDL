@@ -6,13 +6,14 @@ Record verified code changes to the repository.
 
 - `/commit` — Commit locally only
 - `/commit remote` — Commit and push
+- `/commit --sync-port` — Commit, then sync scribe-plugin to snow-light-place
 
 ## Phases
 
 ### Phase 0: INIT
 
 1. Read `.claude/commands/DDL-PROTOCOL-SKILL.md`
-2. Read `CLAUDE.md`
+2. Read `.claude/CLAUDE.md`
 3. Read `design.md` — extract scopes, validation commands
 4. Run `git status` and `git diff --staged` to understand current state
 
@@ -60,6 +61,23 @@ Only if user specified `remote` or explicitly requested:
 
 1. Push to remote
 2. Report push result
+
+### Phase 5: SYNC-PORT (optional)
+
+Only if user specified `--sync-port`:
+
+1. Check if `examples/scribe-plugin/` has changes in the current commit
+2. If no scribe changes → report "No scribe changes to sync" and skip
+3. Sync `examples/scribe-plugin/` → `../snow-light-place/scribe/` (overwrite plugin files only, preserve marketplace metadata)
+4. In snow-light-place repo: stage, commit with same message, push to remote
+5. Run V21 from `design.md` to verify sync
+
++++DETECT:
+  D6: Port Divergence — snow-light-place/scribe differs from examples/scribe-plugin after sync
+  D7: Identity Mismatch — snow-light-place commit author is not SnowLightPath
+
++++STOP: on D6
++++STOP: on D7
 
 ## Constraints
 

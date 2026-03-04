@@ -1,6 +1,6 @@
 ---
 name: ddl-protocol
-description: "Use this skill when executing or authoring DDL commands (draft, realize, reflect, refactoring, docs, commit). Triggers: any `/command` invocation registered in CLAUDE.md, requests to create new DDL commands, or tasks referencing design.md-driven workflows with Phases, DETECT, STOP, SWARM. Do NOT use for general coding, documentation, or tasks unrelated to DDL workflow execution."
+description: "Use this skill when executing or authoring DDL commands (draft, realize, reflect, refactoring, docs, commit, resonate). Triggers: any `/command` invocation registered in .claude/CLAUDE.md, requests to create new DDL commands, or tasks referencing design.md-driven workflows with Phases, DETECT, STOP, SWARM. Do NOT use for general coding, documentation, or tasks unrelated to DDL workflow execution."
 ---
 
 # DDL-PROTOCOL
@@ -165,7 +165,7 @@ One-line intent.
 ### Phase 0: INIT
 
 1. Read `.claude/commands/DDL-PROTOCOL-SKILL.md`
-2. Read `CLAUDE.md`
+2. Read `.claude/CLAUDE.md`
 3. Read `design.md` — extract relevant items
 4. If no `design.md` → fallback behavior
 

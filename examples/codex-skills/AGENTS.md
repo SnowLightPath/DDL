@@ -26,15 +26,32 @@
 | `+++NEVER` | `+++NEVER: prohibition` | Local constraints per skill |
 | `+++Report` | `+++Report:` followed by markdown table rows | Output template presented at STOP gate |
 
-## +++SWARM Handling
+## +++SWARM Execution
 
-Codex does not support Agent Teams. When a skill defines `+++SWARM: condition`:
+When a skill defines `+++SWARM: condition`:
 
 1. Evaluate the condition against `DESIGN.md`
 2. If condition is false or single scope → execute `each:` task inline
-3. If condition is true with 2+ scopes → execute `each:` task **sequentially** for each matching scope
+3. If condition is true with 2+ scopes:
 
-The `team:`, `spawn:`, `max:`, `batch:`, `collect:` fields are metadata only — they document what would be parallelized. Only `each:` is executed as the task template per scope.
+### With multi-agent enabled
+
+When `[agents]` is configured in `.codex/config.toml`:
+
+1. Map the `type:` field to a Codex agent role:
+   - `Explore` → `explorer` role (`sandbox_mode = "read-only"`)
+   - `general-purpose` → `worker` role (`sandbox_mode = "workspace-write"`)
+2. Evaluate scope count against `max:` field to determine concurrency
+3. Spawn one agent per scope (or batch when scope count exceeds `max:`)
+4. Each agent executes the `each:` task for its assigned scope(s)
+5. Lead collects results per the `collect:` field
+
+### Without multi-agent (sequential fallback)
+
+When multi-agent is not enabled:
+
+1. Execute `each:` task **sequentially** for each matching scope
+2. The `team:`, `spawn:`, `max:`, `batch:`, `collect:` fields are metadata only — they document what would be parallelized
 
 ## Detection Targets
 

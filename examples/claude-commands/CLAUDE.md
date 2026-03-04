@@ -37,7 +37,7 @@ Every command defines its own D1–D7. Cross-cutting targets below apply globall
 
 ### On session start
 
-1. Read `CLAUDE.md` (this file)
+1. Read `.claude/CLAUDE.md` (this file)
 2. Read `design.md` if it exists — extract scopes, principles, validation commands
 
 ### On any task

@@ -1,6 +1,6 @@
 ---
 description: Review document quality and reconcile with scribe.md
-allowed-tools: Read, Write, Edit, Grep, Glob, Bash, Task
+allowed-tools: Read, Write, Edit, Grep, Glob, Bash, Task, mcp__pencil__batch_get, mcp__atlassian__getConfluencePage
 argument-hint: [document-path]
 disable-model-invocation: true
 ---
