@@ -21,10 +21,10 @@ claude plugin install scribe@snow-light-place
 
 ### Project Setup
 
-After installing, copy the CLAUDE.md template to your project:
+After installing, copy the CLAUDE.md template from the installed plugin root to your project:
 
 ```bash
-cp examples/scribe-plugin/CLAUDE.md .claude/CLAUDE.md
+cp "${CLAUDE_PLUGIN_ROOT}/CLAUDE.md" .claude/CLAUDE.md
 ```
 
 Edit `.claude/CLAUDE.md` to set your project name and customize detection targets.

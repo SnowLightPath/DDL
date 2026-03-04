@@ -12,7 +12,7 @@ Audit and fix code quality issues.
 ### Phase 0: INIT
 
 1. Read `.claude/commands/DDL-PROTOCOL-SKILL.md`
-2. Read `CLAUDE.md`
+2. Read `.claude/CLAUDE.md`
 3. Read `design.md` — extract scopes, principles, validation commands
 4. If no `design.md` exists → scan project root for common patterns
 

@@ -5,16 +5,31 @@ Example implementation of [Design-Doc Loop (DDL)](../../docs/en/design_philosoph
 ## Installation
 
 ```bash
-# Copy skills to your project
-cp -r examples/codex-skills/draft .codex/skills/
-cp -r examples/codex-skills/realize .codex/skills/
-cp -r examples/codex-skills/reflect .codex/skills/
-cp -r examples/codex-skills/commit .codex/skills/
-cp -r examples/codex-skills/docs .codex/skills/
-cp -r examples/codex-skills/refactoring .codex/skills/
-
-# Copy AGENTS.md to project root
+# Copy everything to your project root
+cp -r examples/codex-skills/.agents .
+cp -r examples/codex-skills/.codex .
 cp examples/codex-skills/AGENTS.md .
+
+# Create your design document
+touch DESIGN.md
+```
+
+The template mirrors Codex's directory convention — no rearranging needed.
+
+## Usage
+
+```bash
+# Start Codex
+codex
+
+# Enable multi-agent (optional, for parallel +++SWARM)
+/experimental
+# → enable multi_agent
+
+# Invoke a skill (type $ to see available skills)
+$draft
+$realize
+$reflect
 ```
 
 ## Skills
@@ -53,7 +68,7 @@ Every skill follows the same pattern:
 3. **STOP gates** — mandatory human approval before mutating shared artifacts
 4. **Constraints** — invariants that must never be violated
 
-> **Note**: Codex processes all scopes **sequentially** (no parallel agent spawning). For parallel execution via Agent Teams (+++SWARM), see the [Claude Code commands](../claude-commands/).
+> **Note**: With [multi-agent enabled](https://developers.openai.com/codex/multi-agent/), `+++SWARM` spawns parallel agents via `.codex/config.toml` roles. Without multi-agent, scopes are processed sequentially.
 
 ## Philosophy
 
