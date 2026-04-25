@@ -52,7 +52,7 @@ Realize and Reflect are inverse functions.
 
 ```bash
 cp examples/claude-commands/CLAUDE.md your-project/.claude/
-cp examples/claude-commands/{DDL-PROTOCOL-SKILL.md,draft.md,realize.md,reflect.md,docs.md,refactoring.md,commit.md} your-project/.claude/commands/
+cp examples/claude-commands/{DDL-PROTOCOL-SKILL.md,draft.md,realize.md,reflect.md,validate.md,docs.md,refactoring.md,commit.md} your-project/.claude/commands/
 ```
 
 **🔄 Core Loop:**
@@ -67,6 +67,7 @@ cp examples/claude-commands/{DDL-PROTOCOL-SKILL.md,draft.md,realize.md,reflect.m
 
 | Command | Action |
 |---------|--------|
+| ✅ `/validate` | Mechanical validation gate |
 | 📦 `/commit` | Verified git commit |
 | 📚 `/docs` | Documentation audit |
 | 🔧 `/refactoring` | Code quality audit |
@@ -93,6 +94,7 @@ cp -r examples/codex-skills/.codex your-project/
 
 | Skill | Action |
 |-------|--------|
+| ✅ `$validate` | Mechanical validation gate |
 | 📦 `$commit` | Verified git commit |
 | 📚 `$docs` | Documentation audit |
 | 🔧 `$refactoring` | Code quality audit |

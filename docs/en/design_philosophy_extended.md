@@ -252,6 +252,7 @@ The Core Loop drives design evolution. Support Commands maintain quality around 
 
 | Support Command | Purpose |
 |-----------------|---------|
+| VALIDATE | Run mechanical validation per scope as declared in DESIGN.md |
 | RESONATE | Synchronize multilingual document versions |
 | COMMIT | Record verified changes to repository |
 | DOCS | Audit and fix documentation quality |
@@ -475,6 +476,25 @@ Don't write:
 
 The principle: "Minimum information needed to restore context in the next session."
 
+### README-as-design Alternative
+
+DESIGN.md is not mandatory. What matters is that *some* shared notebook exists between Human and LLM — Otto's notebook, in any file form.
+
+For projects where the public surface itself is the design (typically open-source libraries, CLIs, or HTTP APIs), the README plus API reference can serve as the living spec:
+
+| Situation | Suggested Notebook |
+|-----------|-------------------|
+| Application / multi-deliverable / research project | `DESIGN.md` |
+| Public library where API == design | `README.md` + `docs/api/` |
+| Tiny tool (single script) | docstring at top of file |
+
+Rules of thumb:
+- The notebook must be **loaded at session start** and **referenced before changes**, regardless of file name
+- If the notebook is the README, README updates ARE design updates — `/reflect` writes to README
+- Switch to a separate DESIGN.md the moment design diverges from what users need to read
+
+This is the AgenticFlow pattern: a public Python library where the README documents the contract and DESIGN.md would be redundant. The four functional-equivalence conditions (always available, directly accessible, automatically trusted, consciously recorded) are satisfied by the README itself.
+
 -----
 
 ## 📊 §6 Metrics
@@ -527,6 +547,7 @@ Commands implement DDL as Phase-based workflows with Detection Targets, STOP gat
 
 | Command | Intent |
 |---------|--------|
+| `/validate` | Run mechanical validation per scope (lint/test/build) |
 | `/resonate` | Synchronize multilingual document versions |
 | `/commit` | Record verified changes to repository |
 | `/docs` | Audit and fix documentation quality |

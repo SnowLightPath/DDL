@@ -25,6 +25,8 @@ Markdown headings (`#`, `##`, `###`) mark document structure. `+++` marks execut
 | `+++SWARM` | `+++SWARM: condition` followed by `team:`, `spawn:`, `type:`, `max:`, `batch:`, `each:`, `collect:` block. See §2 | 0+ | Instruction: create Agent Team. Evaluate condition against design.md. If false or single scope: execute inline. If true with 2+ scopes: execute §2.4 procedure (TeamCreate → Task × N → Monitor → Collect → Shutdown) |
 | `+++NEVER` | `+++NEVER: prohibition in imperative form` | 2–4 | Global constraints in CLAUDE.md. Local constraints in command file |
 | `+++Report` | `+++Report:` followed by markdown table rows | 0–1 | Output template presented to human at STOP gate |
+| `+++DDL_PHASE` | `+++DDL_PHASE: <PhaseName>` (emitted at runtime) | 0+ | **Output marker.** Emit on the first line entering a Phase that mutates state. Pairs with the `### Phase N: NAME` heading in the command file. Codex requires this; Claude SHOULD emit it for long sessions where phase boundaries are otherwise invisible |
+| `+++DDL_REPORT` | `+++DDL_REPORT` (emitted at runtime, paired with `+++Report:` template) | 0+ | **Output heading.** Emit immediately before the structured report table at any `+++STOP` gate. The `+++Report:` directive defines the table layout; `+++DDL_REPORT` is the heading the LLM writes above it. Together they lock the human-facing output structure |
 
 ---
 
