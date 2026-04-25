@@ -25,6 +25,18 @@
 | `+++SWARM` | `+++SWARM: condition` followed by operand block | **Sequential fallback** — see below |
 | `+++NEVER` | `+++NEVER: prohibition` | Local constraints per skill |
 | `+++Report` | `+++Report:` followed by markdown table rows | Output template presented at STOP gate |
+| `+++DDL_PHASE` | `+++DDL_PHASE: <PhaseName>` (emitted at runtime) | **Output marker.** Emit on the first line entering a Phase that mutates state. Required by Codex Runtime Contract below |
+| `+++DDL_REPORT` | `+++DDL_REPORT` (emitted at runtime, paired with `+++Report:`) | **Output heading.** Emit immediately before the structured report table at any `+++STOP` gate. Required by Codex Runtime Contract below |
+
+## Codex Runtime Contract
+
+Codex is execution-forward — it tends to begin mutating files as soon as a path is clear. To keep human checkpoints visible, every skill execution under Codex MUST follow this contract:
+
+1. **Before mutation:** emit `+++DDL_PHASE: <PhaseName>` as the first content line when entering a Phase that will mutate state (write/edit files, run side-effecting commands). The PhaseName matches the `### Phase N: NAME` heading in the skill file.
+2. **At every `+++STOP` gate:** emit `+++DDL_REPORT` as the section heading, then output the table defined by the skill's `+++Report:` directive. This locks the structure of the human-facing report.
+3. **Approval before crossing `+++STOP`:** any continuation past a `+++STOP` line without explicit user approval is a G7 violation (Unreviewed Mutation).
+
+These markers are output-only. They do not appear in skill files (skill files use `### Phase N: NAME` and `+++Report:`). They appear in Codex's emitted text so a human reading the transcript can locate phase boundaries and reports without re-reading the skill.
 
 ## +++SWARM Execution
 
@@ -91,3 +103,5 @@ Every skill defines its own D1–D7. Cross-cutting targets below apply **globall
 +++NEVER: Hardcode paths or commands — scopes and validation come from DESIGN.md
 +++NEVER: Auto-proceed past a +++STOP
 +++NEVER: Add AI attribution to commits or generated code
++++NEVER: Skip emitting +++DDL_PHASE before mutation — Codex's execution-forward bias must be visibly checkpointed
++++NEVER: Output a +++STOP gate without +++DDL_REPORT followed by the +++Report: table

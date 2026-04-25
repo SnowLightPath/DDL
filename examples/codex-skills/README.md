@@ -46,6 +46,7 @@ $reflect
 
 | Skill | Intent |
 |-------|--------|
+| `$validate` | Run mechanical validation per scope (lint/test/build) |
 | `$commit` | Record verified changes to repository |
 | `$docs` | Audit and fix documentation quality |
 | `$refactoring` | Audit and fix code quality |
