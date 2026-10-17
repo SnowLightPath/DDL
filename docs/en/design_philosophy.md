@@ -17,9 +17,9 @@ DDL documents are not final artifacts—they're temporary notes until the design
 
 Collaborative development with LLMs has a discontinuity problem:
 
-- Long contexts are difficult to carry over accurately, just like for us
-- Discussions are forgotten, just like for us
-- Sessions with LLMs can unexpectedly disappear
+- What one agent remembers, the next session, agent, or harness does not see
+- What the agent remembers is not what the human agreed to
+- The more a session holds, the less of it the model recalls, so context is a budget, for the model as for us
 
 So we share code design as memos with LLMs.
 
@@ -27,7 +27,7 @@ So we share code design as memos with LLMs.
 
 Agent harnesses such as Claude Code and Codex now carry memory of their own: instruction files, automatic memory, summaries of long conversations. That memory helps the agent recall, but what the agent writes there is not a record the human has agreed to. And when an agent hands work to parallel subagents, each subagent usually starts as a new session, so the discontinuity grows with every worker.
 
-The scarce resource moves from the model's memory to the human's attention. The shared memo now does two jobs: it keeps the design across sessions, and it tells agents, before they run, what the human has fixed and where the human wants to look.
+The scarce resource is no longer the model's memory but the human's attention and the context a session can hold. The shared memo now does two jobs: it keeps the design across sessions, and it tells agents, before they run, what the human has fixed and where the human wants to look.
 
 -----
 
@@ -133,7 +133,7 @@ What matters is updating documents after the work (Reflect).
 
 | Pattern                      | Problem                          |
 |------------------------------|----------------------------------|
-| Writing code without documents | Context is lost in the next session |
+| Writing code without documents | The next session starts without the design |
 | Strictly following the process | DDL is not a strict procedure |
 | Letting LLM do everything | Human judgment and long-term perspective missing |
 | Human does everything | LLM's articulation and technical knowledge unused |
@@ -143,6 +143,7 @@ What matters is updating documents after the work (Reflect).
 | Letting the agent pick the stack silently | The code is bound by a decision nobody agreed to |
 | Treating harness memory as the design | The agent remembers, but the human has not agreed |
 | Treating Direction as a contract | The outlook hardens into a plan nobody revisits |
+| Approving from a summary | A compacted conversation is not the report; the human approves what is in front of them |
 
 -----
 
@@ -162,5 +163,5 @@ Ultimately, code becomes the source of truth. Delete DDL documents when no longe
 
 | Date       | Change                    |
 |------------|---------------------------|
-| 2026-10-17 | Harness-era revision: harness-era background; Binding Decisions, Direction, and Acceptance Gates in Draft, with Acceptance Gates retired once the work is accepted; the human's role at gates; three anti-patterns; removed the Scribe Plugin option; approval of a report as a Binding Decision source, and technology already in the code as an existing premise |
+| 2026-10-17 | Harness-era revision: harness-era background; Binding Decisions, Direction, and Acceptance Gates in Draft, with Acceptance Gates retired once the work is accepted; the human's role at gates; three anti-patterns; removed the Scribe Plugin option; approval of a report as a Binding Decision source, and technology already in the code as an existing premise; context-engineering background and one anti-pattern |
 | 2026-01-04 | Initial version |

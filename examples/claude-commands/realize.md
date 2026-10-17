@@ -11,9 +11,9 @@ Manifest design philosophy as working code.
 
 ### Phase 0: INIT
 
-1. Read the DDL protocol for the current runtime: repo-local `commands/DDL-PROTOCOL-SKILL.md` when present; otherwise, in Claude Code, `.claude/commands/DDL-PROTOCOL-SKILL.md`, then `$HOME/.claude/commands/DDL-PROTOCOL-SKILL.md`; in Codex, `$HOME/.codex/commands/DDL-PROTOCOL-SKILL.md`, then the protocol sections of `AGENTS.md`.
-2. Read project-local runtime guidance when present: `AGENTS.md` for Codex, `CLAUDE.md` or `.claude/CLAUDE.md` for Claude Code, and any applicable command overlay.
-3. Read `design.md` — extract scopes, principles, validation commands, and the Experience, Binding Decisions, Direction, and Acceptance Gates for the feature (protocol §3)
+1. Read the DDL protocol for the current runtime when it is not already in context: repo-local `commands/DDL-PROTOCOL-SKILL.md` when present; otherwise, in Claude Code, `.claude/commands/DDL-PROTOCOL-SKILL.md`, then `$HOME/.claude/commands/DDL-PROTOCOL-SKILL.md`; in Codex, `$HOME/.codex/commands/DDL-PROTOCOL-SKILL.md`, then the protocol sections of `AGENTS.md`.
+2. Read project-local runtime guidance when it is not already in context (the runtime loads `AGENTS.md` for Codex, and `CLAUDE.md` or `.claude/CLAUDE.md` for Claude Code, at session start), and any applicable command overlay.
+3. Read `design.md` when it is not already in context — extract scopes, principles, validation commands, and the Experience, Binding Decisions, Direction, and Acceptance Gates for the feature (protocol §3)
 4. If no `design.md` exists → refuse ("Run `/draft` first")
 
 ### Phase 1: READ
@@ -27,7 +27,7 @@ Manifest design philosophy as working code.
   max: 5
   batch: auto
   each: |
-    Read {scope}, summarize current state vs. design intent,
+    Read {scope}, summarize its current state against the Experience items and principles in this prompt,
     and report whether the code already satisfies each Binding Decision for {scope}.
     Report findings to the lead when done.
   collect: lead collects read results into a unified context
@@ -41,7 +41,7 @@ Present the implementation plan: files to touch, principles applied, how each Bi
 
 **Pre-condition.** Enter this phase only after explicit user approval at the STOP that preceded it: the Phase 1 plan on first entry, later a stage's human gate or a D1 or D6 STOP (per §1.5 of the protocol). If the most recent user message is not an approval token, return to the phase whose STOP is pending and re-emit its report.
 
-On first entry, move into `## Binding Decisions` only the delegated `Unbound:` lines whose choice the approved plan stated and the lines the user picked, with Source `approved in /realize plan (<date>)`.
+On first entry, move into `## Binding Decisions` only the delegated `Unbound:` lines whose choice the approved plan stated and the lines the user picked, with Source `approved in /realize plan (<date>)`; write the plan's durable parts under `## Direction` as `Approved plan (<date>)`, and any gate the user approved in advance into its Gate cell (protocol §3).
 
 +++SWARM: 2+ independent scopes or Direction lanes need changes
 
@@ -52,7 +52,7 @@ On first entry, move into `## Binding Decisions` only the delegated `Unbound:` l
   max: 5
   batch: auto
   each: |
-    Generate code honoring the principles and the Binding Decisions for {scope}.
+    Follow the approved plan in this prompt. Generate code honoring the principles and the Binding Decisions for {scope}.
     Work only on the Direction stage assigned to {scope}; do not start the next stage.
     If the work would violate a principle or a Binding Decision, stop and report it instead of working around it.
     Report completion, and any deviation from Direction, to the lead when done.

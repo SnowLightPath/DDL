@@ -18,8 +18,8 @@ Record verified code changes to the repository.
 
 ### Phase 0: INIT
 
-1. Read `AGENTS.md` — Directive Reference, Codex Runtime Contract, +++SWARM Execution, and design.md Sections — and any applicable command overlay (`commands/<name>.md`)
-2. Read `design.md` — extract scopes, validation commands
+1. `AGENTS.md` (Directive Reference, Codex Runtime Contract, +++SWARM Execution, design.md Sections) is in context from session start; read it only when it is not, and read any applicable command overlay (`commands/<name>.md`)
+2. Read `design.md` when it is not already in context — extract scopes, validation commands
 3. If no `design.md` exists → skip the design.md checks and say so in the report
 4. Run `git status` and `git diff --staged` to understand current state
 

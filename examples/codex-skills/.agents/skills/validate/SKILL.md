@@ -18,8 +18,8 @@ Run mechanical validation per scope as declared in design.md.
 
 ### Phase 0: INIT
 
-1. Read `AGENTS.md` — Directive Reference, Codex Runtime Contract, +++SWARM Execution, and design.md Sections — and any applicable command overlay (`commands/<name>.md`)
-2. Read `design.md` — extract scopes, the Validation block, and the mechanical gates (commands) listed in Acceptance Gates
+1. `AGENTS.md` (Directive Reference, Codex Runtime Contract, +++SWARM Execution, design.md Sections) is in context from session start; read it only when it is not, and read any applicable command overlay (`commands/<name>.md`)
+2. Read `design.md` when it is not already in context — extract scopes, the Validation block, and the mechanical gates (commands) listed in Acceptance Gates
 3. If no `design.md` exists → refuse ("Declare scopes and a Validation block in design.md first")
 4. If a scope is given, validate only that scope (+++SWARM Execution in `AGENTS.md`)
 
@@ -34,7 +34,7 @@ Run mechanical validation per scope as declared in design.md.
   max: 5
   batch: auto
   each: |
-    Run the validation commands for {scope} as declared in design.md, including mechanical gates in Acceptance Gates that name {scope}.
+    Run the validation commands for {scope} listed in this prompt (the Validation block and the mechanical gates in Acceptance Gates that name {scope}).
     Capture exit code, stderr, stdout. Edit no files; the commands may write only their own caches and build output.
     Report PASS / FAIL plus a short output excerpt to the lead when done.
   collect: lead aggregates per-scope results into a PASS/FAIL matrix

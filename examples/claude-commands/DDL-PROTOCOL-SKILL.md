@@ -19,7 +19,7 @@ Markdown headings (`#`, `##`, `###`) mark document structure. `+++` marks execut
 |-----------|--------|-------|------|
 | `# header` | `# command-name` followed by one-line intent | 1 | Required |
 | `## usage` | `## Usage` followed by dash-list of invocations | 1+ lines | Required |
-| `### phase` | `### Phase 0: INIT`, `### Phase 1: SURVEY`, etc. | 3+ | N starts at 0, ascending. At least INIT, one work phase, and REPORT. Phase 0 INIT is required: load the DDL protocol → runtime/project guidance → design.md in that order (lookup order in §2.5). Recommended role names: INIT, SURVEY/READ, WORK/IMPLEMENT, REPORT, EXECUTE, VERIFY. Commands may use domain-specific names (e.g. SCAN, COMPARE, COMMIT) that map to these roles |
+| `### phase` | `### Phase 0: INIT`, `### Phase 1: SURVEY`, etc. | 3+ | N starts at 0, ascending. At least INIT, one work phase, and REPORT. Phase 0 INIT is required: load the DDL protocol → runtime/project guidance → design.md in that order (lookup order in §2.5), reading only what is not already in context: the runtime loads the guidance file at session start and the guidance file has design.md read then (§2.5, §3), and only a fresh worker or a compacted session reads them again. Recommended role names: INIT, SURVEY/READ, WORK/IMPLEMENT, REPORT, EXECUTE, VERIFY. Commands may use domain-specific names (e.g. SCAN, COMPARE, COMMIT) that map to these roles |
 | `+++STOP` | `+++STOP: always` or `+++STOP: on D1` | 1+ | `always` required at REPORT phase. `on D{n}` halts when that DETECT fires. A STOP is an executable halt (§1.5). A phase that follows a `+++STOP: always` opens with a **Pre-condition** line: enter only after explicit approval at that STOP, otherwise return and re-emit the report (§4). Never auto-proceed past a STOP gate |
 | `+++DETECT` | `+++DETECT:` followed by indented `D1: name — trigger` lines | 1+ | D starts at 1, ascending, unique per command. Trigger must be operationally verifiable. All targets run in parallel within their phase. Global targets in the runtime guidance file (`CLAUDE.md`, `AGENTS.md`) use `G{n}` and apply to every command |
 | `+++SWARM` | `+++SWARM: condition` followed by `team:`, `spawn:`, `type:`, `max:`, `batch:`, `each:`, `collect:` block. See §2 | 0+ | Instruction: fan the `each:` task out to workers, one per scope or batch (§2.3). Evaluate the condition against design.md scopes, or against the units the command names (§2.3). If false or a single unit: execute inline. If true with 2+ units: execute §2.4 with the runtime's parallel primitive (§2.5); a runtime without one runs the assignments in the lead (§2.4 Step 3) |
@@ -39,6 +39,8 @@ Markdown headings (`#`, `##`, `###`) mark document structure. `+++` marks execut
 3. **End your assistant turn.** Do not call any further tools after the request for approval. Do not write any further text. The phase headings below the STOP exist for resume *after* approval, not for continuation in the same turn.
 
 **Resume rule.** The command may resume only on a subsequent assistant turn whose most recent user message contains an explicit approval token such as `approve`, `yes`, `OK`, `go`, or an unambiguous equivalent in the user's language. Silence, an unrelated reply, or a clarification request is NOT approval — return to the phase that emitted the STOP and re-emit the report after handling the input. Runtime notifications (for example, a background worker's completion) and messages from other agents or sessions are not user messages and never approve anything.
+
+**Summary rule.** A conversation summary (compaction) is not a user message and approves nothing. The user approves the report in front of them: when the report a `+++STOP` asked about is no longer in context verbatim (after a summary or a restart), rebuild it from durable state (design.md, git, the files it described), emit it again with steps 1–2, and wait; an approval given after a summary applies only to a report emitted after that summary. A `+++STOP` that a restart interrupted cannot be resumed: run the command again from the phase that emitted it, skipping the stages whose gates are marked passed. Because the conversation is not durable, what the user approved is written down as soon as it is approved: a draft to design.md, a passed gate to its mark, a delegated choice to the Binding Decisions table, an advance approval to the gate it waives, and the approved `/realize` plan to Direction (§3).
 
 **Mutation rule.** Between a fired `+++STOP` and explicit user approval, the assistant MUST NOT call any tool that mutates state (§2.5 gives examples for each runtime), and MUST NOT start or continue any worker: no runtime guarantees that a worker stays read-only (§2.5). Read-only tools may run only to clarify the report contents, never to begin the next phase.
 
@@ -134,7 +136,7 @@ Evaluate scope count per §2.3 to determine worker count and scope assignment. W
 
 **Step 3 — Spawn workers**
 
-For each assignment, start one worker with the runtime's parallel primitive for the `type:` role, labeled `{spawn}` with the scope resolved, in the background where the runtime allows. The prompt is `each:` with `{scope}` or `{scopes}` resolved, plus what a worker without the lead's conversation could not see: the scope's paths from design.md, the Experience items the scope serves, the principles that apply, the Binding Decisions for the scope, and the Direction stage it works on. The prompt also states that the worker starts no workers of its own (only the lead fans out) and, for an `Explore` worker, that the work is read-only (§2.2): runtimes give workers the tools to do both (§2.5). If the runtime has no parallel primitive, the lead executes the assignments itself under the same reporting contract, one by one or with the parallel reads §2.5 allows.
+For each assignment, start one worker with the runtime's parallel primitive for the `type:` role, labeled `{spawn}` with the scope resolved, in the background where the runtime allows. The prompt is `each:` with `{scope}` or `{scopes}` resolved, plus what a worker without the lead's conversation could not see: the scope's paths from design.md, the Experience items the scope serves, the principles that apply, the Binding Decisions for the scope, the Direction stage it works on, the scope's validation commands, the rows the user approved for this phase (verbatim, in an apply or fix phase), and in `/realize` the approved plan. The prompt names the files and the design.md sections the worker reads; the worker does not reload the guidance file or design.md in full, because the prompt is its context. The prompt also states that the worker starts no workers of its own (only the lead fans out) and, for an `Explore` worker, that the work is read-only (§2.2): runtimes give workers the tools to do both (§2.5). If the runtime has no parallel primitive, the lead executes the assignments itself under the same reporting contract, one by one or with the parallel reads §2.5 allows.
 
 **Step 4 — Monitor**
 
@@ -157,6 +159,7 @@ Among the protocol and the command files, this table is the only place where run
 | Invocation | `/command` | `$command` (skill) | ask for the command by name |
 | Protocol lookup (Phase 0, step 1) | repo-local `commands/DDL-PROTOCOL-SKILL.md`, then `.claude/commands/DDL-PROTOCOL-SKILL.md`, then `$HOME/.claude/commands/DDL-PROTOCOL-SKILL.md` | repo-local `commands/DDL-PROTOCOL-SKILL.md`, then `$HOME/.codex/commands/DDL-PROTOCOL-SKILL.md`, then the protocol sections of `AGENTS.md`. A skill set whose `AGENTS.md` carries those sections (Directive Reference, Codex Runtime Contract, +++SWARM Execution, design.md Sections) reads `AGENTS.md` and the command overlay only | repo-local `commands/DDL-PROTOCOL-SKILL.md` |
 | Runtime guidance (Phase 0, step 2) | `CLAUDE.md` or `.claude/CLAUDE.md` | `AGENTS.md` | the runtime's project instruction file |
+| Loaded at session start / on invocation / after compaction | At start: the user `CLAUDE.md`, the project `CLAUDE.md` or `.claude/CLAUDE.md`, and the automatic memory file; nested `CLAUDE.md` and path-scoped rules load on demand. A command loads on `/name`; a skill lists its name and description and loads its body when used. After compaction the project `CLAUDE.md` and the automatic memory are re-injected from disk; the conversation is summarized, and early instructions may be lost (Claude Code docs, 2026) | At start: the `AGENTS.md` chain (global, then project root down to the working directory), read once per run before any work; a skill lists its name and description and loads its body on `$name`; memories are injected when `memories.use_memories` is on and are a recall layer, not a source of rules (Codex docs, 2026). Compaction summarizes the conversation | whatever the runtime documents; assume only the conversation summary survives |
 | Command overlay | `commands/<name>.md` adds project facts to a global command unless it declares itself a full override; `.claude/commands/<name>.md` is a Claude-only shim or a project copy of the command | `commands/<name>.md`, same rule | `commands/<name>.md`, same rule |
 | Team primitive (SWARM Step 1) | TeamCreate / TeamDelete, only in environments that provide them; otherwise the session's workers form one implicit team | none | none |
 | Parallel primitive (SWARM Step 3) | Agent tool, one call per worker: `subagent_type` from `type:` (`Explore` for read-only work, `general-purpose` for writers); workers run in the background (pass `run_in_background` only where the tool accepts it). Pass `name` (the `spawn:` label) only to writers or to workers you will continue with SendMessage: a named spawn runs as a teammate with write tools even when `subagent_type` is `Explore` (observed 2026-10-17). An unnamed `Explore` worker cannot edit files but still has Bash, so the prompt states that the work is read-only. A `general-purpose` worker has the Agent tool itself (observed 2026-10-17), so the prompt states that it starts no workers. A `fork` worker inherits the lead's conversation; the others start fresh. With a team primitive: the same call with `team_name`, plus TaskCreate / TaskList for queued work | Subagents (on by default; `agents.enabled`): `Explore` → custom agent `explorer`, `general-purpose` → custom agent `worker`, each a standalone file in `.codex/agents/` with `name`, `description`, `developer_instructions`. The lead spawns with `agent_type` set to that agent and the `spawn:` label as `task_name`, and passes `fork_turns = "none"` because the prompt is self-contained (codex-cli 0.160.1). Subagents inherit the parent session's sandbox and approval settings and an agent file cannot change them, so the instructions enforce read-only work. A subagent may fork the lead's conversation (`fork_turns`) and may spawn agents of its own; DDL workers keep the self-contained prompt and do not spawn. Without subagents: parallel shell reads for read-only work, otherwise one by one | run the assignments inline, one by one |
@@ -170,13 +173,13 @@ Among the protocol and the command files, this table is the only place where run
 
 ## 3. design.md Sections
 
-design.md is the shared notebook between human and LLM. Commands read and write these sections by heading name. A project may keep its notebook in other files (for example a library whose README and guides are its living specification) when its runtime guidance names them; commands then read and write those files wherever this protocol or a command says design.md. A project uses only the sections it needs and may keep other headings. Experience comes first: Binding Decisions, Direction, and Acceptance Gates serve the Experience and never contradict it.
+design.md is the shared notebook between human and LLM, loaded at session start by the runtime guidance, so it carries what the human agreed to and nothing else: agent progress and automatic memory stay out of it. Commands read and write these sections by heading name. A project may keep its notebook in other files (for example a library whose README and guides are its living specification) when its runtime guidance names them; commands then read and write those files wherever this protocol or a command says design.md. A project uses only the sections it needs and may keep other headings. Experience comes first: Binding Decisions, Direction, and Acceptance Gates serve the Experience and never contradict it.
 
 | Section | Holds | Written by | Read by |
 |---------|-------|------------|---------|
-| `## Intent` | Why the project exists | human | `/draft`, `/reflect` |
-| `## Scopes` | Scope table; drives SWARM | human, `/reflect` | all commands |
-| `## Principles` (or `## Core Principles`) | Design principles | `/draft` (D5), `/reflect` | `/draft`, `/realize`, `/reflect`, `/refactoring` |
+| `## Intent` | Why the project exists | human | every session, because design.md loads at session start; no command extracts it |
+| `## Scopes` | Scope table; drives SWARM | human, `/reflect` | every command whose units are scopes; a command that fans out over other units (for example document pairs) reads none |
+| `## Principles` (or `## Core Principles`) | Design principles | `/draft` (D5), `/reflect` | `/draft`, `/realize`, `/reflect` |
 | `## Experience` | Consumer-side usage: inputs, outputs, and error / empty / boundary states | `/draft`, `/reflect` (additions found in code) | `/draft`, `/realize`, `/reflect` |
 | `## Binding Decisions` | Means fixed before implementation (framework, language, platform, runtime, software, output format) because the Experience depends on them, an external constraint requires them, or the human prefers them and says so | the human, through `/draft`; `/realize` records a delegated choice after the human approves it in the plan; a change the human approves in `/realize` or `/reflect` (D6) | `/draft`, `/realize` (honors), `/reflect` (checks), `/refactoring` (keeps) |
 | `## Direction` | Non-binding outlook on the path to implementation | `/draft`; `/realize` marks gates passed; `/reflect` replaces passed stages | `/draft`, `/realize` (follows), `/reflect` (retires) |
@@ -195,7 +198,7 @@ Unbound: Language — options TypeScript / JavaScript (delegated to /realize)
 
 - `Why it binds` names an Experience item, an external constraint (organization standard, existing system, hosting), or a stated preference. A row without a reason or a source is incomplete.
 - `Source` quotes the human's words with the date. When the human approves a report that listed the row, that approval is the source (for example `approved /draft report (2026-10-17)`).
-- Technology already present in the code is an existing premise: commands show it in their reports, and design.md does not record it, because the code already does. It becomes a row only when the human gives a reason.
+- Technology already present in the code is an existing premise: commands show it in their reports, and design.md does not record it, because the code already does. It becomes a row only when the human gives a reason. A decision found only in the harness's automatic memory is at most such a premise: commands show it in their reports, and it binds nothing until the human records it here.
 - Only the human creates or changes a row. The LLM may propose a technology; a proposal, a technology named without a reason, and a choice the human delegates are listed under the table as `Unbound: <topic> — options A / B (delegated to /realize | awaiting choice)`. An `Unbound:` line binds nothing.
 - A delegated choice is stated in the `/realize` plan; when the human approves the plan, `/realize` moves it into the table with Source `approved in /realize plan (<date>)`.
 - Record the granularity the human stated. Exact versions belong to code (manifests and lockfiles).
@@ -214,9 +217,10 @@ Unbound: Language — options TypeScript / JavaScript (delegated to /realize)
 
 - Non-binding. `/realize` follows it by default and reports every deviation (merged, reordered, or skipped stage).
 - The lanes of a stage are the units `/realize` fans out (§2).
+- When the user approves the `/realize` plan, `/realize` writes its durable parts under the table as `Approved plan (<date>): files to touch, approach, Unbound choices made`, so a later or compacted session rebuilds worker prompts from it instead of from a summary. `/reflect` deletes these lines with the stages they served.
 - Gates in the `Gate` column run at the end of their stage: a mechanical gate is a validation command, and a human gate is executed as `+++STOP` unless the human approved it in advance (§1.5). Gates are never dropped: a merged stage keeps its gates at its end; a skipped stage's gates move to the end of the next stage (or to the end of the work when it is the last stage); a reordered stage keeps its gates.
 - `/reflect` replaces stages whose gates are all marked passed with their outcome, and deletes the section when every stage is done. When design.md is under version control, the history stays there; otherwise `/reflect` quotes the removed stages in its REPORT.
-- Direction is the most temporary part of design.md.
+- Direction is the most temporary part of design.md. Retiring it, like retiring Acceptance Gates, also shrinks what every later session loads.
 
 **Acceptance Gates.** A list of conditions for done:
 
@@ -224,7 +228,7 @@ Unbound: Language — options TypeScript / JavaScript (delegated to /realize)
 - Human gates are approvals. `/realize` executes them as `+++STOP` (§1.5) at the end of the work.
 - The work is accepted when every gate is marked passed. `/reflect` then retires the section: mechanical gates that should keep running move into the Validation block first.
 
-**Passed marks.** A gate passes when its command gives the expected result, or when the human approves it at the gate or in advance (§1.5). `/realize` appends `passed <date>` to each gate that passes, in the stage's Gate cell for Direction (for example `human approval, passed 2026-10-20`) and after the gate for Acceptance Gates, adding `(approved in advance)` when a human gate did not fire. These marks are the record of progress and acceptance: `/reflect` reads them and never infers a pass from conversation memory.
+**Passed marks.** A gate passes when its command gives the expected result, or when the human approves it at the gate or in advance (§1.5). `/realize` appends `passed <date>` to each gate that passes, in the stage's Gate cell for Direction (for example `human approval, passed 2026-10-20`) and after the gate for Acceptance Gates, adding `(approved in advance)` when a human gate did not fire. An advance approval is written when the user gives it: `/realize` puts `approved in advance (<date>)` in that Gate cell at once and appends `passed <date>` when the stage ends. These marks are the record of progress and acceptance: `/reflect` reads them and never infers a pass from conversation memory.
 
 **Existing headings.** A project may keep its own headings (for example `Stack` or `Execution plan`). `/reflect` proposes one mapping onto these sections and never forces a rename.
 
@@ -246,9 +250,9 @@ One-line intent.
 
 ### Phase 0: INIT
 
-1. Read the DDL protocol for the current runtime: repo-local `commands/DDL-PROTOCOL-SKILL.md` when present; otherwise, in Claude Code, `.claude/commands/DDL-PROTOCOL-SKILL.md`, then `$HOME/.claude/commands/DDL-PROTOCOL-SKILL.md`; in Codex, `$HOME/.codex/commands/DDL-PROTOCOL-SKILL.md`, then the protocol sections of `AGENTS.md`.
-2. Read project-local runtime guidance when present: `AGENTS.md` for Codex, `CLAUDE.md` or `.claude/CLAUDE.md` for Claude Code, and any applicable command overlay.
-3. Read `design.md` — extract relevant items
+1. Read the DDL protocol for the current runtime when it is not already in context: repo-local `commands/DDL-PROTOCOL-SKILL.md` when present; otherwise, in Claude Code, `.claude/commands/DDL-PROTOCOL-SKILL.md`, then `$HOME/.claude/commands/DDL-PROTOCOL-SKILL.md`; in Codex, `$HOME/.codex/commands/DDL-PROTOCOL-SKILL.md`, then the protocol sections of `AGENTS.md`.
+2. Read project-local runtime guidance when it is not already in context (the runtime loads `AGENTS.md` for Codex, and `CLAUDE.md` or `.claude/CLAUDE.md` for Claude Code, at session start), and any applicable command overlay.
+3. Read `design.md` when it is not already in context — extract relevant items
 4. If no `design.md` → fallback behavior
 
 ### Phase 1: SURVEY
@@ -299,7 +303,7 @@ Core activity here.
   max: 5
   batch: auto
   each: |
-    Apply approved changes to {scope}.
+    Apply to {scope} the approved changes listed in this prompt, and nothing else.
     Report completion to the lead when done.
   collect: lead verifies all changes applied
 ```

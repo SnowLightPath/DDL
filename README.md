@@ -8,9 +8,9 @@
 
 ## 🎯 The Problem
 
-- Sessions end
-- Context is lost
-- Previous discussions are forgotten
+- Sessions end, and the next session starts without what this one knew
+- What the agent remembers, the human never agreed to
+- Context is a budget: the more a session holds, the less the model recalls
 
 ## 💡 The Solution
 

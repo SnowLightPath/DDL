@@ -18,7 +18,7 @@ examples/codex-skills/AGENTS.md and examples/codex-skills/.codex/.
 
 Mirror rules:
   - DDL-only parts: resonate, and reflect's "/resonate" suggestion, which becomes a generic one.
-  - Codex wording: YAML frontmatter, /cmd -> $cmd, Phase 0 reads AGENTS.md and the command overlay,
+  - Codex wording: YAML frontmatter, /cmd -> $cmd, Phase 0 treats AGENTS.md as already in context and reads the command overlay,
     and protocol references become AGENTS.md section names.
 
 Rules production must follow, or generation stops with an error:
@@ -84,8 +84,8 @@ def codex_phase0(name, text):
     if not (steps[0].startswith("1. Read the DDL protocol") and steps[1].startswith("2. Read project-local runtime guidance")):
         raise SystemExit(f"{name}: unexpected Phase 0 steps")
     rest = [re.sub(r"^\d+\. ", "", s) for s in steps[2:]]
-    new = ["1. Read `AGENTS.md` — Directive Reference, Codex Runtime Contract, +++SWARM Execution, and design.md Sections"
-           " — and any applicable command overlay (`commands/<name>.md`)"]
+    new = ["1. `AGENTS.md` (Directive Reference, Codex Runtime Contract, +++SWARM Execution, design.md Sections) is in context"
+           " from session start; read it only when it is not, and read any applicable command overlay (`commands/<name>.md`)"]
     new += [f"{i}. {s}" for i, s in enumerate(rest, start=2)]
     return text[:m.start(2)] + "\n".join(new) + text[m.end(2):]
 

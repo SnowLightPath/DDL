@@ -18,8 +18,8 @@ Detect divergence between implementation and design.md, then reconcile.
 
 ### Phase 0: INIT
 
-1. Read `AGENTS.md` — Directive Reference, Codex Runtime Contract, +++SWARM Execution, and design.md Sections — and any applicable command overlay (`commands/<name>.md`)
-2. Read `design.md` — extract Intent, scopes, principles, Experience, Binding Decisions, Direction, and Acceptance Gates (design.md Sections in `AGENTS.md`)
+1. `AGENTS.md` (Directive Reference, Codex Runtime Contract, +++SWARM Execution, design.md Sections) is in context from session start; read it only when it is not, and read any applicable command overlay (`commands/<name>.md`)
+2. Read `design.md` when it is not already in context — extract scopes, principles, Experience, Binding Decisions, Direction, and Acceptance Gates (design.md Sections in `AGENTS.md`)
 3. If no `design.md` exists → refuse ("Nothing to reflect against")
 4. If a path is given, work only on the scopes it covers (+++SWARM Execution in `AGENTS.md`)
 
@@ -52,7 +52,7 @@ Lead integrates results and performs cross-scope analysis:
    - **Code drifted** — implementation violates a principle or a Binding Decision, or does not deliver an Experience item
    - **Philosophy outdated** — code shows better approach
    - **New pattern** — code introduced something `design.md` doesn't cover
-   - **Direction spent** — stages whose gates are all marked passed; replace them with the outcome, and delete the section when every stage is done (quote the removed stages in the REPORT when design.md is not under version control)
+   - **Direction spent** — stages whose gates are all marked passed; replace them with the outcome, delete the `Approved plan` lines that served them, and delete the section when every stage is done (quote the removed stages in the REPORT when design.md is not under version control)
    - **Acceptance Gates spent** — every gate is marked passed, so the work was accepted; move gates that should keep running into Validation, then delete the section (quote it in the REPORT when design.md is not under version control)
 6. If the project keeps its own headings for these sections (for example `Stack` or `Execution plan`), propose one mapping onto the sections listed in design.md Sections of `AGENTS.md`; never force a rename
 
@@ -94,7 +94,7 @@ Wait for user to approve, reject, or modify each recommendation.
   max: 5
   batch: auto
   each: |
-    Apply only approved changes to {scope}.
+    Apply to {scope} the approved changes listed in this prompt, and nothing else.
     Report completion to the lead when done.
   collect: lead summarizes what changed
 ```
