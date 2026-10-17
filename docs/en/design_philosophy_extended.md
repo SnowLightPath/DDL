@@ -42,6 +42,8 @@ DESIGN.md in DDL corresponds to "Otto's notebook."
 
 This table is DDL's design rationale. By satisfying these 4 conditions, DESIGN.md functions as "extended memory" for the Human-LLM system.
 
+**Harness memory is not the notebook.** Agent harnesses now keep memory of their own: instruction files, automatic memory, summaries of long conversations, progress files written for the next session. For the agent, that memory meets the first two conditions. For the human, what the agent wrote there usually fails the fourth: the agent wrote it, and the human never consciously endorsed it. DESIGN.md is the part both sides have agreed to. The two complement each other; neither replaces the other.
+
 ```
 Traditional: Brain -> Thinking -> Action
 
@@ -81,7 +83,7 @@ SECI has been criticized for "weak empirical grounding" (Gourlay, 2006). DDL add
 
 Hutchins (1995) proposed "Distributed Cognition"—the view that cognition is distributed across teams, tools, and environments.
 
-Flor & Hutchins (1992) analyzed pair programming and showed that the system as a whole has cognitive properties distinct from individual programmers. DDL explicitly designs this distributed structure.
+Flor & Hutchins (1991) analyzed pair programming and showed that the system as a whole has cognitive properties distinct from individual programmers. DDL explicitly designs this distributed structure.
 
 ```
   Human <-------> Document <-------> LLM
@@ -98,6 +100,8 @@ Where to delegate what—this awareness is DDL's core.
 Research on LLM collaboration has surged in 2024-2025.
 
 **Session Discontinuity Problem**: LLMs lack long-term memory. Accuracy drops significantly on long interaction histories. DESIGN.md is a practical solution to this problem.
+
+Harnesses have since added memory (instruction files, automatic memory, compaction), which reduces forgetting within one agent. Two gaps remain. Memory written by the agent is not endorsed by the human. And a SWARM worker starts as a new session: five workers running in parallel are five fresh contexts that know only what their prompt tells them. The lead builds each prompt from DESIGN.md.
 
 **LLM as Cognitive Extension**: Sabbah & Li (2025) argue that LLMs can compensate for human bounded rationality.
 
@@ -177,6 +181,12 @@ Write specifications in natural language, then let AI generate code from them. N
 
 AWS-originated methodology (Raja SP et al., 2025) that redesigns the entire SDLC with AI as primary executor. Three phases: Inception (mob elaboration → requirements), Construction (mob construction → code), Operation (AI-monitored deployment). Redefines agile terminology: sprints → bolts (hours/days), epics → units of work. Human role: validate and approve AI proposals.
 
+#### Harness Engineering in Brief
+
+In 2025–2026 the harness around the model became an engineering subject of its own. Anthropic described a harness for long-running agents in which an initializer agent sets up the environment, and each later session reads a progress file, a feature list, and the git log before choosing its work (Anthropic, 2025). OpenAI's harness engineering report describes a product built with no manually written code: engineers design the environment, specify intent, and build feedback loops, while Codex writes the code (Lopopolo, 2026).
+
+Of everything these harnesses record and specify, DDL addresses the part the human must agree to: the experience, the decisions that bind it, and the gates where the human looks.
+
 #### Structural Comparison
 
 | Aspect | SDD | AI-DLC | DDL |
@@ -198,9 +208,14 @@ Each approach handles the session problem differently:
 |----------|----------|-----------|
 | SDD | Persist the spec | Code is regenerable from spec; spec survives sessions |
 | AI-DLC | Persist process artifacts | Requirements, stories, units stored in repository |
+| Harness engineering | Persist agent progress | Progress file and feature list read at each session start (Anthropic, 2025) |
 | DDL | Design as shared memory | DESIGN.md is the cognitive bridge between sessions |
 
-SDD and AI-DLC treat persistence as a side effect of their workflow. DDL treats it as the central design problem.
+SDD and AI-DLC treat persistence as a side effect of their workflow, and harness engineering persists the agent's working state. DDL treats persisting what the human agreed to as the central design problem.
+
+#### Technology Choice
+
+Spec Kit keeps technology out of the specification: `/speckit.specify` describes what and why, and `/speckit.plan` names the stack (GitHub, 2025). DDL keeps both in one Draft but in separate sections, and asks each technology why it binds the experience. A technology the human names with a reason (the experience depends on it, an external constraint requires it, or the human prefers it and says so) becomes a Binding Decision. An LLM proposal, a technology named without a reason, and a delegated choice stay unbound: they are listed under the table as `Unbound:` and bind nothing. For a delegated choice, `/realize` states its pick and the reason in its plan, and the pick binds only when the human approves that plan.
 
 #### Complementary Use
 
@@ -209,6 +224,7 @@ These paradigms occupy different layers and can coexist:
 - DDL's Realize phase can use SDD-style specification—writing a spec before implementation is one way to Realize
 - AI-DLC's mob elaboration can incorporate DDL's Reflect to feed implementation discoveries back into requirements
 - SDD and AI-DLC don't address philosophy evolution (design principles changing through implementation); DDL does
+- Harness memory (progress files, automatic memory) carries the agent's working state; DESIGN.md carries what the human agreed to. Keep them apart: don't copy agent progress into DESIGN.md, and don't leave a binding decision only in agent memory
 
 The "waterfall criticism" (Marmelab, 2025) applies to SDD's one-way flow. AI-DLC mitigates this with short bolts. DDL sidesteps it entirely with its bidirectional loop.
 
@@ -237,17 +253,17 @@ Core Loop:
                   (Skip OK)
 
 Support Commands (invokable at any point):
-    +--------+  +------+  +------------+  +---------+
-    |RESONATE|  |COMMIT|  |REFACTORING |  |  DOCS   |
-    +--------+  +------+  +------------+  +---------+
+    +--------+  +--------+  +------+  +------------+  +---------+
+    |VALIDATE|  |RESONATE|  |COMMIT|  |REFACTORING |  |  DOCS   |
+    +--------+  +--------+  +------+  +------------+  +---------+
 ```
 
 The Core Loop drives design evolution. Support Commands maintain quality around it.
 
 | State | Entry Condition | Exit Condition |
 |-------|-----------------|----------------|
-| DRAFT | New feature or project start | Ideal experience articulated |
-| REALIZE | DESIGN.md exists | Code embodies principles |
+| DRAFT | New feature or project start | Experience articulated; Binding Decisions, Direction, and Acceptance Gates recorded when they exist |
+| REALIZE | DESIGN.md exists | Code embodies principles and Binding Decisions; gates pass |
 | REFLECT | Code written | Design updated |
 
 | Support Command | Purpose |
@@ -276,6 +292,8 @@ session:
 
 Resume next session with "Last time we were discussing X."
 
+Harnesses now keep this kind of session state themselves (automatic memory, conversation summaries, progress files). Keep in DESIGN.md only what the human has seen and accepted: a pending technology choice as an `Unbound:` line, other open items in Open Questions, settled ones in Experience, Binding Decisions, or Principles.
+
 ### 3.3 Design-Code Alignment Verification
 
 Perspectives to support Reflect:
@@ -285,6 +303,8 @@ Perspectives to support Reflect:
 | DRIFT | Code violates principle | Update principle or fix code |
 | NEW_PATTERN | Undocumented pattern found | Add as principle |
 | OUTDATED | Principle without implementation | Delete or implement |
+| BINDING_DRIFT | Code departs from a Binding Decision | The human chooses: fix the code, or change the decision |
+| SPENT_DIRECTION | Direction stages are done and their gates have passed | Replace them with the outcome; delete the section when every stage is done |
 
 These categories are a subset of the broader Detection Targets system (§3.4).
 
@@ -292,19 +312,19 @@ These categories are a subset of the broader Detection Targets system (§3.4).
 
 Detection Targets are automated checks that run at phase boundaries within each command. They catch problems before they propagate.
 
-Each command defines its own D1–D7 targets specific to its purpose. Cross-cutting targets apply globally:
+Each command defines its own D-targets (D1, D2, …) specific to its purpose. Cross-cutting targets apply globally:
 
 | ID | Name | Trigger |
 |----|------|---------|
-| D1 | Vague Intent | Task description lacks measurable outcome |
-| D2 | Scope Creep | Change touches files outside stated scope |
-| D3 | Principle Violation | Action contradicts DESIGN.md principles |
-| D4 | Missing Validation | No verification step after mutation |
-| D5 | Leaked Specifics | Project-specific paths/commands hardcoded in framework files |
-| D6 | Silent Failure | Error swallowed without user notification |
-| D7 | Unreviewed Mutation | Shared artifact changed without STOP gate |
+| G1 | Vague Intent | Task description lacks measurable outcome |
+| G2 | Scope Creep | Change touches files outside stated scope |
+| G3 | Principle Violation | Action contradicts DESIGN.md principles |
+| G4 | Missing Validation | No verification step after mutation |
+| G5 | Leaked Specifics | Project-specific paths/commands hardcoded in framework files |
+| G6 | Silent Failure | Error swallowed without user notification |
+| G7 | Unreviewed Mutation | Shared artifact changed without STOP gate |
 
-Example: `/reflect` defines its own targets (D1 Drift, D2 New Pattern, D3 Outdated Principle, D4 Stale Reference, D5 Self-Contradiction) while also being subject to global targets.
+Example: `/reflect` defines its own targets (D1 Drift, D2 New Pattern, D3 Outdated Principle, D4 Stale Reference, D5 Self-Contradiction, D6 Binding Drift, D7 Spent Direction) while also being subject to global targets. `/draft` adds D6 Unanchored Binding (a Binding Decision without a reason or a source) and D7 Binding Conflict; `/realize` adds D6 Binding Violation.
 
 ### 3.5 STOP Gates
 
@@ -320,12 +340,15 @@ Phase N+1: Apply approved changes only
 
 Rules:
 - STOP gates are **blocking** — never auto-proceed
+- A STOP ends the agent's turn: report, ask, stop. Work resumes only on an explicit approval, with no mutation in between
 - Every command that mutates shared artifacts (DESIGN.md, code, docs) must have at least one STOP gate
+- Human gates written in DESIGN.md (the Gate column of Direction, human gates in Acceptance Gates) run as STOP gates
+- An approval that names the DESIGN.md human gates listed in the approved report, or says explicitly that they need not stop, lets them pass without stopping; the REPORT lists each with what it would have shown. A general approval ("approve", "OK", "approve all") waives no gate. It never covers a STOP gate written in a command, outward-facing actions (push, publish, send, deploy), or destructive actions
 - The user can approve, reject, or modify each proposed change individually
 
 STOP gates embody DDL's core principle: Human controls the pace. LLMs propose, humans decide.
 
-### 3.6 Agent Teams (SWARM)
+### 3.6 Parallel Workers (SWARM)
 
 When a task spans multiple independent scopes, parallel agent execution reduces time and improves coverage.
 
@@ -341,11 +364,13 @@ Lead agent
 ```
 
 Rules:
-- Spawn agents only when 2+ independent scopes exist
+- Spawn agents only when 2+ independent scopes exist; when the condition holds, the command fans out. In `/realize`, the lanes of the current Direction stage count as scopes
 - Agent naming: `{role}-{scope}` (e.g., `reader-backend`, `scanner-docs`)
 - Each agent reads only its assigned scope
+- Workers start without the lead's conversation: the lead writes each prompt from DESIGN.md (scope paths, the Experience items the scope serves, principles, Binding Decisions, the Direction stage). A worker that meets a STOP condition stops and reports, and the lead then stops for the human
 - Lead integrates results and runs cross-scope analysis
-- Swarm is optional — single-scope tasks run without spawning
+- Single-scope tasks run without spawning
+- The protocol maps fan-out onto each runtime (Claude Code subagents, Codex agent roles); with no parallel mechanism, scopes run one by one. Commands never name runtime tools
 
 Scopes are defined in DESIGN.md, never hardcoded. This keeps the framework project-agnostic.
 
@@ -437,6 +462,55 @@ Exploratory development where design isn't settled.
 
 DESIGN.md gets rewritten frequently. This is normal. Evidence that design isn't stable—and evidence that DDL is working.
 
+### Example 4: Draft with Binding Decisions and Direction
+
+A web feature whose experience depends on its framework.
+
+**Draft:**
+```
+Human: Internal knowledge search. The answer should appear while it is being written.
+       I want to build it with Next.js.
+LLM:   I split this into experience and binding. Two questions: should it be limited
+       to the App Router? And what should the user see when nothing is found,
+       or when the search fails?
+Human: Yes, App Router. Nothing found: three related queries. Failure: keep the question, offer Retry.
+```
+
+Record in DESIGN.md:
+```markdown
+## Experience
+Within a second of sending a question, the answer starts to appear and grows as it is
+written. Sources are listed below it.
+- Nothing found: "No results", plus three related queries
+- Failure: the question stays in the box, with "Retry"
+
+## Binding Decisions
+| Decision | Why it binds | Source |
+|---|---|---|
+| Next.js App Router | Answers stream in while they are written, and per-route loading and error states are the core of the experience | "I want to build it with Next.js", "Yes, App Router" (2026-10-17) |
+
+## Direction
+| Stage | Work (parallel lanes) | Human sees | Gate |
+|---|---|---|---|
+| S0 | Fix the search API as a CLI | sample CLI output | `npm test` |
+| S1 | Three screen states, one lane each | three screenshots | human approval |
+| S2 | Streaming display | a screen recording | `npx playwright test` |
+```
+
+**Realize:**
+```
+LLM: Binding Decisions honored (package.json, app/). S1 and S2 merged; the human
+     approval moved to the end of the merged stage.
+LLM: Stop. Hosting serves static files only, so the server cannot stream the answer,
+     and streaming is why Next.js App Router binds. Options: request a Node runtime,
+     stream from a separate API server, show the answer only when it is complete,
+     or change the Binding Decision. You choose.
+```
+
+**Reflect:**
+
+The human chose a Node runtime, so Binding Decisions match the code. Direction is spent, so it is deleted (version control keeps the history). The stop button added during implementation goes into Experience.
+
 -----
 
 ## 🎯 §5 Adoption Criteria
@@ -468,6 +542,7 @@ Write in DESIGN.md:
   e.g., "Use Context Manager Pattern"
 △ Implementation level (important decisions only)
   e.g., "Chose JWT, reason: stateless"
+  Binding Decisions live at this level: the decision, why it binds, and its source (the human's words and the date)
 
 Don't write:
 ✗ All API details
@@ -506,6 +581,7 @@ Metrics for understanding DDL effectiveness. Numbers are guidelines—adjust per
 | Session Continuity | Can you resume previous session's intent? | "Success" if you grasp previous discussion and continue work within 5 minutes | Success rate > 80% |
 | Design-Code Alignment | Are principles reflected in code? | Ratio of implemented principles to total in DESIGN.md | > 70% |
 | Document Freshness | Does DESIGN.md reflect current state? | Days since last update | < 1 week |
+| Binding Alignment | Does the code honor every Binding Decision? | Ratio of honored Binding Decisions | 100% |
 
 Note on "Session Continuity": No need for rigorous measurement. If "I can't remember what we were doing" or "I'm re-explaining everything to the LLM" happens frequently, there's a problem with DESIGN.md granularity or update frequency.
 
@@ -521,19 +597,25 @@ No tools, discipline only. Most lightweight. Recommended as starting point.
 ```markdown
 # DESIGN.md Template
 ## Intent
+## Scopes
+## Experience
+## Binding Decisions
+## Direction
+## Acceptance Gates
 ## Core Principles
+## Validation
 ## Open Questions
 ## Changelog
 ```
 
-> Just a starting point. Discard if it doesn't fit.
+> Just a starting point. Discard if it doesn't fit. Experience comes first; Binding Decisions, Direction, and Acceptance Gates are optional. Scopes and Validation are what the commands read for fan-out and checks.
 
 ### Option 3: Workflow Integration
 Incorporate Reflect into PR checklists. For team development.
 
 ### Option 4: Tool-Assisted
 
-Commands implement DDL as Phase-based workflows with Detection Targets, STOP gates, and Agent Teams (+++SWARM) support.
+Commands implement DDL as Phase-based workflows with Detection Targets, STOP gates, and parallel workers (+++SWARM).
 
 **Core Loop** — the Draft → Realize → Reflect cycle:
 
@@ -554,11 +636,12 @@ Commands implement DDL as Phase-based workflows with Detection Targets, STOP gat
 | `/refactoring` | Audit and fix code quality |
 
 Each command follows the same structure:
-1. **Phases** — ordered steps (INIT → READ → EXECUTE → VALIDATE)
+1. **Phases** — ordered steps (INIT → READ → EXECUTE → VALIDATE → REPORT)
 2. **Detection Targets** — automated checks at phase boundaries (D1–D7 per command)
-3. **+++SWARM** — Agent Teams integration for parallel execution when 2+ scopes exist
-4. **STOP gates** — mandatory human approval before mutating shared artifacts
+3. **+++SWARM** — parallel workers per scope through the runtime's own mechanism (Claude Code subagents, Codex agent roles) when 2+ scopes exist; one by one when the runtime has no parallel mechanism
+4. **STOP gates** — mandatory human approval before mutating shared artifacts; the agent ends its turn and waits
 5. **Constraints** — invariants that must never be violated
+6. **Runtime adapters** — one table in the protocol maps the directives onto each harness, so commands never name runtime tools
 
 Claude Code: → [examples/claude-commands/](../../examples/claude-commands/)
 OpenAI Codex: → [examples/codex-skills/](../../examples/codex-skills/)
@@ -579,6 +662,11 @@ principles:
     related_code:
       - src/client.py:15-30
 
+binding:
+  - decision: "Python (asyncio)"
+    why: "The experience is async consumer code: async with APIClient(...)"
+    source: '"I want to use it with async with" (2026-10-17)'
+
 session:
   last_topic: "Authentication flow design"
 ```
@@ -592,6 +680,7 @@ Enables automated verification and session continuity tracking. However, if tool
 | Name | Purpose | Persistence |
 |------|---------|-------------|
 | DESIGN.md | Design philosophy, concept definitions | Temporary |
+| Direction (in DESIGN.md) | Outlook on the path to implementation | Most temporary: deleted when every stage is done |
 | docs/adr/ | Design decision records | Permanent |
 | src/ | Manifested code | Permanent |
 
@@ -605,6 +694,7 @@ Integration patterns:
 - Absorb into code comments
 - Promote to README / API docs
 - Persist as ADR
+- Move Binding Decisions into README requirements or an ADR once the code embodies them (the code shows what was chosen, not why); the commands then stop checking them
 - Delete (became obvious from code)
 
 -----
@@ -632,6 +722,9 @@ Integration patterns:
 - Fowler, M. et al. (2025). [Understanding Spec-Driven-Development: Kiro, spec-kit, and Tessl](https://martinfowler.com/articles/exploring-gen-ai/sdd-3-tools.html). *martinfowler.com*.
 - Marmelab (2025). [Spec-Driven Development: The Waterfall Strikes Back](https://marmelab.com/blog/2025/11/12/spec-driven-development-waterfall-strikes-back.html).
 - AWS (2025). [AI-Driven Development Life Cycle: Reimagining Software Engineering](https://aws.amazon.com/blogs/devops/ai-driven-development-life-cycle/). *AWS DevOps Blog*.
+- GitHub (2025). [Spec Kit](https://github.com/github/spec-kit). *GitHub*.
+- Anthropic (2025). [Effective harnesses for long-running agents](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents). *Anthropic Engineering*.
+- Lopopolo, R. (2026). [Harness engineering: leveraging Codex in an agent-first world](https://openai.com/index/harness-engineering/). *OpenAI*.
 
 ### Related Methodologies
 - Knuth, D. (1984). [Literate Programming](https://academic.oup.com/comjnl/article/27/2/97/343244). *The Computer Journal*, 27(2), 97-111.
@@ -645,5 +738,6 @@ Integration patterns:
 
 | Date | Change |
 |------|--------|
+| 2026-10-17 | Harness-era revision: harness memory and DESIGN.md (§1.1, §1.4), harness engineering and technology choice (§2.5), VALIDATE in the state model (§3.1), harness session state (§3.2), Binding and Direction checks (§3.3, §3.4), G1–G7 IDs (§3.4), STOP semantics and parallel workers (§3.5, §3.6), Example 4, Binding Decisions in §5, §6, §8, template sections (§7), three references |
 | 2026-02-14 | Expand §2.5 to three-way comparison (SDD / AI-DLC / DDL) |
 | 2026-01-04 | Initial version |

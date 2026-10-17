@@ -18,7 +18,7 @@ Audit and fix documentation quality.
 
 ### Phase 0: INIT
 
-1. Read `AGENTS.md`
+1. Read `AGENTS.md` — Directive Reference, Codex Runtime Contract, +++SWARM Execution, and DESIGN.md Sections
 2. Read `DESIGN.md` — extract scopes and documentation paths
 3. Discover all documentation files (`.md`, `.txt`, etc.)
 
@@ -34,6 +34,7 @@ Audit and fix documentation quality.
   batch: auto
   each: |
     Inventory documentation files and scan source for public APIs, exports, types in {scope}.
+    Report findings to the lead when done.
   collect: lead collects discovery results into a unified context
 ```
 
@@ -67,6 +68,8 @@ Wait for user to approve, reject, or modify each fix.
 
 ### Phase 4: FIX
 
+**Pre-condition.** Enter this phase only after explicit user approval at the Phase 3 STOP gate (per the Codex Runtime Contract in `AGENTS.md`). If the most recent user message is not an approval token, return to Phase 3 and re-emit the report.
+
 +++SWARM: 2+ approved fixes across different files
 
 ```
@@ -77,6 +80,7 @@ Wait for user to approve, reject, or modify each fix.
   batch: auto
   each: |
     Apply approved fixes to {scope} documentation.
+    Report completion to the lead when done.
   collect: lead verifies all fixes applied correctly
 ```
 

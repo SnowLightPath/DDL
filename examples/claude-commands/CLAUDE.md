@@ -19,11 +19,11 @@
 
 ## Structure
 
-- `design.md` - Design Document
+- `design.md` - Design Document (scopes, principles, validation; Experience, Binding Decisions, Direction, Acceptance Gates when drafted — protocol §3)
 
 ## Detection Targets
 
-Every command defines its own D1–D7. Cross-cutting targets below apply globally.
+Every command defines its own D-targets (D1, D2, …). Cross-cutting targets below apply globally.
 
 +++DETECT:
   G1: Vague Intent — Task description lacks measurable outcome
@@ -39,7 +39,7 @@ Every command defines its own D1–D7. Cross-cutting targets below apply globall
 ### On session start
 
 1. Read `.claude/CLAUDE.md` (this file)
-2. Read `design.md` if it exists — extract scopes, principles, validation commands
+2. Read `design.md` if it exists — extract scopes, principles, validation commands, and the Experience, Binding Decisions, Direction, and Acceptance Gates when present
 
 ### On any task
 
@@ -57,5 +57,5 @@ Every command defines its own D1–D7. Cross-cutting targets below apply globall
 
 +++NEVER: Hardcode paths or commands — scopes and validation come from design.md
 +++NEVER: Auto-proceed past a +++STOP
-+++NEVER: Spawn agents for single-scope tasks — swarm is optional
++++NEVER: Spawn agents for single-scope tasks — for 2+ scopes, follow +++SWARM semantics (mandatory when condition is true; runtime mapping in protocol §2.5)
 +++NEVER: Add AI attribution to commits or generated code

@@ -11,8 +11,8 @@ Audit and fix documentation quality.
 
 ### Phase 0: INIT
 
-1. Read `.claude/commands/DDL-PROTOCOL-SKILL.md`
-2. Read `.claude/CLAUDE.md`
+1. Read the DDL protocol for the current runtime: repo-local `commands/DDL-PROTOCOL-SKILL.md` when present; otherwise, in Claude Code, `.claude/commands/DDL-PROTOCOL-SKILL.md`, then `$HOME/.claude/commands/DDL-PROTOCOL-SKILL.md`; in Codex, `$HOME/.codex/commands/DDL-PROTOCOL-SKILL.md`, then the protocol sections of `AGENTS.md`.
+2. Read project-local runtime guidance when present: `AGENTS.md` for Codex, `CLAUDE.md` or `.claude/CLAUDE.md` for Claude Code, and any applicable command overlay.
 3. Read `design.md` — extract scopes and documentation paths
 4. Discover all documentation files (`.md`, `.txt`, etc.)
 
@@ -28,7 +28,7 @@ Audit and fix documentation quality.
   batch: auto
   each: |
     Inventory documentation files and scan source for public APIs, exports, types in {scope}.
-    Report findings to team-lead when done.
+    Report findings to the lead when done.
   collect: lead collects discovery results into a unified context
 ```
 
@@ -62,6 +62,8 @@ Wait for user to approve, reject, or modify each fix.
 
 ### Phase 4: FIX
 
+**Pre-condition.** Enter this phase only after explicit user approval at the Phase 3 STOP gate (per §1.5 of the protocol). If the most recent user message is not an approval token, return to Phase 3 and re-emit the report.
+
 +++SWARM: 2+ approved fixes across different files
 
 ```
@@ -72,7 +74,7 @@ Wait for user to approve, reject, or modify each fix.
   batch: auto
   each: |
     Apply approved fixes to {scope} documentation.
-    Report completion to team-lead when done.
+    Report completion to the lead when done.
   collect: lead verifies all fixes applied correctly
 ```
 
