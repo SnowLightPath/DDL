@@ -11,9 +11,9 @@ Audit and fix code quality issues.
 
 ### Phase 0: INIT
 
-1. Read `.claude/commands/DDL-PROTOCOL-SKILL.md`
-2. Read `.claude/CLAUDE.md`
-3. Read `design.md` — extract scopes, principles, validation commands
+1. Read the DDL protocol for the current runtime: repo-local `commands/DDL-PROTOCOL-SKILL.md` when present; otherwise, in Claude Code, `.claude/commands/DDL-PROTOCOL-SKILL.md`, then `$HOME/.claude/commands/DDL-PROTOCOL-SKILL.md`; in Codex, `$HOME/.codex/commands/DDL-PROTOCOL-SKILL.md`, then the protocol sections of `AGENTS.md`.
+2. Read project-local runtime guidance when present: `AGENTS.md` for Codex, `CLAUDE.md` or `.claude/CLAUDE.md` for Claude Code, and any applicable command overlay.
+3. Read `design.md` — extract scopes, principles, Binding Decisions, validation commands
 4. If no `design.md` exists → scan project root for common patterns
 
 ### Phase 1: SCAN
@@ -28,7 +28,7 @@ Audit and fix code quality issues.
   batch: auto
   each: |
     Analyze {scope} for code quality issues.
-    Report findings to team-lead when done.
+    Report findings to the lead when done.
   collect: lead collects scan results for cross-scope analysis
 ```
 
@@ -55,6 +55,8 @@ Wait for user to approve, reject, or modify each fix.
 
 ### Phase 3: EXECUTE
 
+**Pre-condition.** Enter this phase only after explicit user approval at the Phase 2 STOP gate (per §1.5 of the protocol). If the most recent user message is not an approval token, return to Phase 2 and re-emit the report.
+
 +++SWARM: 2+ approved fixes across independent scopes
 
 ```
@@ -65,7 +67,7 @@ Wait for user to approve, reject, or modify each fix.
   batch: auto
   each: |
     Apply approved refactors to {scope}.
-    Report completion to team-lead when done.
+    Report completion to the lead when done.
   collect: lead verifies refactors and runs validation
 ```
 
@@ -83,3 +85,4 @@ Run full validation:
 +++NEVER: Hardcode scopes or validation commands — they come from design.md
 +++NEVER: Change external behavior without explicit approval
 +++NEVER: Auto-fix D6 (Contradictory Impl) — escalate to user first
++++NEVER: Replace or bypass a Binding Decision — that is a design change for /draft or /reflect, not a refactoring
