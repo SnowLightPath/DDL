@@ -20,9 +20,9 @@ Markdown headings (`#`, `##`, `###`) mark document structure. `+++` marks execut
 | `# header` | `# command-name` followed by one-line intent | 1 | Required |
 | `## usage` | `## Usage` followed by dash-list of invocations | 1+ lines | Required |
 | `### phase` | `### Phase 0: INIT`, `### Phase 1: SURVEY`, etc. | 3+ | N starts at 0, ascending. At least INIT, one work phase, and REPORT. Phase 0 INIT is required: load the DDL protocol → runtime/project guidance → design.md in that order (lookup order in §2.5). Recommended role names: INIT, SURVEY/READ, WORK/IMPLEMENT, REPORT, EXECUTE, VERIFY. Commands may use domain-specific names (e.g. SCAN, COMPARE, COMMIT) that map to these roles |
-| `+++STOP` | `+++STOP: always` or `+++STOP: on D1` | 1+ | `always` required at REPORT phase. `on D{n}` halts when that DETECT fires. A STOP is an executable halt (§1.5). Never auto-proceed past a STOP gate |
-| `+++DETECT` | `+++DETECT:` followed by indented `D1: name — trigger` lines | 1+ | D starts at 1, ascending, unique per command. Trigger must be operationally verifiable. All targets run in parallel within their phase |
-| `+++SWARM` | `+++SWARM: condition` followed by `team:`, `spawn:`, `type:`, `max:`, `batch:`, `each:`, `collect:` block. See §2 | 0+ | Instruction: fan the `each:` task out to workers, one per scope or batch (§2.3). Evaluate condition against design.md. If false or single scope: execute inline. If true with 2+ scopes: execute §2.4 with the runtime's parallel primitive (§2.5), sequentially when the runtime has none |
+| `+++STOP` | `+++STOP: always` or `+++STOP: on D1` | 1+ | `always` required at REPORT phase. `on D{n}` halts when that DETECT fires. A STOP is an executable halt (§1.5). A phase that follows a `+++STOP: always` opens with a **Pre-condition** line: enter only after explicit approval at that STOP, otherwise return and re-emit the report (§4). Never auto-proceed past a STOP gate |
+| `+++DETECT` | `+++DETECT:` followed by indented `D1: name — trigger` lines | 1+ | D starts at 1, ascending, unique per command. Trigger must be operationally verifiable. All targets run in parallel within their phase. Global targets in the runtime guidance file (`CLAUDE.md`, `AGENTS.md`) use `G{n}` and apply to every command |
+| `+++SWARM` | `+++SWARM: condition` followed by `team:`, `spawn:`, `type:`, `max:`, `batch:`, `each:`, `collect:` block. See §2 | 0+ | Instruction: fan the `each:` task out to workers, one per scope or batch (§2.3). Evaluate the condition against design.md scopes, or against the units the command names (§2.3). If false or a single unit: execute inline. If true with 2+ units: execute §2.4 with the runtime's parallel primitive (§2.5); a runtime without one runs the assignments in the lead (§2.4 Step 3) |
 | `+++NEVER` | `+++NEVER: prohibition in imperative form` | 1+ | Global constraints in the runtime guidance file (`CLAUDE.md`, `AGENTS.md`). Local constraints in command file |
 | `+++Report` | `+++Report:` followed by markdown table rows | 0–1 | Output template presented to human at STOP gate |
 | `+++DDL_PHASE` | `+++DDL_PHASE: <PhaseName>` (emitted at runtime) | 0+ | **Output marker.** Emit on the first line entering a Phase that mutates state. Pairs with the `### Phase N: NAME` heading in the command file. Codex requires this; Claude SHOULD emit it for long sessions where phase boundaries are otherwise invisible |
@@ -38,9 +38,9 @@ Markdown headings (`#`, `##`, `###`) mark document structure. `+++` marks execut
 2. State in one sentence what you need the user to approve, reject, or modify.
 3. **End your assistant turn.** Do not call any further tools after the request for approval. Do not write any further text. The phase headings below the STOP exist for resume *after* approval, not for continuation in the same turn.
 
-**Resume rule.** The command may resume only on a subsequent assistant turn whose most recent user message contains an explicit approval token such as `approve`, `yes`, `OK`, `go`, or an unambiguous equivalent in the user's language. Silence, an unrelated reply, or a clarification request is NOT approval — return to the phase that emitted the STOP and re-emit the report after handling the input. Runtime notifications (for example, a background worker's completion) are not user messages.
+**Resume rule.** The command may resume only on a subsequent assistant turn whose most recent user message contains an explicit approval token such as `approve`, `yes`, `OK`, `go`, or an unambiguous equivalent in the user's language. Silence, an unrelated reply, or a clarification request is NOT approval — return to the phase that emitted the STOP and re-emit the report after handling the input. Runtime notifications (for example, a background worker's completion) and messages from other agents or sessions are not user messages and never approve anything.
 
-**Mutation rule.** Between a fired `+++STOP` and explicit user approval, the assistant MUST NOT call any tool that mutates state (§2.5 gives examples for each runtime), and MUST NOT start SWARM workers whose `each:` performs mutation. Read-only tools and read-only workers are permitted only to clarify the report contents, never to begin the next phase.
+**Mutation rule.** Between a fired `+++STOP` and explicit user approval, the assistant MUST NOT call any tool that mutates state (§2.5 gives examples for each runtime), and MUST NOT start or continue any worker: no runtime guarantees that a worker stays read-only (§2.5). Read-only tools may run only to clarify the report contents, never to begin the next phase.
 
 This rule overrides the momentum of phase ordering. "I already presented the plan in this turn, I might as well execute" is the exact failure mode `+++STOP` exists to prevent.
 
@@ -52,7 +52,7 @@ This rule overrides the momentum of phase ordering. "I already presented the pla
 
 ## 2. +++SWARM Instruction
 
-When you encounter `+++SWARM` in a phase and its condition evaluates to true with 2+ scopes, execute the procedure defined in §2.4 with the runtime's parallel primitive (§2.5). The operand block (`team:`, `spawn:`, `type:`, `max:`, `batch:`, `each:`, `collect:`) provides parameters for each step.
+When you encounter `+++SWARM` in a phase and its condition evaluates to true with 2+ scopes, execute the procedure defined in §2.4 with the runtime's parallel primitive (§2.5). When the runtime has one, running the assignments inline instead is not allowed. The operand block (`team:`, `spawn:`, `type:`, `max:`, `batch:`, `each:`, `collect:`) provides parameters for each step.
 
 ### 2.1 Syntax
 
@@ -75,13 +75,13 @@ When you encounter `+++SWARM` in a phase and its condition evaluates to true wit
 
 | Field | Position | Required | Description |
 |-------|----------|----------|-------------|
-| condition | first line after `+++SWARM:` | yes | Predicate evaluated against design.md. If false, skip SWARM and execute inline |
-| `team` | block body | yes | Fan-out name. Convention: `command-phase` (e.g. `reflect-survey`, `realize-execute`). Used as the team name when the runtime has an explicit team primitive, otherwise as a label for the worker set |
-| `spawn` | block body | yes | Worker name pattern. `{scope}` expands per matching scope in design.md |
-| `type` | block body | no | Worker role. `Explore` is a read-only worker; `general-purpose` is a worker that may write. Default: `general-purpose`. Extensible to other agent types as needed. §2.5 maps each role to the runtime's agent types |
+| condition | text after `+++SWARM:` on the same line | yes | Predicate evaluated against design.md scopes, or against the units the command names (lanes, files, document pairs, approved changes; §2.3). If false, skip SWARM and execute inline |
+| `team` | block body | yes | Fan-out name. Convention: `command-phase` (e.g. `reflect-read`, `realize-implement`). Used as the team name when the runtime has an explicit team primitive, otherwise as a label for the worker set |
+| `spawn` | block body | yes | Worker label pattern. `{scope}` expands per matching scope in design.md. The label identifies the worker in reports; §2.5 says when it is also passed as the worker's name |
+| `type` | block body | no | Worker role. `Explore` is a read-only worker: it edits no files and starts no workers, and the only writes it may cause are the caches and build output of commands its task names (for example the validation commands in `/validate`), inside its scope. `general-purpose` is a worker that may write. Default: `general-purpose`. Extensible to other agent types as needed. §2.5 maps each role to the runtime's agent types |
 | `max` | block body | no | Maximum concurrent workers. Default: 5. Controls cost and resource usage |
 | `batch` | block body | no | How to group scopes when scope count exceeds `max`. Default: `auto`. See §2.3 |
-| `each` | block body | yes | Prompt template for each worker. `{scope}` or `{scopes}` (when batched) resolve at runtime. Must instruct the worker to report results to the lead. Workers do not inherit the lead's conversation, so the resolved prompt must be self-contained (§2.4 Step 3) |
+| `each` | block body | yes | Prompt template for each worker. `{scope}` or `{scopes}` (when batched) resolve at runtime. Must instruct the worker to report results to the lead. Do not rely on a worker inheriting the lead's conversation (some runtimes fork it, others start fresh), so the resolved prompt must be self-contained (§2.4 Step 3) |
 | `collect` | block body | no | How the lead integrates results after all workers complete. Default: synthesize and present in next phase |
 
 ### 2.3 Dynamic Scaling
@@ -89,7 +89,7 @@ When you encounter `+++SWARM` in a phase and its condition evaluates to true wit
 The lead evaluates scope count against `max` and `batch` to determine worker allocation:
 
 ```
-scope_count = number of design.md scopes matching condition
+scope_count = number of design.md scopes (or command units) matching condition
 
 if scope_count == 0:
     skip SWARM entirely
@@ -99,7 +99,7 @@ elif scope_count <= max:
     1 worker per scope
 elif batch == "auto":
     lead groups related scopes by proximity/dependency
-    ceil(scope_count / max) scopes per worker
+    into at most `max` batches (about ceil(scope_count / max) scopes each)
     {scope} in prompt becomes {scopes} (comma-separated list)
 elif batch == "none":
     first `max` scopes run in parallel
@@ -111,10 +111,14 @@ elif batch == "none":
 | 0 | — | — | Skip SWARM |
 | 1 | — | — | Inline, no fan-out |
 | 3 | 5 | any | 3 workers, 1 scope each |
-| 8 | 5 | `auto` | 5 workers, lead groups 8 scopes into 5 batches |
+| 8 | 5 | `auto` | Up to 5 workers; lead groups 8 scopes into at most 5 batches |
 | 8 | 5 | `none` | 5 workers start, 3 scopes queued |
 
 Scopes whose changes depend on each other (for example, commands that must share one new vocabulary) are not independent: the lead handles them together instead of splitting them across workers, and names the merged scopes and their dependency in its report.
+
+Commands may fan out over other units, for example the lanes of the current Direction stage in `/realize` or files in `/docs`. These units count like scopes.
+
+When a command is given a scope or path argument, only the scopes it selects count.
 
 ### 2.4 Execution Procedure
 
@@ -130,11 +134,11 @@ Evaluate scope count per §2.3 to determine worker count and scope assignment. W
 
 **Step 3 — Spawn workers**
 
-For each assignment, start one worker with the runtime's parallel primitive for the `type:` role, named `{spawn}` with the scope resolved, in the background where the runtime allows. The prompt is `each:` with `{scope}` or `{scopes}` resolved, plus what the worker cannot see without the lead's conversation: the scope's paths from design.md, the Experience items the scope serves, the principles that apply, the Binding Decisions for the scope, and the Direction stage it works on. If the runtime has no parallel primitive, execute the assignments inline one by one under the same reporting contract.
+For each assignment, start one worker with the runtime's parallel primitive for the `type:` role, labeled `{spawn}` with the scope resolved, in the background where the runtime allows. The prompt is `each:` with `{scope}` or `{scopes}` resolved, plus what a worker without the lead's conversation could not see: the scope's paths from design.md, the Experience items the scope serves, the principles that apply, the Binding Decisions for the scope, and the Direction stage it works on. The prompt also states that the worker starts no workers of its own (only the lead fans out) and, for an `Explore` worker, that the work is read-only (§2.2): runtimes give workers the tools to do both (§2.5). If the runtime has no parallel primitive, the lead executes the assignments itself under the same reporting contract, one by one or with the parallel reads §2.5 allows.
 
 **Step 4 — Monitor**
 
-Wait for workers through the runtime's completion signal; do not poll. With `batch: none`, start a queued assignment when a worker finishes.
+Wait for workers through the runtime's completion signal; do not poll. With `batch: none`, start a queued assignment when a worker finishes. Once a worker reports a STOP condition, start no queued assignment: collect the running workers, then execute the STOP (Step 5).
 
 **Step 5 — Collect**
 
@@ -146,18 +150,19 @@ Release what Step 1 created, if anything (team resources and open workers).
 
 ### 2.5 Runtime Adapters
 
-This table is the only place where runtime tool names appear. To support another runtime, add a column; command files do not change. When a runtime renames or removes a tool, edit this table only.
+Among the protocol and the command files, this table is the only place where runtime tool names appear. Settings a runtime needs on its own side live in that runtime's adapter (for Codex, `AGENTS.md` and `.codex/`). To support another runtime, add a column and its adapter; command files do not change. When a runtime renames or removes a tool, edit this table and that adapter only.
 
 | Concern | Claude Code | Codex | No adapter |
 |---------|-------------|-------|------------|
 | Invocation | `/command` | `$command` (skill) | ask for the command by name |
-| Protocol lookup (Phase 0, step 1) | repo-local `commands/DDL-PROTOCOL-SKILL.md`, then `.claude/commands/DDL-PROTOCOL-SKILL.md`, then `$HOME/.claude/commands/DDL-PROTOCOL-SKILL.md` | repo-local `commands/DDL-PROTOCOL-SKILL.md`, then `$HOME/.codex/commands/DDL-PROTOCOL-SKILL.md`, then the protocol sections of `AGENTS.md` | repo-local `commands/DDL-PROTOCOL-SKILL.md` |
+| Protocol lookup (Phase 0, step 1) | repo-local `commands/DDL-PROTOCOL-SKILL.md`, then `.claude/commands/DDL-PROTOCOL-SKILL.md`, then `$HOME/.claude/commands/DDL-PROTOCOL-SKILL.md` | repo-local `commands/DDL-PROTOCOL-SKILL.md`, then `$HOME/.codex/commands/DDL-PROTOCOL-SKILL.md`, then the protocol sections of `AGENTS.md`. A skill set whose `AGENTS.md` carries those sections (Directive Reference, Codex Runtime Contract, +++SWARM Execution, design.md Sections) reads `AGENTS.md` and the command overlay only | repo-local `commands/DDL-PROTOCOL-SKILL.md` |
 | Runtime guidance (Phase 0, step 2) | `CLAUDE.md` or `.claude/CLAUDE.md` | `AGENTS.md` | the runtime's project instruction file |
 | Command overlay | `commands/<name>.md` adds project facts to a global command unless it declares itself a full override; `.claude/commands/<name>.md` is a Claude-only shim or a project copy of the command | `commands/<name>.md`, same rule | `commands/<name>.md`, same rule |
 | Team primitive (SWARM Step 1) | TeamCreate / TeamDelete, only in environments that provide them; otherwise the session's workers form one implicit team | none | none |
-| Parallel primitive (SWARM Step 3) | Agent tool, one call per worker: `subagent_type` from `type:` (`Explore` read-only, `general-purpose` writer), `name` from `spawn:`; workers run in the background (pass `run_in_background` only where the tool accepts it). With a team primitive: the same call with `team_name`, plus TaskCreate / TaskList for queued work | `[agents]` in `.codex/config.toml`: `Explore` → `explorer` (`sandbox_mode = "read-only"`), `general-purpose` → `worker` (`sandbox_mode = "workspace-write"`). Without `[agents]`: parallel shell reads for read-only work, otherwise one by one | run the assignments inline, one by one |
+| Parallel primitive (SWARM Step 3) | Agent tool, one call per worker: `subagent_type` from `type:` (`Explore` for read-only work, `general-purpose` for writers); workers run in the background (pass `run_in_background` only where the tool accepts it). Pass `name` (the `spawn:` label) only to writers or to workers you will continue with SendMessage: a named spawn runs as a teammate with write tools even when `subagent_type` is `Explore` (observed 2026-10-17). An unnamed `Explore` worker cannot edit files but still has Bash, so the prompt states that the work is read-only. A `general-purpose` worker has the Agent tool itself (observed 2026-10-17), so the prompt states that it starts no workers. A `fork` worker inherits the lead's conversation; the others start fresh. With a team primitive: the same call with `team_name`, plus TaskCreate / TaskList for queued work | Subagents (on by default; `agents.enabled`): `Explore` → custom agent `explorer`, `general-purpose` → custom agent `worker`, each a standalone file in `.codex/agents/` with `name`, `description`, `developer_instructions`. The lead spawns with `agent_type` set to that agent and the `spawn:` label as `task_name`, and passes `fork_turns = "none"` because the prompt is self-contained (codex-cli 0.160.1). Subagents inherit the parent session's sandbox and approval settings and an agent file cannot change them, so the instructions enforce read-only work. A subagent may fork the lead's conversation (`fork_turns`) and may spawn agents of its own; DDL workers keep the self-contained prompt and do not spawn. Without subagents: parallel shell reads for read-only work, otherwise one by one | run the assignments inline, one by one |
 | Completion signal (SWARM Step 4) | background completion notification; SendMessage to continue a worker | agent result | — |
-| Mutating tools (§1.5), for example | Edit, Write, NotebookEdit, non-read-only Bash, TaskCreate, a `general-purpose` worker, and any MCP or connector tool that creates, updates, sends, publishes, or deletes | file edits (apply_patch), shell commands that write, a `worker` agent, and any MCP tool that creates, updates, sends, publishes, or deletes | any file write, side-effecting command, or external write |
+| Mutating tools (§1.5), for example | Edit, Write, NotebookEdit, non-read-only Bash, TaskCreate, starting any worker or continuing one with SendMessage, and any MCP or connector tool that creates, updates, sends, publishes, or deletes | file edits (apply_patch), shell commands that write, starting or messaging any agent, and any MCP tool that creates, updates, sends, publishes, or deletes | any file write, side-effecting command, external write, or worker start or message |
+| STOP and resume (§1.5) | End the reply after the approval request. Background workers keep running; their completion notifications and messages from teammates or other sessions arrive like user messages and never approve anything | End the turn after `+++DDL_REPORT` and the approval request (Codex Runtime Contract in `AGENTS.md`); agent results are not approvals | End the turn |
 | `+++DDL_PHASE` | SHOULD, for long sessions | MUST (Codex Runtime Contract in `AGENTS.md`) | SHOULD |
 | `+++DDL_REPORT` | MUST at every STOP (§1.5) | MUST at every STOP (§1.5) | MUST at every STOP (§1.5) |
 
@@ -165,17 +170,17 @@ This table is the only place where runtime tool names appear. To support another
 
 ## 3. design.md Sections
 
-design.md is the shared notebook between human and LLM. Commands read and write these sections by heading name. A project uses only the sections it needs and may keep other headings. Experience comes first: Binding Decisions, Direction, and Acceptance Gates serve the Experience and never contradict it.
+design.md is the shared notebook between human and LLM. Commands read and write these sections by heading name. A project may keep its notebook in other files (for example a library whose README and guides are its living specification) when its runtime guidance names them; commands then read and write those files wherever this protocol or a command says design.md. A project uses only the sections it needs and may keep other headings. Experience comes first: Binding Decisions, Direction, and Acceptance Gates serve the Experience and never contradict it.
 
 | Section | Holds | Written by | Read by |
 |---------|-------|------------|---------|
-| `## Intent` | Why the project exists | human, `/draft` | all commands |
+| `## Intent` | Why the project exists | human | `/draft`, `/reflect` |
 | `## Scopes` | Scope table; drives SWARM | human, `/reflect` | all commands |
-| `## Principles` (or `## Core Principles`) | Design principles | `/draft` (D5), `/reflect` | all commands |
-| `## Experience` | Consumer-side usage: inputs, outputs, and error / empty / boundary states | `/draft`, `/reflect` (additions found in code) | `/realize`, `/reflect` |
-| `## Binding Decisions` | Means fixed before implementation (framework, language, platform, runtime, software, output format) because the Experience depends on them, an external constraint requires them, or the human prefers them and says so | the human, through `/draft`; `/realize` records a delegated choice after the human approves it in the plan; a change the human approves in `/realize` or `/reflect` (D6) | `/realize` (honors), `/reflect` (checks), `/refactoring` (keeps) |
-| `## Direction` | Non-binding outlook on the path to implementation | `/draft`; `/reflect` replaces finished stages | `/realize` (follows), `/reflect` (retires) |
-| `## Acceptance Gates` | What must hold when done: mechanical gates and human gates | `/draft` | `/realize`, `/validate` |
+| `## Principles` (or `## Core Principles`) | Design principles | `/draft` (D5), `/reflect` | `/draft`, `/realize`, `/reflect`, `/refactoring` |
+| `## Experience` | Consumer-side usage: inputs, outputs, and error / empty / boundary states | `/draft`, `/reflect` (additions found in code) | `/draft`, `/realize`, `/reflect` |
+| `## Binding Decisions` | Means fixed before implementation (framework, language, platform, runtime, software, output format) because the Experience depends on them, an external constraint requires them, or the human prefers them and says so | the human, through `/draft`; `/realize` records a delegated choice after the human approves it in the plan; a change the human approves in `/realize` or `/reflect` (D6) | `/draft`, `/realize` (honors), `/reflect` (checks), `/refactoring` (keeps) |
+| `## Direction` | Non-binding outlook on the path to implementation | `/draft`; `/realize` marks gates passed; `/reflect` replaces passed stages | `/draft`, `/realize` (follows), `/reflect` (retires) |
+| `## Acceptance Gates` | What must hold when done: mechanical gates and human gates | `/draft`; `/realize` marks gates passed; `/reflect` retires it after acceptance | `/draft`, `/realize`, `/validate`, `/reflect` (retires) |
 | `## Validation` | Per-scope mechanical checks | human, `/reflect` | `/validate`, `/realize`, `/commit`, `/refactoring` |
 
 **Binding Decisions.** One row per decision:
@@ -185,10 +190,12 @@ design.md is the shared notebook between human and LLM. Commands read and write 
 |----------|--------------|--------|
 | Next.js App Router | Answers stream in while they are written, and per-route loading and error states are the core of the Experience | "I want to build it with Next.js", "Yes, App Router" (2026-10-17) |
 
-Unbound: TypeScript — options TypeScript / JavaScript (delegated to /realize)
+Unbound: Language — options TypeScript / JavaScript (delegated to /realize)
 ```
 
 - `Why it binds` names an Experience item, an external constraint (organization standard, existing system, hosting), or a stated preference. A row without a reason or a source is incomplete.
+- `Source` quotes the human's words with the date. When the human approves a report that listed the row, that approval is the source (for example `approved /draft report (2026-10-17)`).
+- Technology already present in the code is an existing premise: commands show it in their reports, and design.md does not record it, because the code already does. It becomes a row only when the human gives a reason.
 - Only the human creates or changes a row. The LLM may propose a technology; a proposal, a technology named without a reason, and a choice the human delegates are listed under the table as `Unbound: <topic> — options A / B (delegated to /realize | awaiting choice)`. An `Unbound:` line binds nothing.
 - A delegated choice is stated in the `/realize` plan; when the human approves the plan, `/realize` moves it into the table with Source `approved in /realize plan (<date>)`.
 - Record the granularity the human stated. Exact versions belong to code (manifests and lockfiles).
@@ -207,14 +214,17 @@ Unbound: TypeScript — options TypeScript / JavaScript (delegated to /realize)
 
 - Non-binding. `/realize` follows it by default and reports every deviation (merged, reordered, or skipped stage).
 - The lanes of a stage are the units `/realize` fans out (§2).
-- Gates in the `Gate` column run at the end of their stage: a mechanical gate is a validation command, and a human gate is executed as `+++STOP` (§1.5) and never skipped. A merged stage keeps its gates at its end; a skipped stage's gates move to the end of the next stage (or to the end of the work when it is the last stage); a reordered stage keeps its gates.
-- `/reflect` replaces finished stages (work done, gate passed) with their outcome and deletes the section when every stage is done. When design.md is under version control, the history stays there; otherwise `/reflect` quotes the removed stages in its REPORT.
+- Gates in the `Gate` column run at the end of their stage: a mechanical gate is a validation command, and a human gate is executed as `+++STOP` unless the human approved it in advance (§1.5). Gates are never dropped: a merged stage keeps its gates at its end; a skipped stage's gates move to the end of the next stage (or to the end of the work when it is the last stage); a reordered stage keeps its gates.
+- `/reflect` replaces stages whose gates are all marked passed with their outcome, and deletes the section when every stage is done. When design.md is under version control, the history stays there; otherwise `/reflect` quotes the removed stages in its REPORT.
 - Direction is the most temporary part of design.md.
 
 **Acceptance Gates.** A list of conditions for done:
 
 - Mechanical gates are commands, each with the expected result when the command does not fail by exit code alone. `/realize` runs them in VALIDATE, and `/validate` runs them with the Validation block.
-- Human gates are approvals. `/realize` executes them as `+++STOP` (§1.5).
+- Human gates are approvals. `/realize` executes them as `+++STOP` (§1.5) at the end of the work.
+- The work is accepted when every gate is marked passed. `/reflect` then retires the section: mechanical gates that should keep running move into the Validation block first.
+
+**Passed marks.** A gate passes when its command gives the expected result, or when the human approves it at the gate or in advance (§1.5). `/realize` appends `passed <date>` to each gate that passes, in the stage's Gate cell for Direction (for example `human approval, passed 2026-10-20`) and after the gate for Acceptance Gates, adding `(approved in advance)` when a human gate did not fire. These marks are the record of progress and acceptance: `/reflect` reads them and never infers a pass from conversation memory.
 
 **Existing headings.** A project may keep its own headings (for example `Stack` or `Execution plan`). `/reflect` proposes one mapping onto these sections and never forces a rename.
 
@@ -274,6 +284,7 @@ Core activity here.
 
 +++Report:
 | # | col | col | col |
+|---|-----|-----|-----|
 
 ### Phase 4: EXECUTE (if applicable)
 

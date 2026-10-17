@@ -18,13 +18,15 @@ Audit and fix documentation quality.
 
 ### Phase 0: INIT
 
-1. Read `AGENTS.md` — Directive Reference, Codex Runtime Contract, +++SWARM Execution, and DESIGN.md Sections
-2. Read `DESIGN.md` — extract scopes and documentation paths
-3. Discover all documentation files (`.md`, `.txt`, etc.)
+1. Read `AGENTS.md` — Directive Reference, Codex Runtime Contract, +++SWARM Execution, and design.md Sections — and any applicable command overlay (`commands/<name>.md`)
+2. Read `design.md` — extract scopes, and documentation paths when design.md lists them
+3. If no `design.md` exists → treat the repository as one scope
+4. Discover all documentation files (`.md`, `.txt`, etc.)
+5. If a path is given, audit only that path and the scopes it covers (+++SWARM Execution in `AGENTS.md`)
 
 ### Phase 1: DISCOVER
 
-+++SWARM: 2+ scopes in DESIGN.md
++++SWARM: 2+ scopes in design.md
 
 ```
   team: docs-discover
@@ -51,7 +53,7 @@ Lead integrates results and checks:
   D2: Broken Reference — Internal link or file path no longer exists
   D3: Missing Section — Public API or feature has no documentation
   D4: Stale Example — Code example doesn't match current implementation
-  D5: Structure Mismatch — Doc structure doesn't match DESIGN.md conventions
+  D5: Structure Mismatch — A doc lies outside the documentation paths, or lacks the headings, that design.md lists for it
   D6: Wrong Names — Doc uses names that don't exist in codebase
 
 ### Phase 3: REPORT
@@ -95,5 +97,5 @@ Re-scan fixed files to confirm:
 ## Constraints
 
 +++NEVER: Modify documentation without +++STOP approval
-+++NEVER: Hardcode scopes or paths — they come from DESIGN.md
++++NEVER: Hardcode scopes or paths — they come from design.md
 +++NEVER: Execute code examples — check conceptually only

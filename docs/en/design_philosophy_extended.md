@@ -16,6 +16,9 @@ This document is intended for dictionary-style lookup.
 | Systematize operations | [§3 Systematization Framework](#-3-systematization-framework) |
 | Get concrete examples | [§4 Practical Examples](#-4-practical-examples) |
 | Make adoption decisions | [§5 Adoption Criteria](#-5-adoption-criteria) |
+| Measure effectiveness | [§6 Metrics](#-6-metrics) |
+| Choose how to implement DDL | [§7 Implementation Options](#️-7-implementation-options) |
+| Manage artifacts and their lifecycle | [§8 Artifacts and Lifecycle](#-8-artifacts-and-lifecycle) |
 
 No need to read cover-to-cover. Pick what you need.
 
@@ -31,23 +34,23 @@ Clark & Chalmers (1998) proposed "Extended Mind"—the claim that cognition does
 
 The famous **Inga/Otto thought experiment**: Inga remembers the museum address in biological memory; Otto, with Alzheimer's, records it in a notebook. Clark argued Otto's notebook is **functionally equivalent** to Inga's memory.
 
-DESIGN.md in DDL corresponds to "Otto's notebook."
+design.md in DDL corresponds to "Otto's notebook."
 
-| Functional Equivalence Criteria | Otto's Notebook | DESIGN.md |
+| Functional Equivalence Criteria | Otto's Notebook | design.md |
 |--------------------------------|-----------------|-----------|
 | Always available | Always carried | Lives in repository |
 | Directly accessible | Quick to reference | Loaded at session start |
 | Automatically trusted | Followed without doubt | Respected as design principles |
 | Consciously recorded in past | Intentionally noted | Explicitly recorded via Draft/Reflect |
 
-This table is DDL's design rationale. By satisfying these 4 conditions, DESIGN.md functions as "extended memory" for the Human-LLM system.
+This table is DDL's design rationale. By satisfying these 4 conditions, design.md functions as "extended memory" for the Human-LLM system.
 
-**Harness memory is not the notebook.** Agent harnesses now keep memory of their own: instruction files, automatic memory, summaries of long conversations, progress files written for the next session. For the agent, that memory meets the first two conditions. For the human, what the agent wrote there usually fails the fourth: the agent wrote it, and the human never consciously endorsed it. DESIGN.md is the part both sides have agreed to. The two complement each other; neither replaces the other.
+**Harness memory is not the notebook.** Agent harnesses now keep memory of their own: instruction files, automatic memory, summaries of long conversations, progress files written for the next session. For the agent, that memory meets the first two conditions. For the human, what the agent wrote there usually fails the fourth: the agent wrote it, and the human never consciously endorsed it. design.md is the part both sides have agreed to. The two complement each other; neither replaces the other.
 
 ```
 Traditional: Brain -> Thinking -> Action
 
-DDL:  Human Brain <-> DESIGN.md <-> LLM
+DDL:  Human Brain <-> design.md <-> LLM
                   |
           One cognitive system
 ```
@@ -74,8 +77,8 @@ DDL correspondence:
 |-------|-------------|
 | Socialization | Share "something like this" through Human-LLM dialogue |
 | Externalization | Articulate experience in Draft |
-| Combination | Structure DESIGN.md, organize relationships between principles |
-| Internalization | Restore context by reading DESIGN.md in next session |
+| Combination | Structure design.md, organize relationships between principles |
+| Internalization | Restore context by reading design.md in next session |
 
 SECI has been criticized for "weak empirical grounding" (Gourlay, 2006). DDL addresses this by presenting concrete, practice-verifiable methods.
 
@@ -99,9 +102,9 @@ Where to delegate what—this awareness is DDL's core.
 
 Research on LLM collaboration has surged in 2024-2025.
 
-**Session Discontinuity Problem**: LLMs lack long-term memory. Accuracy drops significantly on long interaction histories. DESIGN.md is a practical solution to this problem.
+**Session Discontinuity Problem**: LLMs lack long-term memory. Accuracy drops significantly on long interaction histories. design.md is a practical solution to this problem.
 
-Harnesses have since added memory (instruction files, automatic memory, compaction), which reduces forgetting within one agent. Two gaps remain. Memory written by the agent is not endorsed by the human. And a SWARM worker starts as a new session: five workers running in parallel are five fresh contexts that know only what their prompt tells them. The lead builds each prompt from DESIGN.md.
+Harnesses have since added memory (instruction files, automatic memory, compaction), which reduces forgetting within one agent. Two gaps remain. Memory written by the agent is not endorsed by the human. And whether a SWARM worker inherits the lead's conversation depends on the runtime and on how the worker is started. DDL therefore treats every worker as a new session: the lead builds each prompt from design.md, so five workers running in parallel need nothing beyond what their prompts say.
 
 **LLM as Cognitive Extension**: Sabbah & Li (2025) argue that LLMs can compensate for human bounded rationality.
 
@@ -209,13 +212,13 @@ Each approach handles the session problem differently:
 | SDD | Persist the spec | Code is regenerable from spec; spec survives sessions |
 | AI-DLC | Persist process artifacts | Requirements, stories, units stored in repository |
 | Harness engineering | Persist agent progress | Progress file and feature list read at each session start (Anthropic, 2025) |
-| DDL | Design as shared memory | DESIGN.md is the cognitive bridge between sessions |
+| DDL | Design as shared memory | design.md is the cognitive bridge between sessions |
 
 SDD and AI-DLC treat persistence as a side effect of their workflow, and harness engineering persists the agent's working state. DDL treats persisting what the human agreed to as the central design problem.
 
 #### Technology Choice
 
-Spec Kit keeps technology out of the specification: `/speckit.specify` describes what and why, and `/speckit.plan` names the stack (GitHub, 2025). DDL keeps both in one Draft but in separate sections, and asks each technology why it binds the experience. A technology the human names with a reason (the experience depends on it, an external constraint requires it, or the human prefers it and says so) becomes a Binding Decision. An LLM proposal, a technology named without a reason, and a delegated choice stay unbound: they are listed under the table as `Unbound:` and bind nothing. For a delegated choice, `/realize` states its pick and the reason in its plan, and the pick binds only when the human approves that plan.
+Spec Kit keeps technology out of the specification: `/speckit.specify` describes what and why, and `/speckit.plan` names the stack (GitHub, 2025). DDL keeps both in one Draft but in separate sections, and asks each technology why it binds the experience. A technology the human names with a reason (the experience depends on it, an external constraint requires it, or the human prefers it and says so) becomes a Binding Decision. An LLM proposal, a technology named without a reason, and a delegated choice stay unbound: they are listed under the table as `Unbound:` and bind nothing. An `Unbound:` line is either delegated to `/realize` or `awaiting choice`. For a delegated line, `/realize` states its pick and the reason in its plan; for an awaiting line, `/realize` asks the human to pick. A pick binds only when the human approves that plan: it then moves into the table with Source `approved in /realize plan (<date>)`. Once approved, design.md wins over later command arguments: a different technology named in an argument is a Binding Decision change and halts. Technology already present in the code is an existing premise: commands show it in their reports, and design.md does not record it; it becomes a Binding Decision only when the human gives a reason.
 
 #### Complementary Use
 
@@ -224,7 +227,7 @@ These paradigms occupy different layers and can coexist:
 - DDL's Realize phase can use SDD-style specification—writing a spec before implementation is one way to Realize
 - AI-DLC's mob elaboration can incorporate DDL's Reflect to feed implementation discoveries back into requirements
 - SDD and AI-DLC don't address philosophy evolution (design principles changing through implementation); DDL does
-- Harness memory (progress files, automatic memory) carries the agent's working state; DESIGN.md carries what the human agreed to. Keep them apart: don't copy agent progress into DESIGN.md, and don't leave a binding decision only in agent memory
+- Harness memory (progress files, automatic memory) carries the agent's working state; design.md carries what the human agreed to. Keep them apart: don't copy agent progress into design.md, and don't leave a binding decision only in agent memory
 
 The "waterfall criticism" (Marmelab, 2025) applies to SDD's one-way flow. AI-DLC mitigates this with short bolts. DDL sidesteps it entirely with its bidirectional loop.
 
@@ -253,9 +256,10 @@ Core Loop:
                   (Skip OK)
 
 Support Commands (invokable at any point):
-    +--------+  +--------+  +------+  +------------+  +---------+
-    |VALIDATE|  |RESONATE|  |COMMIT|  |REFACTORING |  |  DOCS   |
-    +--------+  +--------+  +------+  +------------+  +---------+
+    +--------+  +---------+  +------+  +------------+  +---------+
+    |VALIDATE|  |RESONATE*|  |COMMIT|  |REFACTORING |  |  DOCS   |
+    +--------+  +---------+  +------+  +------------+  +---------+
+    * this repository only; not in examples/
 ```
 
 The Core Loop drives design evolution. Support Commands maintain quality around it.
@@ -263,13 +267,13 @@ The Core Loop drives design evolution. Support Commands maintain quality around 
 | State | Entry Condition | Exit Condition |
 |-------|-----------------|----------------|
 | DRAFT | New feature or project start | Experience articulated; Binding Decisions, Direction, and Acceptance Gates recorded when they exist |
-| REALIZE | DESIGN.md exists | Code embodies principles and Binding Decisions; gates pass |
+| REALIZE | design.md exists | Code embodies principles and Binding Decisions; gates pass |
 | REFLECT | Code written | Design updated |
 
 | Support Command | Purpose |
 |-----------------|---------|
-| VALIDATE | Run mechanical validation per scope as declared in DESIGN.md |
-| RESONATE | Synchronize multilingual document versions |
+| VALIDATE | Run mechanical validation per scope as declared in design.md |
+| RESONATE | Synchronize multilingual document versions (this repository only; not in examples/) |
 | COMMIT | Record verified changes to repository |
 | DOCS | Audit and fix documentation quality |
 | REFACTORING | Audit and fix code quality |
@@ -292,7 +296,7 @@ session:
 
 Resume next session with "Last time we were discussing X."
 
-Harnesses now keep this kind of session state themselves (automatic memory, conversation summaries, progress files). Keep in DESIGN.md only what the human has seen and accepted: a pending technology choice as an `Unbound:` line, other open items in Open Questions, settled ones in Experience, Binding Decisions, or Principles.
+Harnesses now keep this kind of session state themselves (automatic memory, conversation summaries, progress files). Keep in design.md only what the human has seen and accepted: a pending technology choice as an `Unbound:` line, other open items in Open Questions, settled ones in Experience, Binding Decisions, or Principles.
 
 ### 3.3 Design-Code Alignment Verification
 
@@ -304,13 +308,18 @@ Perspectives to support Reflect:
 | NEW_PATTERN | Undocumented pattern found | Add as principle |
 | OUTDATED | Principle without implementation | Delete or implement |
 | BINDING_DRIFT | Code departs from a Binding Decision | The human chooses: fix the code, or change the decision |
-| SPENT_DIRECTION | Direction stages are done and their gates have passed | Replace them with the outcome; delete the section when every stage is done |
+| SPENT_DIRECTION | Direction stages are marked passed | Replace them with the outcome; delete the section when every stage is done |
+| SPENT_ACCEPTANCE | Every Acceptance Gate is marked passed, so the work is accepted | Move lasting checks into Validation; delete the section |
 
 These categories are a subset of the broader Detection Targets system (§3.4).
 
+**Passed marks.** `/realize` appends `passed <date>` to each gate that passes: in the stage's Gate cell for Direction (for example `human approval, passed 2026-10-20`), and after the gate for Acceptance Gates. It adds `(approved in advance)` when a human gate did not fire. The work is accepted when every Acceptance Gate is marked passed. `/reflect` reads only these marks and never infers a pass from conversation memory.
+
+Gates are never dropped. A merged stage keeps its gates at its end; a skipped stage's gates move to the end of the next stage, or to the end of the work when it is the last stage; a reordered stage keeps its gates.
+
 ### 3.4 Detection Targets
 
-Detection Targets are automated checks that run at phase boundaries within each command. They catch problems before they propagate.
+Detection Targets are automated checks that run in parallel within each phase of a command. They catch problems before they propagate.
 
 Each command defines its own D-targets (D1, D2, …) specific to its purpose. Cross-cutting targets apply globally:
 
@@ -318,13 +327,13 @@ Each command defines its own D-targets (D1, D2, …) specific to its purpose. Cr
 |----|------|---------|
 | G1 | Vague Intent | Task description lacks measurable outcome |
 | G2 | Scope Creep | Change touches files outside stated scope |
-| G3 | Principle Violation | Action contradicts DESIGN.md principles |
+| G3 | Principle Violation | Action contradicts design.md principles |
 | G4 | Missing Validation | No verification step after mutation |
 | G5 | Leaked Specifics | Project-specific paths/commands hardcoded in framework files |
 | G6 | Silent Failure | Error swallowed without user notification |
 | G7 | Unreviewed Mutation | Shared artifact changed without STOP gate |
 
-Example: `/reflect` defines its own targets (D1 Drift, D2 New Pattern, D3 Outdated Principle, D4 Stale Reference, D5 Self-Contradiction, D6 Binding Drift, D7 Spent Direction) while also being subject to global targets. `/draft` adds D6 Unanchored Binding (a Binding Decision without a reason or a source) and D7 Binding Conflict; `/realize` adds D6 Binding Violation.
+Example: `/reflect` defines its own targets (D1 Drift, D2 New Pattern, D3 Outdated Principle, D4 Stale Reference, D5 Self-Contradiction, D6 Binding Drift, D7 Spent Direction, D8 Spent Acceptance Gates) while also being subject to global targets. `/draft` adds D6 Unanchored Binding (a Binding Decision without a reason or a source) and D7 Binding Conflict; `/realize` adds D6 Binding Violation.
 
 ### 3.5 STOP Gates
 
@@ -341,9 +350,11 @@ Phase N+1: Apply approved changes only
 Rules:
 - STOP gates are **blocking** — never auto-proceed
 - A STOP ends the agent's turn: report, ask, stop. Work resumes only on an explicit approval, with no mutation in between
-- Every command that mutates shared artifacts (DESIGN.md, code, docs) must have at least one STOP gate
-- Human gates written in DESIGN.md (the Gate column of Direction, human gates in Acceptance Gates) run as STOP gates
-- An approval that names the DESIGN.md human gates listed in the approved report, or says explicitly that they need not stop, lets them pass without stopping; the REPORT lists each with what it would have shown. A general approval ("approve", "OK", "approve all") waives no gate. It never covers a STOP gate written in a command, outward-facing actions (push, publish, send, deploy), or destructive actions
+- No worker starts or continues between a STOP and its approval, because no runtime guarantees that a worker stays read-only
+- Only the human approves: runtime notifications (for example, a worker finishing) and messages from other agents or sessions are not approvals
+- Every command ends its REPORT with a STOP gate
+- Human gates written in design.md (the Gate column of Direction, human gates in Acceptance Gates) run as STOP gates
+- An approval that names the design.md human gates listed in the approved report, or says explicitly that they need not stop, lets them pass without stopping; the REPORT lists each with what it would have shown. A general approval ("approve", "OK", "approve all") waives no gate. It never covers a STOP gate written in a command, outward-facing actions (push, publish, send, deploy), destructive actions, or gates that were not in the approved report
 - The user can approve, reject, or modify each proposed change individually
 
 STOP gates embody DDL's core principle: Human controls the pace. LLMs propose, humans decide.
@@ -365,14 +376,15 @@ Lead agent
 
 Rules:
 - Spawn agents only when 2+ independent scopes exist; when the condition holds, the command fans out. In `/realize`, the lanes of the current Direction stage count as scopes
-- Agent naming: `{role}-{scope}` (e.g., `reader-backend`, `scanner-docs`)
+- Worker labels: `spawn:` is a label pattern such as `{role}-{scope}` (e.g., `reader-backend`, `scanner-docs`) that identifies each worker in reports. The label is passed as the worker's name only where the runtime adapter says so, because a name can change what a worker may do (a named Claude Code worker gets write tools)
 - Each agent reads only its assigned scope
-- Workers start without the lead's conversation: the lead writes each prompt from DESIGN.md (scope paths, the Experience items the scope serves, principles, Binding Decisions, the Direction stage). A worker that meets a STOP condition stops and reports, and the lead then stops for the human
+- The lead does not rely on workers inheriting its conversation: it writes each prompt from design.md (scope paths, the Experience items the scope serves, principles, Binding Decisions, the Direction stage), so the prompt is self-contained. A worker that meets a STOP condition stops and reports, and the lead then stops for the human
+- The prompt also states that the worker starts no workers of its own (only the lead fans out) and, for read-only work, that the work is read-only. Both runtimes give workers the tools to do otherwise, so the instruction is what keeps them in bounds (in Claude Code, a worker that cannot edit files can still run shell commands, and a writer can start workers; Codex subagents inherit the parent session's sandbox and may spawn agents of their own)
 - Lead integrates results and runs cross-scope analysis
 - Single-scope tasks run without spawning
-- The protocol maps fan-out onto each runtime (Claude Code subagents, Codex agent roles); with no parallel mechanism, scopes run one by one. Commands never name runtime tools
+- The protocol maps fan-out onto each runtime (Claude Code subagents, Codex subagents); without a parallel mechanism, the lead runs the assignments itself, read-only work as parallel reads and the rest one by one. Commands never name runtime tools
 
-Scopes are defined in DESIGN.md, never hardcoded. This keeps the framework project-agnostic.
+Scopes are defined in design.md, never hardcoded. This keeps the framework project-agnostic.
 
 -----
 
@@ -389,7 +401,7 @@ async with APIClient("https://api.example.com") as client:
     users = await client.get("/users")
 ```
 
-Record in DESIGN.md:
+Record in design.md:
 - Context Manager Pattern
 - Authentication Transparency
 - Exception-based Error Handling
@@ -397,7 +409,7 @@ Record in DESIGN.md:
 **Realize:**
 ```
 Human: Implement authentication
-LLM: DESIGN.md says "Authentication Transparency", so I'll
+LLM: design.md says "Authentication Transparency", so I'll
      auto-authenticate in __aenter__
 ```
 
@@ -417,7 +429,7 @@ async def _ensure_token(self):
         await self._refresh_token()
 ```
 
-Add to DESIGN.md:
+Add to design.md:
 - Token Refresh: Transparently refresh before expiration
 
 ### Example 2: Skipping Draft
@@ -435,14 +447,14 @@ Discovered patterns:
 - Errors are values, not exceptions
 - Side effects are explicitly marked
 
-**Reverse-generate DESIGN.md:**
+**Reverse-generate design.md:**
 ```markdown
 ## Core Principles
 - Result-based Error Handling: No exceptions
 - Explicit Side Effects: Indicate in function names
 ```
 
-Reflect → DESIGN.md without Draft. An example of "transition from any state."
+Reflect → design.md without Draft. An example of "transition from any state."
 
 ### Example 3: Realize-Reflect Iteration
 
@@ -460,7 +472,7 @@ Exploratory development where design isn't settled.
 ...repeat...
 ```
 
-DESIGN.md gets rewritten frequently. This is normal. Evidence that design isn't stable—and evidence that DDL is working.
+design.md gets rewritten frequently. This is normal. Evidence that design isn't stable—and evidence that DDL is working.
 
 ### Example 4: Draft with Binding Decisions and Direction
 
@@ -476,7 +488,7 @@ LLM:   I split this into experience and binding. Two questions: should it be lim
 Human: Yes, App Router. Nothing found: three related queries. Failure: keep the question, offer Retry.
 ```
 
-Record in DESIGN.md:
+Record in design.md:
 ```markdown
 ## Experience
 Within a second of sending a question, the answer starts to appear and grows as it is
@@ -499,8 +511,9 @@ written. Sources are listed below it.
 
 **Realize:**
 ```
-LLM: Binding Decisions honored (package.json, app/). S1 and S2 merged; the human
-     approval moved to the end of the merged stage.
+LLM: Binding Decisions honored (package.json, app/). S0 passed `npm test`: its Gate
+     cell now reads "`npm test`, passed 2026-10-20". S1 and S2 merged; both gates
+     (`npx playwright test`, then human approval) moved to the end of the merged stage.
 LLM: Stop. Hosting serves static files only, so the server cannot stream the answer,
      and streaming is why Next.js App Router binds. Options: request a Node runtime,
      stream from a separate API server, show the answer only when it is complete,
@@ -509,7 +522,7 @@ LLM: Stop. Hosting serves static files only, so the server cannot stream the ans
 
 **Reflect:**
 
-The human chose a Node runtime, so Binding Decisions match the code. Direction is spent, so it is deleted (version control keeps the history). The stop button added during implementation goes into Experience.
+The human chose a Node runtime, so Binding Decisions match the code. Every stage is marked passed, so Direction is deleted (version control keeps the history). The stop button added during implementation goes into Experience.
 
 -----
 
@@ -535,14 +548,14 @@ The human chose a Node runtime, so Binding Decisions match the code. Direction i
 ### Granularity Guidelines
 
 ```
-Write in DESIGN.md:
+Write in design.md:
 ✓ Concept level (why)
   e.g., "Authentication should be transparent"
 ✓ Design level (how)
   e.g., "Use Context Manager Pattern"
 △ Implementation level (important decisions only)
   e.g., "Chose JWT, reason: stateless"
-  Binding Decisions live at this level: the decision, why it binds, and its source (the human's words and the date)
+  Binding Decisions live at this level: the decision, why it binds, and its source (the human's words and the date, or the human's approval of a report that listed it)
 
 Don't write:
 ✗ All API details
@@ -553,22 +566,22 @@ The principle: "Minimum information needed to restore context in the next sessio
 
 ### README-as-design Alternative
 
-DESIGN.md is not mandatory. What matters is that *some* shared notebook exists between Human and LLM — Otto's notebook, in any file form.
+design.md is not mandatory. What matters is that *some* shared notebook exists between Human and LLM — Otto's notebook, in any file form.
 
-For projects where the public surface itself is the design (typically open-source libraries, CLIs, or HTTP APIs), the README plus API reference can serve as the living spec:
+For projects where the public surface itself is the design (typically open-source libraries, CLIs, or HTTP APIs), the README plus the API reference and guides can serve as the living spec:
 
 | Situation | Suggested Notebook |
 |-----------|-------------------|
-| Application / multi-deliverable / research project | `DESIGN.md` |
-| Public library where API == design | `README.md` + `docs/api/` |
+| Application / multi-deliverable / research project | `design.md` |
+| Public library where API == design | `README.md` + `docs/` (API reference, guides) |
 | Tiny tool (single script) | docstring at top of file |
 
 Rules of thumb:
 - The notebook must be **loaded at session start** and **referenced before changes**, regardless of file name
-- If the notebook is the README, README updates ARE design updates — `/reflect` writes to README
-- Switch to a separate DESIGN.md the moment design diverges from what users need to read
+- Name the notebook files in the runtime guidance (`CLAUDE.md` or `AGENTS.md`); the protocol allows this. Commands then read and write the named files wherever the protocol or a command says design.md, so README updates are design updates and `/reflect` writes to the README and guides
+- Switch to a separate design.md the moment design diverges from what users need to read
 
-This is the AgenticFlow pattern: a public Python library where the README documents the contract and DESIGN.md would be redundant. The four functional-equivalence conditions (always available, directly accessible, automatically trusted, consciously recorded) are satisfied by the README itself.
+This is the AgenticFlow pattern: a public Python library whose `CLAUDE.md` and `AGENTS.md` name `README.md` + `docs/en/` as the design documents. The README documents the contract, and the development guide (`docs/en/guides/development-workflow.md`, in the AgenticFlow repository) holds the scope matrix and the validation commands, so a separate design.md would be redundant. The four functional-equivalence conditions (always available, directly accessible, automatically trusted, consciously recorded) are satisfied by these files themselves.
 
 -----
 
@@ -579,11 +592,11 @@ Metrics for understanding DDL effectiveness. Numbers are guidelines—adjust per
 | Metric | Definition | Measurement | Healthy Target |
 |--------|------------|-------------|----------------|
 | Session Continuity | Can you resume previous session's intent? | "Success" if you grasp previous discussion and continue work within 5 minutes | Success rate > 80% |
-| Design-Code Alignment | Are principles reflected in code? | Ratio of implemented principles to total in DESIGN.md | > 70% |
-| Document Freshness | Does DESIGN.md reflect current state? | Days since last update | < 1 week |
+| Design-Code Alignment | Are principles reflected in code? | Ratio of implemented principles to total in design.md | > 70% |
+| Document Freshness | Does design.md reflect current state? | Days since last update | < 1 week |
 | Binding Alignment | Does the code honor every Binding Decision? | Ratio of honored Binding Decisions | 100% |
 
-Note on "Session Continuity": No need for rigorous measurement. If "I can't remember what we were doing" or "I'm re-explaining everything to the LLM" happens frequently, there's a problem with DESIGN.md granularity or update frequency.
+Note on "Session Continuity": No need for rigorous measurement. If "I can't remember what we were doing" or "I'm re-explaining everything to the LLM" happens frequently, there's a problem with design.md granularity or update frequency.
 
 -----
 
@@ -595,7 +608,7 @@ No tools, discipline only. Most lightweight. Recommended as starting point.
 ### Option 2: Template-Based
 
 ```markdown
-# DESIGN.md Template
+# design.md Template
 ## Intent
 ## Scopes
 ## Experience
@@ -621,7 +634,7 @@ Commands implement DDL as Phase-based workflows with Detection Targets, STOP gat
 
 | Command | Intent |
 |---------|--------|
-| `/draft` | Write the user-side experience first |
+| `/draft` | Write the user-side experience first, with the decisions and outlook it depends on |
 | `/realize` | Write code based on design principles |
 | `/reflect` | Update documents based on implementation |
 
@@ -630,15 +643,15 @@ Commands implement DDL as Phase-based workflows with Detection Targets, STOP gat
 | Command | Intent |
 |---------|--------|
 | `/validate` | Run mechanical validation per scope (lint/test/build) |
-| `/resonate` | Synchronize multilingual document versions |
+| `/resonate` (this repository only; not in examples/) | Synchronize multilingual document versions |
 | `/commit` | Record verified changes to repository |
 | `/docs` | Audit and fix documentation quality |
 | `/refactoring` | Audit and fix code quality |
 
 Each command follows the same structure:
-1. **Phases** — ordered steps (INIT → READ → EXECUTE → VALIDATE → REPORT)
-2. **Detection Targets** — automated checks at phase boundaries (D1–D7 per command)
-3. **+++SWARM** — parallel workers per scope through the runtime's own mechanism (Claude Code subagents, Codex agent roles) when 2+ scopes exist; one by one when the runtime has no parallel mechanism
+1. **Phases** — ordered steps (INIT → SURVEY/READ → WORK → REPORT (+++STOP) → EXECUTE → VERIFY)
+2. **Detection Targets** — automated checks that run in parallel within their phase (D1, D2, … per command)
+3. **+++SWARM** — parallel workers per scope through the runtime's own mechanism (Claude Code subagents, Codex subagents) when 2+ scopes exist; without a parallel mechanism, the lead runs the assignments itself, read-only work as parallel reads and the rest one by one
 4. **STOP gates** — mandatory human approval before mutating shared artifacts; the agent ends its turn and waits
 5. **Constraints** — invariants that must never be violated
 6. **Runtime adapters** — one table in the protocol maps the directives onto each harness, so commands never name runtime tools
@@ -679,8 +692,9 @@ Enables automated verification and session continuity tracking. However, if tool
 
 | Name | Purpose | Persistence |
 |------|---------|-------------|
-| DESIGN.md | Design philosophy, concept definitions | Temporary |
-| Direction (in DESIGN.md) | Outlook on the path to implementation | Most temporary: deleted when every stage is done |
+| design.md | Design philosophy, concept definitions | Temporary |
+| Direction (in design.md) | Outlook on the path to implementation | Most temporary: deleted when every stage is done |
+| Acceptance Gates (in design.md) | Definition of done | Deleted once every gate is marked passed (the work is accepted); lasting checks move to Validation first |
 | docs/adr/ | Design decision records | Permanent |
 | src/ | Manifested code | Permanent |
 
@@ -694,7 +708,7 @@ Integration patterns:
 - Absorb into code comments
 - Promote to README / API docs
 - Persist as ADR
-- Move Binding Decisions into README requirements or an ADR once the code embodies them (the code shows what was chosen, not why); the commands then stop checking them
+- Move Binding Decisions into README requirements or an ADR once the code embodies them (the code shows what was chosen, not why), only with the human's approval in `/reflect`; the commands then stop checking them
 - Delete (became obvious from code)
 
 -----
@@ -738,6 +752,7 @@ Integration patterns:
 
 | Date | Change |
 |------|--------|
-| 2026-10-17 | Harness-era revision: harness memory and DESIGN.md (§1.1, §1.4), harness engineering and technology choice (§2.5), VALIDATE in the state model (§3.1), harness session state (§3.2), Binding and Direction checks (§3.3, §3.4), G1–G7 IDs (§3.4), STOP semantics and parallel workers (§3.5, §3.6), Example 4, Binding Decisions in §5, §6, §8, template sections (§7), three references |
+| 2026-10-17 | Harness-era revision: harness memory and design.md (§1.1, §1.4), harness engineering and technology choice (§2.5), VALIDATE in the state model (§3.1), harness session state (§3.2), Binding and Direction checks (§3.3, §3.4), G1–G7 IDs (§3.4), STOP semantics and parallel workers (§3.5, §3.6), Example 4, Binding Decisions in §5, §6, §8, template sections (§7), three references; follow-up: passed marks and retired Acceptance Gates (§3.3, §3.4, Example 4, §8), no worker started or continued during a STOP and no approval from notifications or other agents (§3.5), worker labels, self-contained prompts, and the read-only and no-nesting instructions in each prompt (§1.4, §3.6), terminology alignment (Codex subagents in §3.6 and §7; D1, D2, … in §7), a notebook named by runtime guidance (§5), Phases in the protocol's role order (§7); notebook named design.md throughout; `Unbound:` lines, approved picks, arguments that would change a Binding Decision, and existing premises (§2.5); gates never dropped (§3.3); every REPORT ending with a STOP gate and gates outside the approved report never approved in advance (§3.5); the lead's fallback without a parallel mechanism (§3.6, §7); `/resonate` marked repository-only (§3.1, §7); approval of a report as a Binding Decision source (§5); How to Read rows for §6–§8; the `/draft` intent (§7) |
+| 2026-04-25 | VALIDATE support command (§3.1, §7); README-as-design Alternative (§5) |
 | 2026-02-14 | Expand §2.5 to three-way comparison (SDD / AI-DLC / DDL) |
 | 2026-01-04 | Initial version |

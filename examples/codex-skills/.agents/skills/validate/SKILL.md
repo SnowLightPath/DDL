@@ -1,30 +1,31 @@
 ---
 name: validate
-description: Run mechanical validation per scope as declared in DESIGN.md
+description: Run mechanical validation per scope as declared in design.md
 metadata:
   short-description: Mechanical validation gate
 ---
 
 # validate
 
-Run mechanical validation per scope as declared in DESIGN.md.
+Run mechanical validation per scope as declared in design.md.
 
 ## Usage
 
-- `$validate` — Validate every scope in DESIGN.md
+- `$validate` — Validate every scope in design.md
 - `$validate <scope>` — Validate a single scope by name
 
 ## Phases
 
 ### Phase 0: INIT
 
-1. Read `AGENTS.md` — Directive Reference, Codex Runtime Contract, +++SWARM Execution, and DESIGN.md Sections
-2. Read `DESIGN.md` — extract scopes, the Validation block, and the mechanical gates (commands) listed in Acceptance Gates
-3. If no `DESIGN.md` exists → refuse ("Run `$draft` first to declare scopes and validation")
+1. Read `AGENTS.md` — Directive Reference, Codex Runtime Contract, +++SWARM Execution, and design.md Sections — and any applicable command overlay (`commands/<name>.md`)
+2. Read `design.md` — extract scopes, the Validation block, and the mechanical gates (commands) listed in Acceptance Gates
+3. If no `design.md` exists → refuse ("Declare scopes and a Validation block in design.md first")
+4. If a scope is given, validate only that scope (+++SWARM Execution in `AGENTS.md`)
 
 ### Phase 1: SCAN
 
-+++SWARM: 2+ scopes in DESIGN.md
++++SWARM: 2+ scopes in design.md
 
 ```
   team: validate-scan
@@ -33,8 +34,8 @@ Run mechanical validation per scope as declared in DESIGN.md.
   max: 5
   batch: auto
   each: |
-    Run the validation commands for {scope} as declared in DESIGN.md, including mechanical gates in Acceptance Gates that name {scope}.
-    Capture exit code, stderr, stdout. Do not modify any files.
+    Run the validation commands for {scope} as declared in design.md, including mechanical gates in Acceptance Gates that name {scope}.
+    Capture exit code, stderr, stdout. Edit no files; the commands may write only their own caches and build output.
     Report PASS / FAIL plus a short output excerpt to the lead when done.
   collect: lead aggregates per-scope results into a PASS/FAIL matrix
 ```
@@ -44,15 +45,15 @@ Mechanical gates from Acceptance Gates that name no scope are run by the lead an
 +++DETECT:
   D1: Silenced Failure — Non-zero exit code, or output other than the expected value declared with the command, reported as PASS
   D2: Out-of-scope Validation — Validation touches files outside the declared scope
-  D3: Design-Validation Drift — Validation command in DESIGN.md fails to execute (missing binary, invalid syntax)
+  D3: Design-Validation Drift — Validation command in design.md fails to execute (missing binary, invalid syntax)
   D4: Timeout Ignored — Validation hung or timed out without surfacing
-  D5: Hardcoded Path — Validator embeds project paths instead of reading from DESIGN.md
+  D5: Hardcoded Path — Validator embeds project paths instead of reading from design.md
 
 ### Phase 2: REPORT
 
 +++STOP: always
 
-Emit `+++DDL_REPORT` as the section heading, then output the table below. Do not auto-fix.
+Report per the Codex Runtime Contract in `AGENTS.md` with the table below. Do not auto-fix.
 
 +++Report:
 | # | Scope | Validation Command | Status | Output Excerpt | Suggested Next Command |
@@ -65,6 +66,6 @@ validation references unimplemented design → `$realize`; all PASS → `$commit
 
 ## Constraints
 
-+++NEVER: Modify files during $validate — it is read-only
-+++NEVER: Hardcode validation commands — they come from DESIGN.md
-+++NEVER: Auto-proceed past +++STOP after FAIL — wait for user direction
++++NEVER: Edit files during $validate — it is read-only; only the declared commands write, and only their own caches and build output
++++NEVER: Hardcode validation commands — they come from design.md
++++NEVER: Auto-proceed past +++STOP — wait for user direction, even when every check passes

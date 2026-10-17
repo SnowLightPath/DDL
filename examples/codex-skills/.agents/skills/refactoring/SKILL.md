@@ -18,13 +18,14 @@ Audit and fix code quality issues.
 
 ### Phase 0: INIT
 
-1. Read `AGENTS.md` — Directive Reference, Codex Runtime Contract, +++SWARM Execution, and DESIGN.md Sections
-2. Read `DESIGN.md` — extract scopes, principles, Binding Decisions, validation commands
-3. If no `DESIGN.md` exists → scan project root for common patterns
+1. Read `AGENTS.md` — Directive Reference, Codex Runtime Contract, +++SWARM Execution, and design.md Sections — and any applicable command overlay (`commands/<name>.md`)
+2. Read `design.md` — extract scopes, principles, Binding Decisions, validation commands
+3. If no `design.md` exists → scan project root for common patterns
+4. If a path is given, audit only that path and the scopes it covers (+++SWARM Execution in `AGENTS.md`)
 
 ### Phase 1: SCAN
 
-+++SWARM: 2+ scopes in DESIGN.md
++++SWARM: 2+ scopes in design.md
 
 ```
   team: refactoring-scan
@@ -81,14 +82,19 @@ Wait for user to approve, reject, or modify each fix.
 
 Run full validation:
 
-1. Run all validation commands defined in `DESIGN.md` in parallel
+1. Run all validation commands defined in `design.md` in parallel, comparing each output with its expected value
 2. Re-scan for any new Detection Targets introduced by refactoring
 3. Summarize: what was fixed, what remains, any regressions
+
++++DETECT:
+  D8: Regression — A validation command exits non-zero, cannot run, or prints other than its expected value after the refactor
+
++++STOP: on D8
 
 ## Constraints
 
 +++NEVER: Refactor without +++STOP approval
-+++NEVER: Hardcode scopes or validation commands — they come from DESIGN.md
++++NEVER: Hardcode scopes or validation commands — they come from design.md
 +++NEVER: Change external behavior without explicit approval
 +++NEVER: Auto-fix D6 (Contradictory Impl) — escalate to user first
 +++NEVER: Replace or bypass a Binding Decision — that is a design change for $draft or $reflect, not a refactoring

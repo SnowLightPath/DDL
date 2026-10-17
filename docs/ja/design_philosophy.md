@@ -4,9 +4,9 @@
 
 人間とLLMがセッション、エージェント、ハーネスをまたいで設計方針を共有し続けることが目的です。
 
-DDLドキュメントは紋切り型のプロセスではなく、作りたいデザインの集まりです。
+DDLは紋切り型のプロセスではなく、作りたいデザインの集まりです。
 
-DDLドキュメントが成果物ではなく、設計がコードに反映されるまでの一時的なメモです。
+DDLドキュメントは成果物ではなく、設計がコードに反映されるまでの一時的なメモです。
 
 > 詳細な背景理論、実践例、ガイドラインは [design_philosophy_extended.md](./design_philosophy_extended.md) を参照してください。
 > すべてを読む必要はありません。必要なときに必要な部分だけ参照してください。
@@ -68,7 +68,7 @@ async with Client("https://api.example.com") as c:
     users = await c.get("/users")  # この使い方で良いか？
 ```
 
-ライブラリでは言語がそのまま使い方になり、ストリーミング表示はフレームワークに依存することがあり、組織が基盤を指定することもあるように、体験と切り離せない決定もあります。Draft はこれらを **Binding Decisions** として記録し、各行に拘束する理由と出典（人間の言葉と日付）を添えます。
+ライブラリでは言語がそのまま使い方になり、ストリーミング表示はフレームワークに依存することがあり、組織が基盤を指定することもあるように、体験と切り離せない決定もあります。Draft はこれらを **Binding Decisions** として記録し、各行に拘束する理由と出典（人間の言葉と日付、または、その行を載せた報告を人間が承認したこと）を添えます。
 
 ```markdown
 ## Binding Decisions
@@ -77,9 +77,9 @@ async with Client("https://api.example.com") as c:
 | Next.js App Router | 書きながら伸びる回答と、画面ごとの読み込み中・エラー表示が体験の中心 | 「Next.jsでやりたい」「App Router で」(2026-10-17) |
 ```
 
-実装までの道筋がすでに見えているときは、Draft がそれを段階・並列のレーン・人間が見たい点からなる **Direction** として記録します。Direction は見通しであって約束ではありません。**Acceptance Gates** には作業を終えたときに成り立つべきこと、すなわち通るべきコマンドと人間が与える承認を書きます。
+実装までの道筋がすでに見えているときは、Draft がそれを段階・並列のレーン・人間が見たい点からなる **Direction** として記録します。Direction は見通しであって約束ではありません。**Acceptance Gates** には作業を終えたときに成り立つべきこと、すなわち通るべきコマンドと人間が与える承認を書きます。Acceptance Gates は作業が受け入れられた時点で役目を終え、削除されます。
 
-拘束できるのは人間だけであり、LLM が提案した技術は人間が選ぶまで何も拘束しません。
+拘束できるのは人間だけであり、LLM が提案した技術は人間が選ぶまで何も拘束しません。コードにすでにある技術は既存の前提であり、コマンドは報告に示しますが design.md には記録しません。その技術は人間が理由を示したときにだけ Binding Decision になります。
 
 ### Realize
 
@@ -134,7 +134,7 @@ DDLは厳格な手順ではありません。
 | Pattern                      | Problem                          |
 |------------------------------|----------------------------------|
 | ドキュメントなしでコードだけ書く    | 次のセッションで文脈が分からなくなる      |
-| プロセスを厳格に守ろうとする       | DDLを書くことが目的になる              |
+| プロセスを厳格に守ろうとする       | DDLは厳格な手順ではない              |
 | LLMに全部任せる                | Humanの判断や長期視点が入らない        |
 | Humanが全部やる               | LLMの言語化・技術知識を活かせない       |
 | ツール化を目的にする             | 目的が先で、ツールは手段              |
@@ -154,7 +154,7 @@ DDLは厳密な方法論ではなく、目的やデザインの集まりです�
 
 最終的にコードが正（source of truth）となります。DDLドキュメントは不要になったら削除します。
 
-> **Tool-Assisted Option**: [Claude Code](../../examples/claude-commands/) (`/draft`, `/realize`, `/reflect` + サポートコマンド) | [OpenAI Codex](../../examples/codex-skills/) (`$draft`, `$realize`, `$reflect` + サポートスキル) | [Scribe Plugin](../../examples/scribe-plugin/) (ドキュメント執筆: `claude plugin install scribe@snow-light-place`)
+> **Tool-Assisted Option**: [Claude Code](../../examples/claude-commands/) (`/draft`, `/realize`, `/reflect` + サポートコマンド) | [OpenAI Codex](../../examples/codex-skills/) (`$draft`, `$realize`, `$reflect` + サポートスキル)
 
 -----
 
@@ -162,5 +162,5 @@ DDLは厳密な方法論ではなく、目的やデザインの集まりです�
 
 | Date       | Change                    |
 |------------|---------------------------|
-| 2026-10-17 | ハーネス時代の改訂: ハーネス時代の背景、Draft の Binding Decisions・Direction・Acceptance Gates、承認点での人間の役目、3つのアンチパターンを追加した |
+| 2026-10-17 | ハーネス時代の改訂: ハーネス時代の背景、Draft の Binding Decisions・Direction・Acceptance Gates（作業の受け入れ後は Acceptance Gates を削除する）、承認点での人間の役目、3つのアンチパターンを追加し、Scribe Plugin の案内を削除した。Binding Decision の出典に報告の承認を加え、コードにすでにある技術を既存の前提とした |
 | 2026-01-04 | 初版 |
