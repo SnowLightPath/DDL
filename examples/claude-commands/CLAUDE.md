@@ -3,7 +3,7 @@
 ## Protocol
 
 → DDL-PROTOCOL
-→ Read the DDL protocol before executing any command, in the lookup order of protocol §2.5: repo-local `commands/DDL-PROTOCOL-SKILL.md`, then `.claude/commands/DDL-PROTOCOL-SKILL.md`, then `$HOME/.claude/commands/DDL-PROTOCOL-SKILL.md`
+→ Read the DDL protocol before executing any command, when it is not already in context, in the lookup order of protocol §2.5: repo-local `commands/DDL-PROTOCOL-SKILL.md`, then `.claude/commands/DDL-PROTOCOL-SKILL.md`, then `$HOME/.claude/commands/DDL-PROTOCOL-SKILL.md`
 
 ## Commands
 
@@ -38,9 +38,10 @@ Every command defines its own D-targets (D1, D2, …). Cross-cutting targets bel
 
 ### On session start
 
-1. Read the DDL protocol (lookup order in protocol §2.5)
-2. Read this file (`CLAUDE.md` or `.claude/CLAUDE.md`)
-3. Read `design.md` if it exists — extract scopes, principles, validation commands, and the Experience, Binding Decisions, Direction, and Acceptance Gates when present
+1. This file is already in context: Claude Code loads `CLAUDE.md` or `.claude/CLAUDE.md` at session start and re-injects it after compaction. Do not read it again
+2. Read `design.md` if it exists — extract scopes, principles, validation commands, and the Experience, Binding Decisions, Direction, and Acceptance Gates when present. It stays in context; commands re-read it only after a compaction or in a fresh worker
+3. The DDL protocol loads when a command runs (Phase 0, lookup order in protocol §2.5), not at session start
+4. Automatic memory is a recall layer: a decision found only there is a proposal until design.md records it
 
 ### On any task
 

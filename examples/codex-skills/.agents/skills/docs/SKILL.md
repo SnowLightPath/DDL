@@ -18,8 +18,8 @@ Audit and fix documentation quality.
 
 ### Phase 0: INIT
 
-1. Read `AGENTS.md` — Directive Reference, Codex Runtime Contract, +++SWARM Execution, and design.md Sections — and any applicable command overlay (`commands/<name>.md`)
-2. Read `design.md` — extract scopes, and documentation paths when design.md lists them
+1. `AGENTS.md` (Directive Reference, Codex Runtime Contract, +++SWARM Execution, design.md Sections) is in context from session start; read it only when it is not, and read any applicable command overlay (`commands/<name>.md`)
+2. Read `design.md` when it is not already in context — extract scopes, and documentation paths when design.md lists them
 3. If no `design.md` exists → treat the repository as one scope
 4. Discover all documentation files (`.md`, `.txt`, etc.)
 5. If a path is given, audit only that path and the scopes it covers (+++SWARM Execution in `AGENTS.md`)
@@ -81,7 +81,7 @@ Wait for user to approve, reject, or modify each fix.
   max: 5
   batch: auto
   each: |
-    Apply approved fixes to {scope} documentation.
+    Apply to the {scope} documentation the approved fixes listed in this prompt, and nothing else.
     Report completion to the lead when done.
   collect: lead verifies all fixes applied correctly
 ```

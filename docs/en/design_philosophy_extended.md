@@ -13,6 +13,7 @@ This document is intended for dictionary-style lookup.
 |------|---------|
 | Understand theoretical background | [§1 Cognitive Foundations](#-1-cognitive-foundations) |
 | Compare with existing methodologies | [§2 Related Methodologies](#-2-related-methodologies) |
+| See what the model loads and when | [§2.5 Context Engineering](#context-engineering) |
 | Systematize operations | [§3 Systematization Framework](#-3-systematization-framework) |
 | Get concrete examples | [§4 Practical Examples](#-4-practical-examples) |
 | Make adoption decisions | [§5 Adoption Criteria](#-5-adoption-criteria) |
@@ -102,9 +103,7 @@ Where to delegate what—this awareness is DDL's core.
 
 Research on LLM collaboration has surged in 2024-2025.
 
-**Session Discontinuity Problem**: LLMs lack long-term memory. Accuracy drops significantly on long interaction histories. design.md is a practical solution to this problem.
-
-Harnesses have since added memory (instruction files, automatic memory, compaction), which reduces forgetting within one agent. Two gaps remain. Memory written by the agent is not endorsed by the human. And whether a SWARM worker inherits the lead's conversation depends on the runtime and on how the worker is started. DDL therefore treats every worker as a new session: the lead builds each prompt from design.md, so five workers running in parallel need nothing beyond what their prompts say.
+**Session Discontinuity Problem**: Chat assistants gained memory years ago, and coding harnesses now add their own: instruction files, automatic memory, compaction of long conversations. The problem DDL addresses is not that the model forgets. It is that what the harness remembers is not something the human agreed to; that it is not shared across agents and harnesses (whether a SWARM worker inherits the lead's conversation depends on the runtime and on how the worker is started); and that it is finite, because the more a context holds, the worse the model recalls any of it (Anthropic, 2025b). design.md answers all three: it carries only what the human agreed to, every session reads the same file, and the lead builds each worker's prompt from it, so five workers running in parallel need nothing beyond what their prompts say.
 
 **LLM as Cognitive Extension**: Sabbah & Li (2025) argue that LLMs can compensate for human bounded rationality.
 
@@ -186,9 +185,25 @@ AWS-originated methodology (Raja SP et al., 2025) that redesigns the entire SDLC
 
 #### Harness Engineering in Brief
 
-In 2025–2026 the harness around the model became an engineering subject of its own. Anthropic described a harness for long-running agents in which an initializer agent sets up the environment, and each later session reads a progress file, a feature list, and the git log before choosing its work (Anthropic, 2025). OpenAI's harness engineering report describes a product built with no manually written code: engineers design the environment, specify intent, and build feedback loops, while Codex writes the code (Lopopolo, 2026).
+In 2025–2026 the harness around the model became an engineering subject of its own. Anthropic described a harness for long-running agents in which an initializer agent sets up the environment, and each later session reads a progress file, a feature list, and the git log before choosing its work (Anthropic, 2025a). OpenAI's harness engineering report describes a product built with no manually written code: engineers design the environment, specify intent, and build feedback loops, while Codex writes the code (Lopopolo, 2026).
 
 Of everything these harnesses record and specify, DDL addresses the part the human must agree to: the experience, the decisions that bind it, and the gates where the human looks.
+
+#### Context Engineering
+
+By late 2025 the discipline had a name. Anthropic's applied AI team described context as "a finite resource with diminishing marginal returns": as the window fills, the model recalls less of what is in it, so an agent should hold the smallest set of high-signal tokens that lets it act, retrieve the rest just in time, compact long conversations into summaries, and give focused sub-agents clean context windows (Anthropic, 2025b). Agent Skills apply the same idea to instructions: at startup only each skill's name and description load, and the body loads when the skill is used (Anthropic, 2025c). Manus reports the same lessons from production: treat the file system as context that is unlimited and persistent, keep the record of wrong turns, and recite the current objectives into the end of the context (Ji, 2025). The harnesses document what they load. Claude Code loads the user and project instruction files and its automatic memory at session start, loads a command when it is invoked, and after compaction re-injects the project instruction file and the memory from disk while the conversation itself is summarized (Anthropic, 2026). Codex reads the AGENTS.md chain once per run before any work, lists skills by name and description, and treats memories as "a helpful recall layer, not as the only source for rules that must always apply" (OpenAI, 2026).
+
+DDL is context engineering done from the human's side. The question "what should the model see before it acts" splits into what is always in context, what loads when a command runs, and what the lead packs for each worker:
+
+| Layer | Content | Loaded | Owner |
+|-------|---------|--------|-------|
+| Instruction file (`CLAUDE.md`, `AGENTS.md`) | How to work here: protocol lookup, global constraints, G1–G7 | Session start; Claude Code re-injects it after compaction | Human |
+| design.md | What the human agreed to: Experience, Binding Decisions, Direction, Acceptance Gates, principles, scopes, validation | Session start | Human and LLM, through the loop |
+| Protocol and command | How a command runs | When the command is invoked (Phase 0); a Codex skill set may carry the protocol sections in `AGENTS.md`, in context from session start. Commands reference the protocol and never copy it | Methodology |
+| Worker prompt | One scope's paths, the Experience items it serves, the principles, the Binding Decisions, the Direction stage, the scope's validation commands, the rows the human approved for the phase (verbatim), and in `/realize` the approved plan | When the lead fans out; the worker reads only the files and design.md sections the prompt names | Lead, from design.md |
+| Automatic memory, compaction summaries, progress files | The agent's working state | By the harness | Agent; never a source of decisions |
+
+Three consequences follow. First, the budget: every section the loop retires (a spent Direction, accepted Acceptance Gates) is context that no later session pays for, so "DDL documents are temporary" is also a context rule. Second, the conversation is not durable: a compaction summary is not a user message and approves nothing. When the report a STOP asked about is no longer in context verbatim, the command rebuilds it from design.md, git, and the files it described and asks again; an approval given after a summary applies only to a report emitted after that summary, and a STOP that a restart interrupted is not resumed: the command runs again from the phase that stopped, skipping the stages whose gates are marked passed. Whatever the human approves is written down at once (the draft to design.md, a passed gate to its mark, a delegated choice to the table). Third, memory is not agreement: a decision that exists only in automatic memory is a proposal until design.md records it.
 
 #### Structural Comparison
 
@@ -211,7 +226,7 @@ Each approach handles the session problem differently:
 |----------|----------|-----------|
 | SDD | Persist the spec | Code is regenerable from spec; spec survives sessions |
 | AI-DLC | Persist process artifacts | Requirements, stories, units stored in repository |
-| Harness engineering | Persist agent progress | Progress file and feature list read at each session start (Anthropic, 2025) |
+| Harness engineering | Persist agent progress | Progress file and feature list read at each session start (Anthropic, 2025a) |
 | DDL | Design as shared memory | design.md is the cognitive bridge between sessions |
 
 SDD and AI-DLC treat persistence as a side effect of their workflow, and harness engineering persists the agent's working state. DDL treats persisting what the human agreed to as the central design problem.
@@ -352,6 +367,7 @@ Rules:
 - A STOP ends the agent's turn: report, ask, stop. Work resumes only on an explicit approval, with no mutation in between
 - No worker starts or continues between a STOP and its approval, because no runtime guarantees that a worker stays read-only
 - Only the human approves: runtime notifications (for example, a worker finishing) and messages from other agents or sessions are not approvals
+- A conversation summary (compaction) is not a user message and approves nothing. When the report a STOP asked about is no longer in context verbatim, the command rebuilds it from design.md, git, and the files it described and asks again; an approval given after a summary applies only to a report emitted after that summary. A STOP that a restart interrupted is not resumed: the command runs again from the phase that stopped, skipping the stages whose gates are marked passed. What the human approves is written down at once, because the conversation is not durable
 - Every command ends its REPORT with a STOP gate
 - Human gates written in design.md (the Gate column of Direction, human gates in Acceptance Gates) run as STOP gates
 - An approval that names the design.md human gates listed in the approved report, or says explicitly that they need not stop, lets them pass without stopping; the REPORT lists each with what it would have shown. A general approval ("approve", "OK", "approve all") waives no gate. It never covers a STOP gate written in a command, outward-facing actions (push, publish, send, deploy), destructive actions, or gates that were not in the approved report
@@ -378,7 +394,7 @@ Rules:
 - Spawn agents only when 2+ independent scopes exist; when the condition holds, the command fans out. In `/realize`, the lanes of the current Direction stage count as scopes
 - Worker labels: `spawn:` is a label pattern such as `{role}-{scope}` (e.g., `reader-backend`, `scanner-docs`) that identifies each worker in reports. The label is passed as the worker's name only where the runtime adapter says so, because a name can change what a worker may do (a named Claude Code worker gets write tools)
 - Each agent reads only its assigned scope
-- The lead does not rely on workers inheriting its conversation: it writes each prompt from design.md (scope paths, the Experience items the scope serves, principles, Binding Decisions, the Direction stage), so the prompt is self-contained. A worker that meets a STOP condition stops and reports, and the lead then stops for the human
+- The lead does not rely on workers inheriting its conversation: it writes each prompt from design.md (scope paths, the Experience items the scope serves, principles, Binding Decisions, the Direction stage, the scope's validation commands, the rows the human approved for the phase (verbatim), and in `/realize` the approved plan), so the prompt is self-contained and is the worker's whole context: the worker reloads neither the instruction file nor design.md in full. A worker that meets a STOP condition stops and reports, and the lead then stops for the human
 - The prompt also states that the worker starts no workers of its own (only the lead fans out) and, for read-only work, that the work is read-only. Both runtimes give workers the tools to do otherwise, so the instruction is what keeps them in bounds (in Claude Code, a worker that cannot edit files can still run shell commands, and a writer can start workers; Codex subagents inherit the parent session's sandbox and may spawn agents of their own)
 - Lead integrates results and runs cross-scope analysis
 - Single-scope tasks run without spawning
@@ -737,8 +753,15 @@ Integration patterns:
 - Marmelab (2025). [Spec-Driven Development: The Waterfall Strikes Back](https://marmelab.com/blog/2025/11/12/spec-driven-development-waterfall-strikes-back.html).
 - AWS (2025). [AI-Driven Development Life Cycle: Reimagining Software Engineering](https://aws.amazon.com/blogs/devops/ai-driven-development-life-cycle/). *AWS DevOps Blog*.
 - GitHub (2025). [Spec Kit](https://github.com/github/spec-kit). *GitHub*.
-- Anthropic (2025). [Effective harnesses for long-running agents](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents). *Anthropic Engineering*.
+- Anthropic (2025a). [Effective harnesses for long-running agents](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents). *Anthropic Engineering*.
 - Lopopolo, R. (2026). [Harness engineering: leveraging Codex in an agent-first world](https://openai.com/index/harness-engineering/). *OpenAI*.
+
+### Context Engineering
+- Anthropic (2025b). [Effective context engineering for AI agents](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents). *Anthropic Engineering*.
+- Anthropic (2025c). [Equipping agents for the real world with Agent Skills](https://www.anthropic.com/engineering/equipping-agents-for-the-real-world-with-agent-skills). *Anthropic Engineering*.
+- Ji, Y. (2025). [Context Engineering for AI Agents: Lessons from Building Manus](https://manus.im/blog/Context-Engineering-for-AI-Agents-Lessons-from-Building-Manus). *Manus*.
+- Anthropic (2026). [How Claude remembers your project](https://code.claude.com/docs/en/memory) and [Context window](https://code.claude.com/docs/en/context-window). *Claude Code documentation* (accessed 2026-10-17).
+- OpenAI (2026). [Custom instructions with AGENTS.md](https://developers.openai.com/codex/guides/agents-md) and [Memories](https://developers.openai.com/codex/customization/memories). *Codex documentation* (accessed 2026-10-17).
 
 ### Related Methodologies
 - Knuth, D. (1984). [Literate Programming](https://academic.oup.com/comjnl/article/27/2/97/343244). *The Computer Journal*, 27(2), 97-111.
@@ -752,7 +775,7 @@ Integration patterns:
 
 | Date | Change |
 |------|--------|
-| 2026-10-17 | Harness-era revision: harness memory and design.md (§1.1, §1.4), harness engineering and technology choice (§2.5), VALIDATE in the state model (§3.1), harness session state (§3.2), Binding and Direction checks (§3.3, §3.4), G1–G7 IDs (§3.4), STOP semantics and parallel workers (§3.5, §3.6), Example 4, Binding Decisions in §5, §6, §8, template sections (§7), three references; follow-up: passed marks and retired Acceptance Gates (§3.3, §3.4, Example 4, §8), no worker started or continued during a STOP and no approval from notifications or other agents (§3.5), worker labels, self-contained prompts, and the read-only and no-nesting instructions in each prompt (§1.4, §3.6), terminology alignment (Codex subagents in §3.6 and §7; D1, D2, … in §7), a notebook named by runtime guidance (§5), Phases in the protocol's role order (§7); notebook named design.md throughout; `Unbound:` lines, approved picks, arguments that would change a Binding Decision, and existing premises (§2.5); gates never dropped (§3.3); every REPORT ending with a STOP gate and gates outside the approved report never approved in advance (§3.5); the lead's fallback without a parallel mechanism (§3.6, §7); `/resonate` marked repository-only (§3.1, §7); approval of a report as a Binding Decision source (§5); How to Read rows for §6–§8; the `/draft` intent (§7) |
+| 2026-10-17 | Harness-era revision: harness memory and design.md (§1.1, §1.4), harness engineering and technology choice (§2.5), VALIDATE in the state model (§3.1), harness session state (§3.2), Binding and Direction checks (§3.3, §3.4), G1–G7 IDs (§3.4), STOP semantics and parallel workers (§3.5, §3.6), Example 4, Binding Decisions in §5, §6, §8, template sections (§7), three references; follow-up: passed marks and retired Acceptance Gates (§3.3, §3.4, Example 4, §8), no worker started or continued during a STOP and no approval from notifications or other agents (§3.5), worker labels, self-contained prompts, and the read-only and no-nesting instructions in each prompt (§1.4, §3.6), terminology alignment (Codex subagents in §3.6 and §7; D1, D2, … in §7), a notebook named by runtime guidance (§5), Phases in the protocol's role order (§7); notebook named design.md throughout; `Unbound:` lines, approved picks, arguments that would change a Binding Decision, and existing premises (§2.5); gates never dropped (§3.3); every REPORT ending with a STOP gate and gates outside the approved report never approved in advance (§3.5); the lead's fallback without a parallel mechanism (§3.6, §7); `/resonate` marked repository-only (§3.1, §7); approval of a report as a Binding Decision source (§5); How to Read rows for §6–§8; the `/draft` intent (§7); context engineering (§1.4, §2.5, §3.5, §3.6) and its references |
 | 2026-04-25 | VALIDATE support command (§3.1, §7); README-as-design Alternative (§5) |
 | 2026-02-14 | Expand §2.5 to three-way comparison (SDD / AI-DLC / DDL) |
 | 2026-01-04 | Initial version |

@@ -12,9 +12,9 @@ Write the ideal experience before implementation exists, together with the decis
 
 ### Phase 0: INIT
 
-1. Read the DDL protocol for the current runtime: repo-local `commands/DDL-PROTOCOL-SKILL.md` when present; otherwise, in Claude Code, `.claude/commands/DDL-PROTOCOL-SKILL.md`, then `$HOME/.claude/commands/DDL-PROTOCOL-SKILL.md`; in Codex, `$HOME/.codex/commands/DDL-PROTOCOL-SKILL.md`, then the protocol sections of `AGENTS.md`.
-2. Read project-local runtime guidance when present: `AGENTS.md` for Codex, `CLAUDE.md` or `.claude/CLAUDE.md` for Claude Code, and any applicable command overlay.
-3. Read `design.md` — extract Intent, scopes, existing principles, and any Experience, Binding Decisions, Direction, and Acceptance Gates (protocol §3)
+1. Read the DDL protocol for the current runtime when it is not already in context: repo-local `commands/DDL-PROTOCOL-SKILL.md` when present; otherwise, in Claude Code, `.claude/commands/DDL-PROTOCOL-SKILL.md`, then `$HOME/.claude/commands/DDL-PROTOCOL-SKILL.md`; in Codex, `$HOME/.codex/commands/DDL-PROTOCOL-SKILL.md`, then the protocol sections of `AGENTS.md`.
+2. Read project-local runtime guidance when it is not already in context (the runtime loads `AGENTS.md` for Codex, and `CLAUDE.md` or `.claude/CLAUDE.md` for Claude Code, at session start), and any applicable command overlay.
+3. Read `design.md` when it is not already in context — extract scopes, existing principles, and any Experience, Binding Decisions, Direction, and Acceptance Gates (protocol §3)
 4. If no `design.md` exists → ask user to create one or proceed with defaults
 
 ### Phase 1: UNDERSTAND
@@ -43,7 +43,7 @@ Write the ideal experience before implementation exists, together with the decis
    - **Direction** — the user's outlook on the path to implementation: stage order, parallel lanes, what to show the user when, and human gates. Non-binding
    - **Acceptance Gates** — what must hold when done: mechanical gates (commands, each with its expected result when exit code alone cannot show failure) and human gates (approvals)
 3. Write consumer-side code / usage examples together, in the language and on the platform the Binding Decisions name. For a library or SDK, the consumer-side language is part of the Experience: ask for it if the user did not name it, and record it as a Binding Decision
-4. Show the technology found in Phase 1 as existing premises; it becomes a Binding Decision only when the user gives a reason
+4. Show the technology found in Phase 1, and any decision found only in the harness's automatic memory, as existing premises; either becomes a Binding Decision only when the user gives a reason
 5. When the user delegates a choice, present 2–3 options with trade-offs and list them as Unbound (protocol §3) until the user picks one, or until the user approves the choice in the `/realize` plan
 6. Do NOT implement yet — experience, decisions, and outlook only
 7. Iterate until it feels right

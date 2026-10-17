@@ -11,9 +11,9 @@ Detect divergence between implementation and design.md, then reconcile.
 
 ### Phase 0: INIT
 
-1. Read the DDL protocol for the current runtime: repo-local `commands/DDL-PROTOCOL-SKILL.md` when present; otherwise, in Claude Code, `.claude/commands/DDL-PROTOCOL-SKILL.md`, then `$HOME/.claude/commands/DDL-PROTOCOL-SKILL.md`; in Codex, `$HOME/.codex/commands/DDL-PROTOCOL-SKILL.md`, then the protocol sections of `AGENTS.md`.
-2. Read project-local runtime guidance when present: `AGENTS.md` for Codex, `CLAUDE.md` or `.claude/CLAUDE.md` for Claude Code, and any applicable command overlay.
-3. Read `design.md` — extract Intent, scopes, principles, Experience, Binding Decisions, Direction, and Acceptance Gates (protocol §3)
+1. Read the DDL protocol for the current runtime when it is not already in context: repo-local `commands/DDL-PROTOCOL-SKILL.md` when present; otherwise, in Claude Code, `.claude/commands/DDL-PROTOCOL-SKILL.md`, then `$HOME/.claude/commands/DDL-PROTOCOL-SKILL.md`; in Codex, `$HOME/.codex/commands/DDL-PROTOCOL-SKILL.md`, then the protocol sections of `AGENTS.md`.
+2. Read project-local runtime guidance when it is not already in context (the runtime loads `AGENTS.md` for Codex, and `CLAUDE.md` or `.claude/CLAUDE.md` for Claude Code, at session start), and any applicable command overlay.
+3. Read `design.md` when it is not already in context — extract scopes, principles, Experience, Binding Decisions, Direction, and Acceptance Gates (protocol §3)
 4. If no `design.md` exists → refuse ("Nothing to reflect against")
 5. If a path is given, work only on the scopes it covers (§2.3 of the protocol)
 
@@ -46,7 +46,7 @@ Lead integrates results and performs cross-scope analysis:
    - **Code drifted** — implementation violates a principle or a Binding Decision, or does not deliver an Experience item
    - **Philosophy outdated** — code shows better approach
    - **New pattern** — code introduced something `design.md` doesn't cover
-   - **Direction spent** — stages whose gates are all marked passed; replace them with the outcome, and delete the section when every stage is done (quote the removed stages in the REPORT when design.md is not under version control)
+   - **Direction spent** — stages whose gates are all marked passed; replace them with the outcome, delete the `Approved plan` lines that served them, and delete the section when every stage is done (quote the removed stages in the REPORT when design.md is not under version control)
    - **Acceptance Gates spent** — every gate is marked passed, so the work was accepted; move gates that should keep running into Validation, then delete the section (quote it in the REPORT when design.md is not under version control)
 6. If the project keeps its own headings for these sections (for example `Stack` or `Execution plan`), propose one mapping onto protocol §3; never force a rename
 
@@ -88,7 +88,7 @@ Wait for user to approve, reject, or modify each recommendation.
   max: 5
   batch: auto
   each: |
-    Apply only approved changes to {scope}.
+    Apply to {scope} the approved changes listed in this prompt, and nothing else.
     Report completion to the lead when done.
   collect: lead summarizes what changed
 ```

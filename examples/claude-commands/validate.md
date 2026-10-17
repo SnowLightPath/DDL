@@ -11,9 +11,9 @@ Run mechanical validation per scope as declared in design.md.
 
 ### Phase 0: INIT
 
-1. Read the DDL protocol for the current runtime: repo-local `commands/DDL-PROTOCOL-SKILL.md` when present; otherwise, in Claude Code, `.claude/commands/DDL-PROTOCOL-SKILL.md`, then `$HOME/.claude/commands/DDL-PROTOCOL-SKILL.md`; in Codex, `$HOME/.codex/commands/DDL-PROTOCOL-SKILL.md`, then the protocol sections of `AGENTS.md`.
-2. Read project-local runtime guidance when present: `AGENTS.md` for Codex, `CLAUDE.md` or `.claude/CLAUDE.md` for Claude Code, and any applicable command overlay.
-3. Read `design.md` — extract scopes, the Validation block, and the mechanical gates (commands) listed in Acceptance Gates
+1. Read the DDL protocol for the current runtime when it is not already in context: repo-local `commands/DDL-PROTOCOL-SKILL.md` when present; otherwise, in Claude Code, `.claude/commands/DDL-PROTOCOL-SKILL.md`, then `$HOME/.claude/commands/DDL-PROTOCOL-SKILL.md`; in Codex, `$HOME/.codex/commands/DDL-PROTOCOL-SKILL.md`, then the protocol sections of `AGENTS.md`.
+2. Read project-local runtime guidance when it is not already in context (the runtime loads `AGENTS.md` for Codex, and `CLAUDE.md` or `.claude/CLAUDE.md` for Claude Code, at session start), and any applicable command overlay.
+3. Read `design.md` when it is not already in context — extract scopes, the Validation block, and the mechanical gates (commands) listed in Acceptance Gates
 4. If no `design.md` exists → refuse ("Declare scopes and a Validation block in design.md first")
 5. If a scope is given, validate only that scope (§2.3 of the protocol)
 
@@ -28,7 +28,7 @@ Run mechanical validation per scope as declared in design.md.
   max: 5
   batch: auto
   each: |
-    Run the validation commands for {scope} as declared in design.md, including mechanical gates in Acceptance Gates that name {scope}.
+    Run the validation commands for {scope} listed in this prompt (the Validation block and the mechanical gates in Acceptance Gates that name {scope}).
     Capture exit code, stderr, stdout. Edit no files; the commands may write only their own caches and build output.
     Report PASS / FAIL plus a short output excerpt to the lead when done.
   collect: lead aggregates per-scope results into a PASS/FAIL matrix

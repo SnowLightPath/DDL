@@ -18,8 +18,8 @@ Audit and fix code quality issues.
 
 ### Phase 0: INIT
 
-1. Read `AGENTS.md` — Directive Reference, Codex Runtime Contract, +++SWARM Execution, and design.md Sections — and any applicable command overlay (`commands/<name>.md`)
-2. Read `design.md` — extract scopes, principles, Binding Decisions, validation commands
+1. `AGENTS.md` (Directive Reference, Codex Runtime Contract, +++SWARM Execution, design.md Sections) is in context from session start; read it only when it is not, and read any applicable command overlay (`commands/<name>.md`)
+2. Read `design.md` when it is not already in context — extract scopes, Binding Decisions, validation commands
 3. If no `design.md` exists → scan project root for common patterns
 4. If a path is given, audit only that path and the scopes it covers (+++SWARM Execution in `AGENTS.md`)
 
@@ -73,7 +73,7 @@ Wait for user to approve, reject, or modify each fix.
   max: 5
   batch: auto
   each: |
-    Apply approved refactors to {scope}.
+    Apply to {scope} the approved refactors listed in this prompt, and nothing else.
     Report completion to the lead when done.
   collect: lead verifies refactors and runs validation
 ```
