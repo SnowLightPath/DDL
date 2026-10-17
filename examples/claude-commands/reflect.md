@@ -13,8 +13,9 @@ Detect divergence between implementation and design.md, then reconcile.
 
 1. Read the DDL protocol for the current runtime: repo-local `commands/DDL-PROTOCOL-SKILL.md` when present; otherwise, in Claude Code, `.claude/commands/DDL-PROTOCOL-SKILL.md`, then `$HOME/.claude/commands/DDL-PROTOCOL-SKILL.md`; in Codex, `$HOME/.codex/commands/DDL-PROTOCOL-SKILL.md`, then the protocol sections of `AGENTS.md`.
 2. Read project-local runtime guidance when present: `AGENTS.md` for Codex, `CLAUDE.md` or `.claude/CLAUDE.md` for Claude Code, and any applicable command overlay.
-3. Read `design.md` — extract scopes, principles, Experience, Binding Decisions, Direction, and Acceptance Gates (protocol §3)
+3. Read `design.md` — extract Intent, scopes, principles, Experience, Binding Decisions, Direction, and Acceptance Gates (protocol §3)
 4. If no `design.md` exists → refuse ("Nothing to reflect against")
+5. If a path is given, work only on the scopes it covers (§2.3 of the protocol)
 
 ### Phase 1: READ
 
@@ -39,22 +40,26 @@ Lead integrates results and performs cross-scope analysis:
 
 1. Compare each scope's implementation against `design.md` principles and Binding Decisions
 2. Compare implemented behavior against Experience: states the code handles that Experience does not describe, and Experience items the code does not deliver
-3. Compare finished work against Direction: which stages are done and passed their gate, which deviated
-4. Classify divergences:
-   - **Code drifted** — implementation violates a principle or a Binding Decision
+3. Compare finished work against Direction and Acceptance Gates through their passed marks (protocol §3): which stages have every gate marked passed, which deviated, and whether every Acceptance Gate is marked passed
+4. Compare Scopes and Validation against the repository: scope paths that no longer exist and Validation commands that cannot run
+5. Classify divergences:
+   - **Code drifted** — implementation violates a principle or a Binding Decision, or does not deliver an Experience item
    - **Philosophy outdated** — code shows better approach
    - **New pattern** — code introduced something `design.md` doesn't cover
-   - **Direction spent** — stages whose work is done and whose gate has passed; replace them with the outcome, and delete the section when every stage is done (quote the removed stages in the REPORT when design.md is not under version control)
-5. If the project keeps its own headings for these sections (for example `Stack` or `Execution plan`), propose one mapping onto protocol §3; never force a rename
+   - **Direction spent** — stages whose gates are all marked passed; replace them with the outcome, and delete the section when every stage is done (quote the removed stages in the REPORT when design.md is not under version control)
+   - **Acceptance Gates spent** — every gate is marked passed, so the work was accepted; move gates that should keep running into Validation, then delete the section (quote it in the REPORT when design.md is not under version control)
+6. If the project keeps its own headings for these sections (for example `Stack` or `Execution plan`), propose one mapping onto protocol §3; never force a rename
 
 +++DETECT:
   D1: Drift — Implementation contradicts a stated principle
   D2: New Pattern — Code exhibits a pattern not captured in design.md
   D3: Outdated Principle — Principle references removed/changed behavior
-  D4: Stale Reference — design.md links or paths no longer exist
+  D4: Stale Reference — design.md links, paths, or Scopes paths no longer exist, or a Validation command cannot run
   D5: Self-Contradiction — Two principles in design.md conflict with each other
-  D6: Binding Drift — Code uses a technology that replaces, bypasses, or contradicts a Binding Decision
-  D7: Spent Direction — Direction lists stages whose work is done and whose gate has passed, or the section remains after every stage is done
+  D6: Binding Drift — Code uses a technology that replaces, bypasses, or contradicts a Binding Decision, or the reason a Binding Decision gives no longer holds
+  D7: Spent Direction — Direction lists a stage whose gates are all marked passed, or the section remains after every stage is done
+  D8: Spent Acceptance Gates — every gate in Acceptance Gates is marked passed and the section remains
+  D9: Experience Gap — code handles a state Experience does not describe, or does not deliver an Experience item
 
 ### Phase 3: REPORT
 
@@ -98,4 +103,4 @@ After applying:
 +++NEVER: Hardcode scopes — they come from design.md
 +++NEVER: Skip meta-reflection — can reflect on design.md itself
 +++NEVER: Rewrite a Binding Decision to match drifted code without the user's approval
-+++NEVER: Add a Binding Decision row for a technology found only in code — report it as an existing premise or an `Unbound:` line until the user gives the reason
++++NEVER: Add a Binding Decision row for a technology found only in code — report it as an existing premise until the user gives the reason

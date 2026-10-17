@@ -5,28 +5,33 @@ Example implementation of [Design-Doc Loop (DDL)](../../docs/en/design_philosoph
 ## Installation
 
 ```bash
-cp examples/claude-commands/CLAUDE.md .claude/
-cp examples/claude-commands/{draft,realize,reflect,validate,commit,docs,refactoring,DDL-PROTOCOL-SKILL}.md .claude/commands/
+mkdir -p your-project/.claude/commands
+cp examples/claude-commands/CLAUDE.md your-project/.claude/
+cp examples/claude-commands/{draft,realize,reflect,validate,commit,docs,refactoring,DDL-PROTOCOL-SKILL}.md your-project/.claude/commands/
 ```
+
+- Edit the `# Project Name` title in the copied `CLAUDE.md`.
+- A global install works too: copy the command files into `$HOME/.claude/commands/` to use them in every project. Commands look up the protocol in repo-local `commands/`, then `.claude/commands/`, then `$HOME/.claude/commands/`.
+- A project can add an overlay in `commands/<name>.md` to give a command project facts (target paths, protected terms, validation commands) without copying the whole command.
 
 ## Commands
 
 ### Core Loop
 
-| Command | Intent |
-|---------|--------|
-| `/draft` | Capture ideal experience, and the decisions and outlook it depends on, before implementation |
-| `/realize` | Manifest philosophy as working code |
-| `/reflect` | Update documents based on implementation |
+| Command | Usage | Intent |
+|---------|-------|--------|
+| `/draft` | `/draft`, `/draft <feature>`, `/draft <feature> <technology or outlook>` | Capture ideal experience, and the decisions and outlook it depends on, before implementation |
+| `/realize` | `/realize`, `/realize <feature>` | Manifest philosophy as working code |
+| `/reflect` | `/reflect`, `/reflect <path>` | Update documents based on implementation |
 
 ### Support Commands
 
-| Command | Intent |
-|---------|--------|
-| `/validate` | Run mechanical validation per scope (lint/test/build) |
-| `/commit` | Record verified changes to repository |
-| `/docs` | Audit and fix documentation quality |
-| `/refactoring` | Audit and fix code quality |
+| Command | Usage | Intent |
+|---------|-------|--------|
+| `/validate` | `/validate`, `/validate <scope>` | Run mechanical validation per scope: the Validation commands (lint/test/build) and the mechanical gates in Acceptance Gates |
+| `/commit` | `/commit` (local only), `/commit remote` (commit and push) | Record verified changes to repository |
+| `/docs` | `/docs`, `/docs <path>` | Audit and fix documentation quality |
+| `/refactoring` | `/refactoring`, `/refactoring <path>` | Audit and fix code quality |
 
 ## The Loop
 
@@ -41,20 +46,26 @@ Design Document ⇄ Code
 
 Every command follows the DDL-PROTOCOL defined in `DDL-PROTOCOL-SKILL.md`:
 
-1. **Phases** — ordered steps (INIT → READ → EXECUTE → VALIDATE)
-2. **+++DETECT** — automated checks at phase boundaries (D1, D2, … per command)
-3. **+++SWARM** — parallel workers per scope (`team:`, `spawn:`, `type:`, `each:`, `collect:`) when 2+ scopes exist, run with the runtime's own mechanism (protocol §2.5)
-4. **+++STOP** — mandatory human approval before mutating shared artifacts; the agent ends its turn and waits (protocol §1.5)
-5. **+++NEVER** — invariants that must never be violated
+1. **Phases** — ordered steps (INIT → SURVEY/READ → WORK → REPORT (+++STOP) → EXECUTE → VERIFY). A phase that follows a `+++STOP: always` opens with a **Pre-condition** line: enter only after explicit approval at that STOP
+2. **+++DETECT** — automated checks that run in parallel within their phase (D1, D2, … per command)
+3. **+++SWARM** — parallel workers that fan out over scopes, Direction lanes, or files when 2 or more exist, one per unit or batch (`team:`, `spawn:`, `type:`, `max:`, `batch:`, `each:`, `collect:`), run with the runtime's own mechanism (protocol §2.5); without a parallel primitive, the lead executes the assignments itself (protocol §2.4 Step 3)
+4. **+++STOP** — mandatory human approval before mutating shared artifacts; the agent ends its turn and waits, starting or continuing no worker until approval (protocol §1.5), with its report headed `+++DDL_REPORT`. `+++STOP: always` halts at REPORT, and `+++STOP: on D{n}` halts when that DETECT fires. Human gates written in design.md (Direction and Acceptance Gates) run as STOPs too. Advance approval applies only to design.md human gates the user names or explicitly waives; it never skips a STOP written in a command file
+5. **+++Report** — the table template the agent fills in and shows at a STOP
+6. **+++DDL_PHASE** / **+++DDL_REPORT** — output markers: `+++DDL_PHASE: <PhaseName>` on the first line of a phase that mutates state, and `+++DDL_REPORT` as the heading above the report table at every STOP
+7. **+++NEVER** — invariants that must never be violated
 
 ## design.md Sections
 
-`/draft` writes these sections into `design.md` when the draft needs them, and Experience comes first:
+`design.md` holds these sections; each item names who writes it. A project uses only the sections it needs. Experience is always needed and comes first; Binding Decisions, Direction, and Acceptance Gates are optional, and `/draft` asks about them only when the user's words point to them:
 
-1. **Experience** — consumer-side usage with inputs, outputs, and error / empty / boundary states
-2. **Binding Decisions** — technology the Experience depends on (Decision, Why it binds, Source); only the human binds
-3. **Direction** — non-binding outlook: stages, parallel lanes, what the human sees, and human gates
-4. **Acceptance Gates** — mechanical gates and human gates that define done
+1. **Intent** — why the project exists. Written by the human
+2. **Scopes** — the scope table that drives SWARM. Written by the human and `/reflect`
+3. **Principles** — design principles. Written by `/draft` (D5) and `/reflect`
+4. **Experience** — consumer-side usage with inputs, outputs, and error / empty / boundary states. Written by `/draft` and `/reflect`
+5. **Binding Decisions** — technology fixed before implementation because the Experience depends on it, an external constraint requires it, or the human prefers it and says so (Decision, Why it binds, Source); only the human binds. Written by the human through `/draft`; `/realize` records a delegated choice once the human approves it
+6. **Direction** — non-binding outlook: stages, parallel lanes, what the human sees, and each stage's gates; `/realize` appends `passed <date>` to each gate that passes. Written by `/draft`; `/realize` marks gates passed; `/reflect` retires passed stages
+7. **Acceptance Gates** — mechanical gates and human gates that define done; the work is accepted when `/realize` has marked every gate passed, and `/reflect` then retires the section (lasting checks move to Validation). Written by `/draft`; `/realize` marks gates passed; `/reflect` retires the section
+8. **Validation** — per-scope mechanical checks. Written by the human and `/reflect`
 
 See `DDL-PROTOCOL-SKILL.md` §3.
 

@@ -3,23 +3,23 @@
 ## Protocol
 
 → DDL-PROTOCOL
-→ Read `.claude/commands/DDL-PROTOCOL-SKILL.md` before executing any command
+→ Read the DDL protocol before executing any command, in the lookup order of protocol §2.5: repo-local `commands/DDL-PROTOCOL-SKILL.md`, then `.claude/commands/DDL-PROTOCOL-SKILL.md`, then `$HOME/.claude/commands/DDL-PROTOCOL-SKILL.md`
 
 ## Commands
 
 | Command | Intent |
 |---------|--------|
-| `/draft` | Write the user-side experience first |
-| `/realize` | Write code based on design principles |
+| `/draft` | Write the user-side experience first, with the decisions and outlook it depends on |
+| `/realize` | Write code based on design principles and Binding Decisions |
 | `/reflect` | Update documents based on implementation |
-| `/validate` | Run mechanical validation (lint/test/build) per scope |
-| `/commit` | Git commit |
+| `/validate` | Run mechanical validation per scope: the Validation block and the mechanical gates in Acceptance Gates |
+| `/commit` | Git commit (`/commit remote` also pushes) |
 | `/docs` | Audit and fix documentation |
 | `/refactoring` | Audit and fix code quality |
 
 ## Structure
 
-- `design.md` - Design Document (scopes, principles, validation; Experience, Binding Decisions, Direction, Acceptance Gates when drafted — protocol §3)
+- `design.md` - Project design document (scopes, principles, validation; Experience, Binding Decisions, Direction, Acceptance Gates when drafted — protocol §3)
 
 ## Detection Targets
 
@@ -38,8 +38,9 @@ Every command defines its own D-targets (D1, D2, …). Cross-cutting targets bel
 
 ### On session start
 
-1. Read `.claude/CLAUDE.md` (this file)
-2. Read `design.md` if it exists — extract scopes, principles, validation commands, and the Experience, Binding Decisions, Direction, and Acceptance Gates when present
+1. Read the DDL protocol (lookup order in protocol §2.5)
+2. Read this file (`CLAUDE.md` or `.claude/CLAUDE.md`)
+3. Read `design.md` if it exists — extract scopes, principles, validation commands, and the Experience, Binding Decisions, Direction, and Acceptance Gates when present
 
 ### On any task
 
@@ -57,5 +58,5 @@ Every command defines its own D-targets (D1, D2, …). Cross-cutting targets bel
 
 +++NEVER: Hardcode paths or commands — scopes and validation come from design.md
 +++NEVER: Auto-proceed past a +++STOP
-+++NEVER: Spawn agents for single-scope tasks — for 2+ scopes, follow +++SWARM semantics (mandatory when condition is true; runtime mapping in protocol §2.5)
++++NEVER: Spawn agents when a SWARM has fewer than 2 units (scopes, Direction lanes, files) — for 2+, follow +++SWARM semantics (mandatory when condition is true; only the lead fans out; runtime mapping in protocol §2.5)
 +++NEVER: Add AI attribution to commits or generated code

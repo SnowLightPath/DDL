@@ -35,11 +35,13 @@ Manifest design philosophy as working code.
 
 +++STOP: always
 
-Present the implementation plan: files to touch, principles applied, how each Binding Decision is honored, the Direction stage to start from and any planned deviation, and the gates to pass. For each `Unbound:` line marked delegated, state the choice and its reason; for a line marked awaiting choice, list its options and ask the user to pick one. An argument that names a technology different from a Binding Decision on the same topic is shown as a Binding Decision change with the D6 options; approving the plan does not approve that change unless the user says so explicitly. Wait for user approval before entering Phase 2. After approval and before Phase 2, move into `## Binding Decisions` only the delegated lines whose choice the approved plan stated and the lines the user picked, with Source `approved in /realize plan (<date>)`. Per §1.5 of the protocol, this STOP ends the turn — no mutating tool until approval.
+Present the implementation plan: files to touch, principles applied, how each Binding Decision is honored, the Direction stage to start from and any planned deviation, and the gates to pass. For each `Unbound:` line marked delegated, state the choice and its reason; for a line marked awaiting choice, list its options and ask the user to pick one. An argument that names a technology different from a Binding Decision on the same topic is shown as a Binding Decision change with the D6 options; approving the plan does not approve that change unless the user says so explicitly. Wait for user approval before entering Phase 2. Per §1.5 of the protocol, this STOP ends the turn — no mutating tool until approval.
 
 ### Phase 2: IMPLEMENT
 
-**Pre-condition.** Enter this phase only after explicit user approval at the Phase 1 STOP gate (per §1.5 of the protocol). If the most recent user message is not an approval token, return to Phase 1 and re-emit the plan.
+**Pre-condition.** Enter this phase only after explicit user approval at the STOP that preceded it: the Phase 1 plan on first entry, later a stage's human gate or a D1 or D6 STOP (per §1.5 of the protocol). If the most recent user message is not an approval token, return to the phase whose STOP is pending and re-emit its report.
+
+On first entry, move into `## Binding Decisions` only the delegated `Unbound:` lines whose choice the approved plan stated and the lines the user picked, with Source `approved in /realize plan (<date>)`.
 
 +++SWARM: 2+ independent scopes or Direction lanes need changes
 
@@ -57,7 +59,7 @@ Present the implementation plan: files to touch, principles applied, how each Bi
   collect: lead verifies each implementation against principles and Binding Decisions
 ```
 
-Work through the Direction stages in order unless the approved plan says otherwise; the lanes of the current stage count as independent scopes for SWARM. After each stage, run Phase 3 for that stage's mechanical gate, then execute its human gate as a STOP (§1.5), then return here for the next stage. A merged stage keeps its gates at its end; a skipped stage's gates move to the end of the next stage (or to the end of the work when it is the last stage); a reordered stage keeps its gates. Human gates in Acceptance Gates are STOPs at the end of the work.
+Work through the Direction stages in order unless the approved plan says otherwise; the lanes of the current stage count like scopes for SWARM (§2.3 of the protocol). After each stage, run Phase 3 for that stage's mechanical gate, then execute its human gate as a STOP (§1.5); after approval, return here for the next stage, or to Phase 3's final checks after the last stage. Mark each gate that passes in `design.md`, and keep the gates of a merged, skipped, or reordered stage, as protocol §3 says. Human gates in Acceptance Gates run at the end of the work (Phase 3).
 
 For each change, verify against principles and Binding Decisions:
 - Add rationale as comments where non-obvious
@@ -78,7 +80,7 @@ If D1 or D6 fires, stop before continuing implementation. For D6, present option
 
 ### Phase 3: VALIDATE
 
-After a stage, run that stage's mechanical gate and the validation commands of the scopes it changed. After the last stage, run all validation commands in `design.md` and the mechanical gates in Acceptance Gates, in parallel. Without Direction, the work is a single stage.
+After a stage, run that stage's mechanical gate and the validation commands of the scopes it changed. After the last stage, run all validation commands in `design.md` and the mechanical gates in Acceptance Gates, in parallel, and mark the gates that pass (protocol §3). Then execute each human gate in Acceptance Gates as a STOP (§1.5) unless the user approved it in advance; after approval, mark it passed and enter Phase 4. Without Direction, the work is a single stage.
 
 +++DETECT:
   D7: Validation Failure — any validation command or mechanical gate from `design.md` exits non-zero, cannot run, prints other than the expected value declared with it, or reports an unresolved failure

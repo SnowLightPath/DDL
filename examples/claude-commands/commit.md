@@ -14,20 +14,21 @@ Record verified code changes to the repository.
 1. Read the DDL protocol for the current runtime: repo-local `commands/DDL-PROTOCOL-SKILL.md` when present; otherwise, in Claude Code, `.claude/commands/DDL-PROTOCOL-SKILL.md`, then `$HOME/.claude/commands/DDL-PROTOCOL-SKILL.md`; in Codex, `$HOME/.codex/commands/DDL-PROTOCOL-SKILL.md`, then the protocol sections of `AGENTS.md`.
 2. Read project-local runtime guidance when present: `AGENTS.md` for Codex, `CLAUDE.md` or `.claude/CLAUDE.md` for Claude Code, and any applicable command overlay.
 3. Read `design.md` — extract scopes, validation commands
-4. Run `git status` and `git diff --staged` to understand current state
+4. If no `design.md` exists → skip the design.md checks and say so in the report
+5. Run `git status` and `git diff --staged` to understand current state
 
 ### Phase 1: VERIFY
 
 Run validation checks in parallel:
 
 1. Run all validation commands defined in `design.md` (if any)
-2. Secret scan: check staged files for API keys, tokens, credentials
+2. Secret scan: check the files the commit would include (staged, unstaged, and the untracked files proposed for `Files`) for API keys, tokens, credentials
 3. Check for untracked files that should be included
 
 +++DETECT:
   D1: Failing Check — A validation command from design.md exits non-zero, cannot run, or prints other than the expected value declared with it
-  D2: Secret Leak — Staged file contains API key, token, or credential
-  D3: Unrelated Change — Staged files span unrelated scopes without justification
+  D2: Secret Leak — A file the commit would include contains an API key, token, or credential
+  D3: Unrelated Change — The files the commit would include span unrelated scopes without justification
   D4: Missing File — A new file is referenced but not staged
   D5: AI Attribution — Commit message or code contains AI co-author tags
 
@@ -45,6 +46,7 @@ Run validation checks in parallel:
 | Scope | {affected design.md scopes} |
 | Message | {commit message} |
 | Detection | {any targets that fired} |
+| Push | {no, or the remote and branch} |
 
 Wait for user approval before proceeding.
 

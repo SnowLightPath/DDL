@@ -15,6 +15,7 @@ Audit and fix code quality issues.
 2. Read project-local runtime guidance when present: `AGENTS.md` for Codex, `CLAUDE.md` or `.claude/CLAUDE.md` for Claude Code, and any applicable command overlay.
 3. Read `design.md` — extract scopes, principles, Binding Decisions, validation commands
 4. If no `design.md` exists → scan project root for common patterns
+5. If a path is given, audit only that path and the scopes it covers (§2.3 of the protocol)
 
 ### Phase 1: SCAN
 
@@ -75,9 +76,14 @@ Wait for user to approve, reject, or modify each fix.
 
 Run full validation:
 
-1. Run all validation commands defined in `design.md` in parallel
+1. Run all validation commands defined in `design.md` in parallel, comparing each output with its expected value
 2. Re-scan for any new Detection Targets introduced by refactoring
 3. Summarize: what was fixed, what remains, any regressions
+
++++DETECT:
+  D8: Regression — A validation command exits non-zero, cannot run, or prints other than its expected value after the refactor
+
++++STOP: on D8
 
 ## Constraints
 

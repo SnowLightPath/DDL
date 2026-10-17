@@ -68,7 +68,7 @@ async with Client("https://api.example.com") as c:
     users = await c.get("/users")  # Is this usage good?
 ```
 
-Some decisions cannot be separated from the experience. A library's language is its usage; a streaming interface may depend on its framework; an organization may require a platform. Draft records these as **Binding Decisions**, each with the reason it binds and its source (the human's words and the date):
+Some decisions cannot be separated from the experience. A library's language is its usage; a streaming interface may depend on its framework; an organization may require a platform. Draft records these as **Binding Decisions**, each with the reason it binds and its source (the human's words and the date, or the human's approval of a report that listed it):
 
 ```markdown
 ## Binding Decisions
@@ -77,9 +77,9 @@ Some decisions cannot be separated from the experience. A library's language is 
 | Next.js App Router | Answers stream in while they are written, and per-route loading and error states are the core of the experience | "I want to build it with Next.js", "Yes, App Router" (2026-10-17) |
 ```
 
-When you already see the path to implementation, Draft records it as **Direction**: stages, parallel lanes, and the points where you want to look. Direction is an outlook, not a contract. **Acceptance Gates** say what must hold when the work is done: commands that must pass, and approvals you will give.
+When you already see the path to implementation, Draft records it as **Direction**: stages, parallel lanes, and the points where you want to look. Direction is an outlook, not a contract. **Acceptance Gates** say what must hold when the work is done: commands that must pass, and approvals you will give. They are retired once the work is accepted.
 
-Only the human binds. The LLM may propose a technology; it stays unbound until you choose it.
+Only the human binds. The LLM may propose a technology; it stays unbound until you choose it. Technology already present in the code is an existing premise: commands show it in their reports, and design.md does not record it; it becomes a Binding Decision only when the human gives a reason.
 
 ### Realize
 
@@ -154,7 +154,7 @@ It's temporary notes for Human and LLM to continue sharing design across session
 
 Ultimately, code becomes the source of truth. Delete DDL documents when no longer needed.
 
-> **Tool-Assisted Option**: [Claude Code](../../examples/claude-commands/) (`/draft`, `/realize`, `/reflect` + support commands) | [OpenAI Codex](../../examples/codex-skills/) (`$draft`, `$realize`, `$reflect` + support skills) | [Scribe Plugin](../../examples/scribe-plugin/) (document writing: `claude plugin install scribe@snow-light-place`)
+> **Tool-Assisted Option**: [Claude Code](../../examples/claude-commands/) (`/draft`, `/realize`, `/reflect` + support commands) | [OpenAI Codex](../../examples/codex-skills/) (`$draft`, `$realize`, `$reflect` + support skills)
 
 -----
 
@@ -162,5 +162,5 @@ Ultimately, code becomes the source of truth. Delete DDL documents when no longe
 
 | Date       | Change                    |
 |------------|---------------------------|
-| 2026-10-17 | Harness-era revision: harness-era background; Binding Decisions, Direction, and Acceptance Gates in Draft; the human's role at gates; three anti-patterns |
+| 2026-10-17 | Harness-era revision: harness-era background; Binding Decisions, Direction, and Acceptance Gates in Draft, with Acceptance Gates retired once the work is accepted; the human's role at gates; three anti-patterns; removed the Scribe Plugin option; approval of a report as a Binding Decision source, and technology already in the code as an existing premise |
 | 2026-01-04 | Initial version |

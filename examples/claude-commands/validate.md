@@ -14,7 +14,8 @@ Run mechanical validation per scope as declared in design.md.
 1. Read the DDL protocol for the current runtime: repo-local `commands/DDL-PROTOCOL-SKILL.md` when present; otherwise, in Claude Code, `.claude/commands/DDL-PROTOCOL-SKILL.md`, then `$HOME/.claude/commands/DDL-PROTOCOL-SKILL.md`; in Codex, `$HOME/.codex/commands/DDL-PROTOCOL-SKILL.md`, then the protocol sections of `AGENTS.md`.
 2. Read project-local runtime guidance when present: `AGENTS.md` for Codex, `CLAUDE.md` or `.claude/CLAUDE.md` for Claude Code, and any applicable command overlay.
 3. Read `design.md` — extract scopes, the Validation block, and the mechanical gates (commands) listed in Acceptance Gates
-4. If no `design.md` exists → refuse ("Run `/draft` first to declare scopes and validation")
+4. If no `design.md` exists → refuse ("Declare scopes and a Validation block in design.md first")
+5. If a scope is given, validate only that scope (§2.3 of the protocol)
 
 ### Phase 1: SCAN
 
@@ -28,7 +29,7 @@ Run mechanical validation per scope as declared in design.md.
   batch: auto
   each: |
     Run the validation commands for {scope} as declared in design.md, including mechanical gates in Acceptance Gates that name {scope}.
-    Capture exit code, stderr, stdout. Do not modify any files.
+    Capture exit code, stderr, stdout. Edit no files; the commands may write only their own caches and build output.
     Report PASS / FAIL plus a short output excerpt to the lead when done.
   collect: lead aggregates per-scope results into a PASS/FAIL matrix
 ```
@@ -46,7 +47,7 @@ Mechanical gates from Acceptance Gates that name no scope are run by the lead an
 
 +++STOP: always
 
-Emit `+++DDL_REPORT` as the section heading, then output the table below. Do not auto-fix.
+Report per §1.5 of the protocol with the table below. Do not auto-fix.
 
 +++Report:
 | # | Scope | Validation Command | Status | Output Excerpt | Suggested Next Command |
@@ -59,6 +60,6 @@ validation references unimplemented design → `/realize`; all PASS → `/commit
 
 ## Constraints
 
-+++NEVER: Modify files during /validate — it is read-only
++++NEVER: Edit files during /validate — it is read-only; only the declared commands write, and only their own caches and build output
 +++NEVER: Hardcode validation commands — they come from design.md
-+++NEVER: Auto-proceed past +++STOP after FAIL — wait for user direction
++++NEVER: Auto-proceed past +++STOP — wait for user direction, even when every check passes

@@ -51,6 +51,7 @@ Realize and Reflect are inverse functions.
 ### 🤖 Claude Code
 
 ```bash
+mkdir -p your-project/.claude/commands
 cp examples/claude-commands/CLAUDE.md your-project/.claude/
 cp examples/claude-commands/{DDL-PROTOCOL-SKILL.md,draft.md,realize.md,reflect.md,validate.md,docs.md,refactoring.md,commit.md} your-project/.claude/commands/
 ```
@@ -72,7 +73,7 @@ cp examples/claude-commands/{DDL-PROTOCOL-SKILL.md,draft.md,realize.md,reflect.m
 | 📚 `/docs` | Documentation audit |
 | 🔧 `/refactoring` | Code quality audit |
 
-> 🚀 Commands support Phase-based workflows, Detection Targets, STOP gates, and [Agent Teams](https://code.claude.com/docs/en/agent-teams) for parallel execution across scopes.
+> 🚀 Commands support Phase-based workflows, Detection Targets, STOP gates, and parallel workers per scope through the runtime's own mechanism (subagents in Claude Code).
 
 ### 🧬 OpenAI Codex
 
@@ -99,29 +100,7 @@ cp -r examples/codex-skills/.codex your-project/
 | 📚 `$docs` | Documentation audit |
 | 🔧 `$refactoring` | Code quality audit |
 
-> Skills follow the same Phase-based structure with Detection Targets and STOP gates. Codex runs scopes in parallel when `[agents]` is configured, otherwise sequential fallback.
-
-### 📄 Scribe Plugin
-
-Document writing workflow for [Claude Cowork](https://claude.com/product/cowork) and [Claude Code](https://code.claude.com/).
-
-```bash
-# Add marketplace
-claude plugin marketplace add SnowLightPath/snow-light-place
-
-# Install plugin
-claude plugin install scribe@snow-light-place
-```
-
-**🔄 Document Loop:**
-
-| Command | Action |
-|---------|--------|
-| 📝 `/scribe:draft` | Design the document outline |
-| ⚡ `/scribe:realize` | Write and export the document |
-| 🪞 `/scribe:reflect` | Review and improve |
-
-> Supports PDF, DOCX, HTML, XLSX, PPTX, Pencil (.pen), and Confluence output. Parallel section writing with [Agent Teams](https://code.claude.com/docs/en/agent-teams). Works in both Claude Cowork (Web) and Claude Code (CLI).
+> Skills follow the same Phase-based structure with Detection Targets and STOP gates. Codex runs scopes in parallel with its subagents (on by default). Without subagents, the lead runs the assignments itself: read-only work as parallel shell reads, the rest one by one.
 
 ---
 
