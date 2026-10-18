@@ -48,12 +48,38 @@ Realize and Reflect are inverse functions.
 
 ## 🛠️ Commands (Optional)
 
-### 🤖 Claude Code
+DDL ships as skills for Claude Code and OpenAI Codex, with an adapter that lets the runtime itself hold a STOP until you speak, keep workers in their roles, load design.md at session start, and ask before a push.
+
+### 📦 Install
+
+**In the environment** (recommended). One clone serves every project:
 
 ```bash
-mkdir -p your-project/.claude
-cp -R examples/claude-commands/.claude/. your-project/.claude/
+git clone https://github.com/SnowLightPath/DDL.git
+bash DDL/bin/install.sh
 ```
+
+`install.sh` installs for each runtime whose home directory exists (`~/.claude`, `~/.codex`; `--claude` or `--codex` selects one): it symlinks the skills, the `explorer` and `worker` agents, and the gate hook into the runtime's home, and merges the DDL fragment into its settings (`~/.claude/settings.json`, `~/.codex/hooks.json`), keeping what is already there. `bash DDL/bin/doctor.sh` checks the install; `bash DDL/bin/uninstall.sh` removes it. To update, `git pull` in the clone (the links follow) and run `install.sh` again. If Codex asks, run `/hooks` once to trust the DDL hooks.
+
+A project then needs only `design.md` and a short instruction file:
+
+```bash
+mkdir -p your-project/.claude && cp DDL/claude-code/CLAUDE.md your-project/.claude/CLAUDE.md   # Claude Code (edit the `# Project Name` title)
+cp DDL/codex/AGENTS.md your-project/AGENTS.md                                                  # Codex
+```
+
+**In the project.** Copy the runtime's files into the project (`bash DDL/bin/install.sh --project your-project` does the same copy):
+
+```bash
+cp -R DDL/claude-code/. your-project/.claude/                 # Claude Code
+cp -R DDL/codex/{.agents,.codex,AGENTS.md} your-project/      # Codex
+```
+
+Claude Code runs project hooks after you trust the folder. Codex loads `.codex/` for a trusted project and runs its hooks after `/hooks` trusts them.
+
+Either way, the rules are the same without the adapter, as instructions; the adapter enforces the mechanical part. A command run from the environment install follows the project's own copy when the project has one.
+
+### 🤖 Claude Code
 
 **🔄 Core Loop:**
 
@@ -68,6 +94,7 @@ cp -R examples/claude-commands/.claude/. your-project/.claude/
 | Command | Action |
 |---------|--------|
 | ✅ `/validate` | Mechanical validation gate |
+| 🌐 `/resonate` | Multilingual docs sync |
 | 📦 `/commit` | Verified git commit (`/commit remote` also pushes) |
 | 📚 `/docs` | Documentation audit |
 | 🔧 `/refactoring` | Code quality audit |
@@ -75,14 +102,6 @@ cp -R examples/claude-commands/.claude/. your-project/.claude/
 > 🚀 Commands support Phase-based workflows, Detection Targets, STOP gates, and parallel workers per scope through the runtime's own mechanism (subagents in Claude Code). The adapter (`settings.json`, `agents/`, `hooks/`, and the import line in `CLAUDE.md`) lets Claude Code itself hold a STOP until you speak, keep workers in their roles, load design.md at session start, and ask before a push; without it the same rules run as instructions.
 
 ### 🧬 OpenAI Codex
-
-```bash
-cp examples/codex-skills/AGENTS.md your-project/
-cp -r examples/codex-skills/.agents your-project/
-cp -r examples/codex-skills/.codex your-project/
-```
-
-Trust the project in Codex, then run `/hooks` once to review and trust the DDL hooks in `.codex/hooks.json`.
 
 **🔄 Core Loop:**
 
@@ -97,11 +116,12 @@ Trust the project in Codex, then run `/hooks` once to review and trust the DDL h
 | Skill | Action |
 |-------|--------|
 | ✅ `$validate` | Mechanical validation gate |
+| 🌐 `$resonate` | Multilingual docs sync |
 | 📦 `$commit` | Verified git commit (`$commit remote` also pushes) |
 | 📚 `$docs` | Documentation audit |
 | 🔧 `$refactoring` | Code quality audit |
 
-> Skills follow the same Phase-based structure with Detection Targets and STOP gates. Codex runs scopes in parallel with its subagents (on by default). Without subagents, the lead runs the assignments itself: read-only work as parallel shell reads, the rest one by one. The adapter (`.codex/config.toml`, `.codex/agents/`, `.codex/hooks.json`, `.codex/rules/`) lets Codex hold a STOP until you speak, inject design.md at session start, and ask before a push; without it the same rules run as instructions.
+> Skills follow the same Phase-based structure with Detection Targets and STOP gates. Codex runs scopes in parallel with its subagents (on by default). Without subagents, the lead runs the assignments itself: read-only work as parallel shell reads, the rest one by one. The adapter (`.codex/`: `config.toml`, `agents/`, `hooks.json`, `rules/`) lets Codex hold a STOP until you speak, inject design.md at session start, and ask before a push; without it the same rules run as instructions.
 
 ---
 

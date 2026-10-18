@@ -288,7 +288,7 @@ Support Commands (invokable at any point):
     +--------+  +---------+  +------+  +------------+  +---------+
     |VALIDATE|  |RESONATE*|  |COMMIT|  |REFACTORING |  |  DOCS   |
     +--------+  +---------+  +------+  +------------+  +---------+
-    * this repository only; not in examples/
+    * multilingual documentation
 ```
 
 The Core Loop drives design evolution. Support Commands maintain quality around it.
@@ -302,7 +302,7 @@ The Core Loop drives design evolution. Support Commands maintain quality around 
 | Support Command | Purpose |
 |-----------------|---------|
 | VALIDATE | Run mechanical validation per scope as declared in design.md |
-| RESONATE | Synchronize multilingual document versions (this repository only; not in examples/) |
+| RESONATE | Synchronize multilingual document versions |
 | COMMIT | Record verified changes to repository |
 | DOCS | Audit and fix documentation quality |
 | REFACTORING | Audit and fix code quality |
@@ -676,7 +676,7 @@ Commands implement DDL as Phase-based workflows with Detection Targets, STOP gat
 | Command | Intent |
 |---------|--------|
 | `/validate` | Run mechanical validation per scope: the Validation block and the mechanical gates in Acceptance Gates |
-| `/resonate` (this repository only; not in examples/) | Synchronize multilingual document versions |
+| `/resonate` | Synchronize multilingual document versions |
 | `/commit` | Record verified changes to repository |
 | `/docs` | Audit and fix documentation quality |
 | `/refactoring` | Audit and fix code quality |
@@ -689,8 +689,8 @@ Each command follows the same structure:
 5. **Constraints** — invariants that must never be violated
 6. **Runtime adapters** — one table in the protocol maps the directives onto each harness, so commands never name runtime tools, and a small adapter per runtime (hooks, agent definitions, the design.md import or injection, a push rule) enforces the mechanical part of the rules (§2.5 Instructions and Mechanisms)
 
-Claude Code: → [examples/claude-commands/](../../examples/claude-commands/)
-OpenAI Codex: → [examples/codex-skills/](../../examples/codex-skills/)
+Claude Code: → [claude-code/](../../claude-code/)
+OpenAI Codex: → [codex/](../../codex/)
 
 ### Option 5: Structured Schema
 
