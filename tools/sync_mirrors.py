@@ -23,7 +23,8 @@ Rules:
     to the protocol stay, because the Codex protocol is the same skill, and Phase 0 stays as written.
   - The protocol SKILL.md keeps name and description (and metadata.short-description when the source has
     one); its body is copied unchanged, not even `/cmd` -> `$cmd`, since it describes both runtimes.
-  - agents/openai.yaml is the same fixed text for every skill, with the skill's name.
+  - agents/openai.yaml is the same fixed text for every command skill, with the skill's name; the protocol
+    gets a comment saying it is read in Phase 0 and never invoked.
   - Both hooks/ddl_gate.py files are byte copies of tools/ddl_gate.py.
 
 Errors (exit 1 with a message): REPO/claude-code/skills is not a directory; tools/ddl_gate.py or a skill is
@@ -51,9 +52,12 @@ CODEX_SKILLS = pathlib.Path("codex/.agents/skills")
 GATE_SOURCE = pathlib.Path("tools/ddl_gate.py")
 GATE_COPIES = [pathlib.Path("claude-code/hooks/ddl_gate.py"), pathlib.Path("codex/.codex/hooks/ddl_gate.py")]
 
+OPENAI_POLICY = ("policy:\n"
+                 "  allow_implicit_invocation: false\n")
 OPENAI_YAML = ("# DDL: a skill runs when the user invokes ${name}; Codex does not start it on its own (protocol §2.5).\n"
-               "policy:\n"
-               "  allow_implicit_invocation: false\n")
+               + OPENAI_POLICY)
+OPENAI_YAML_PROTOCOL = ("# DDL: the protocol skill; commands read it in Phase 0, nobody invokes $ddl-protocol, and Codex "
+                        "does not start it on its own (protocol §2.5).\n" + OPENAI_POLICY)
 
 SLASH = re.compile(r"(?<![A-Za-z0-9_./-])/(draft|realize|reflect|validate|commit|docs|refactoring|resonate)\b")
 
@@ -110,7 +114,8 @@ def generate(repo):
         if not source.is_file():
             raise SystemExit(f"{source.relative_to(repo)}: missing")
         out[CODEX_SKILLS / name / "SKILL.md"] = to_codex(name, read(source))
-        out[CODEX_SKILLS / name / "agents" / "openai.yaml"] = OPENAI_YAML.format(name=name)
+        yaml = OPENAI_YAML_PROTOCOL if name == PROTOCOL else OPENAI_YAML.format(name=name)
+        out[CODEX_SKILLS / name / "agents" / "openai.yaml"] = yaml
     gate = read(repo / GATE_SOURCE)
     for rel in GATE_COPIES:
         out[rel] = gate

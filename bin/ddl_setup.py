@@ -12,7 +12,8 @@ and `$HOME/.codex/hooks.json`. A project then needs only `design.md` and a short
   doctor     check every link and merged entry, run the gate's tests, and check the Codex rule;
              prints `N OK, M not OK` and exits 1 when M > 0
   uninstall  remove the links that point at DDL and the merged entries (an entry is removed only
-             when its value is the one DDL wrote)
+             when its value is the one DDL wrote); a settings file left empty is removed; no backup
+             is written on uninstall
 
 Runtimes: `--claude` and `--codex` select one; by default each runtime whose home directory exists
 (`$HOME/.claude`, `$HOME/.codex`) is handled. `install --project DIR` copies the per-project layout
@@ -212,16 +213,16 @@ def merged_state(settings, frag):
     return present, missing, differing
 
 
-def write_json(path, data, report):
+def write_json(path, data, report, backup=True):
     text = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
     if path.exists() and path.read_text() == text:
         return False
     if report.dry_run:
         return True
-    if path.exists():
-        backup = path.with_name(path.name + ".ddl-backup")
-        if not backup.exists():
-            shutil.copy2(path, backup)
+    if backup and path.exists():
+        copy = path.with_name(path.name + ".ddl-backup")
+        if not copy.exists():
+            shutil.copy2(path, copy)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text)
     return True
@@ -402,12 +403,12 @@ def cmd_uninstall(args, report):
         cleaned = unmerge(settings, fragment_for(rt))
         if cleaned == settings:
             report.good(f"{pretty(settings_path)} (no DDL entries)")
-        elif not cleaned and key == "codex":
+        elif not cleaned:
             if not report.dry_run:
                 settings_path.unlink()
             report.good(f"remove {pretty(settings_path)} (only DDL entries were in it)")
         else:
-            write_json(settings_path, cleaned, report)
+            write_json(settings_path, cleaned, report, backup=False)
             report.good(f"unmerge {pretty(settings_path)}")
     return 0
 
