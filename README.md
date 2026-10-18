@@ -51,9 +51,8 @@ Realize and Reflect are inverse functions.
 ### 🤖 Claude Code
 
 ```bash
-mkdir -p your-project/.claude/commands
-cp examples/claude-commands/CLAUDE.md your-project/.claude/
-cp examples/claude-commands/{DDL-PROTOCOL-SKILL.md,draft.md,realize.md,reflect.md,validate.md,docs.md,refactoring.md,commit.md} your-project/.claude/commands/
+mkdir -p your-project/.claude
+cp -R examples/claude-commands/.claude/. your-project/.claude/
 ```
 
 **🔄 Core Loop:**
@@ -73,7 +72,7 @@ cp examples/claude-commands/{DDL-PROTOCOL-SKILL.md,draft.md,realize.md,reflect.m
 | 📚 `/docs` | Documentation audit |
 | 🔧 `/refactoring` | Code quality audit |
 
-> 🚀 Commands support Phase-based workflows, Detection Targets, STOP gates, and parallel workers per scope through the runtime's own mechanism (subagents in Claude Code).
+> 🚀 Commands support Phase-based workflows, Detection Targets, STOP gates, and parallel workers per scope through the runtime's own mechanism (subagents in Claude Code). The adapter (`settings.json`, `agents/`, `hooks/`, and the import line in `CLAUDE.md`) lets Claude Code itself hold a STOP until you speak, keep workers in their roles, load design.md at session start, and ask before a push; without it the same rules run as instructions.
 
 ### 🧬 OpenAI Codex
 
@@ -82,6 +81,8 @@ cp examples/codex-skills/AGENTS.md your-project/
 cp -r examples/codex-skills/.agents your-project/
 cp -r examples/codex-skills/.codex your-project/
 ```
+
+Trust the project in Codex, then run `/hooks` once to review and trust the DDL hooks in `.codex/hooks.json`.
 
 **🔄 Core Loop:**
 
@@ -100,7 +101,7 @@ cp -r examples/codex-skills/.codex your-project/
 | 📚 `$docs` | Documentation audit |
 | 🔧 `$refactoring` | Code quality audit |
 
-> Skills follow the same Phase-based structure with Detection Targets and STOP gates. Codex runs scopes in parallel with its subagents (on by default). Without subagents, the lead runs the assignments itself: read-only work as parallel shell reads, the rest one by one.
+> Skills follow the same Phase-based structure with Detection Targets and STOP gates. Codex runs scopes in parallel with its subagents (on by default). Without subagents, the lead runs the assignments itself: read-only work as parallel shell reads, the rest one by one. The adapter (`.codex/config.toml`, `.codex/agents/`, `.codex/hooks.json`, `.codex/rules/`) lets Codex hold a STOP until you speak, inject design.md at session start, and ask before a push; without it the same rules run as instructions.
 
 ---
 

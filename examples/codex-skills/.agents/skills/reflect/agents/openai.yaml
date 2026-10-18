@@ -1,0 +1,4 @@
+# DDL: a command skill runs when the user invokes $reflect; Codex does not start it on its own
+# (AGENTS.md, Codex Runtime Contract).
+policy:
+  allow_implicit_invocation: false

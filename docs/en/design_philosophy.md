@@ -29,6 +29,8 @@ Agent harnesses such as Claude Code and Codex now carry memory of their own: ins
 
 The scarce resource is no longer the model's memory but the human's attention and the context a session can hold. The shared memo now does two jobs: it keeps the design across sessions, and it tells agents, before they run, what the human has fixed and where the human wants to look.
 
+The harness can also hold part of the loop. Where it offers hooks, agent definitions, and imports, DDL's adapters make a STOP hold until the human speaks, keep workers in their roles, and keep the memo in context; the rules themselves do not change, and a session without those mechanisms runs them as instructions.
+
 -----
 
 ## 💡 Core Principle
@@ -163,5 +165,6 @@ Ultimately, code becomes the source of truth. Delete DDL documents when no longe
 
 | Date       | Change                    |
 |------------|---------------------------|
+| 2026-10-18 | Instructions and mechanisms (In the Harness Era) |
 | 2026-10-17 | Harness-era revision: harness-era background; Binding Decisions, Direction, and Acceptance Gates in Draft, with Acceptance Gates retired once the work is accepted; the human's role at gates; three anti-patterns; removed the Scribe Plugin option; approval of a report as a Binding Decision source, and technology already in the code as an existing premise; context-engineering background and one anti-pattern |
 | 2026-01-04 | Initial version |

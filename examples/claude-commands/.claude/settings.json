@@ -1,0 +1,64 @@
+{
+  "$comment": "DDL adapter for Claude Code (protocol §2.5). The gate hook enforces the mechanical half of +++STOP: after a +++DDL_REPORT and until the next human message, mutating tools are denied. The spawn depth of 1 keeps fan-out with the lead (only the lead starts workers). A push is confirmed at the moment it runs, on top of the approval in the /commit report, and commits carry no AI attribution. The rules themselves live in the commands and the protocol and stay the same without this file; the adapter only enforces their mechanical part.",
+  "env": {
+    "CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH": "1"
+  },
+  "permissions": {
+    "ask": [
+      "Bash(git push *)"
+    ]
+  },
+  "attribution": {
+    "commit": "",
+    "pr": "",
+    "sessionUrl": false
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^(Edit|Write|NotebookEdit|Bash|Agent|SendMessage|TaskCreate|TaskUpdate|mcp__.*)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/ddl_gate.py pre-tool-use --runtime claude",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/ddl_gate.py stop --runtime claude",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/ddl_gate.py user-prompt-submit --runtime claude",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "compact|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/ddl_gate.py session-start --runtime claude",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

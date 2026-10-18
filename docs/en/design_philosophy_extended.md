@@ -14,6 +14,7 @@ This document is intended for dictionary-style lookup.
 | Understand theoretical background | [§1 Cognitive Foundations](#-1-cognitive-foundations) |
 | Compare with existing methodologies | [§2 Related Methodologies](#-2-related-methodologies) |
 | See what the model loads and when | [§2.5 Context Engineering](#context-engineering) |
+| See which rules the harness enforces | [§2.5 Instructions and Mechanisms](#instructions-and-mechanisms) |
 | Systematize operations | [§3 Systematization Framework](#-3-systematization-framework) |
 | Get concrete examples | [§4 Practical Examples](#-4-practical-examples) |
 | Make adoption decisions | [§5 Adoption Criteria](#-5-adoption-criteria) |
@@ -161,7 +162,7 @@ Formalized by Meyer in Eiffel (Meyer, 1992). Makes contracts (invariants) explic
 | Aspect | DbC | DDL |
 |--------|-----|-----|
 | Level | Code (executable) | Design policy (conceptual) |
-| Enforcement | Runtime checks | Discipline and dialogue |
+| Enforcement | Runtime checks | Discipline and dialogue, with the harness enforcing the mechanical part where its adapter can (§2.5) |
 
 ### 2.5 AI-Era Development Paradigms (2025–2026)
 
@@ -198,12 +199,25 @@ DDL is context engineering done from the human's side. The question "what should
 | Layer | Content | Loaded | Owner |
 |-------|---------|--------|-------|
 | Instruction file (`CLAUDE.md`, `AGENTS.md`) | How to work here: protocol lookup, global constraints, G1–G7 | Session start; Claude Code re-injects the project file after compaction | Human |
-| design.md | What the human agreed to: Experience, Binding Decisions, Direction, Acceptance Gates, principles, scopes, validation | Session start; after compaction a command re-reads it (Phase 0) | Human and LLM, through the loop |
-| Protocol and command | How a command runs | When the command is invoked (Phase 0), and again after compaction when it is no longer in context; a Codex skill set may carry the protocol sections in `AGENTS.md`, in context from session start. Commands reference the protocol and never copy it | Methodology |
+| design.md | What the human agreed to: Experience, Binding Decisions, Direction, Acceptance Gates, principles, scopes, validation | Session start; the adapter re-injects it after compaction (the import with the project instruction file in Claude Code, the SessionStart injection in Codex), and a command re-reads it in Phase 0 only when it is not in context | Human and LLM, through the loop |
+| Protocol and command | How a command runs (a command is a skill: `.claude/skills/<name>/SKILL.md` in Claude Code, `.agents/skills/<name>/SKILL.md` in Codex) | When the command is invoked (Phase 0), and again after compaction when it is no longer in context; a Codex skill set may carry the protocol sections in `AGENTS.md`, in context from session start. Commands reference the protocol and never copy it | Methodology |
 | Worker prompt | One scope's paths, the Experience items it serves, the principles, the Binding Decisions, the Direction stage, the scope's validation commands, the rows the human approved for the phase (verbatim), and in `/realize` the approved plan | When the lead fans out; the worker reads only the files and design.md sections the prompt names | Lead, from design.md |
 | Automatic memory, compaction summaries, progress files | The agent's working state | By the harness | Agent; never a source of decisions |
 
 Three consequences follow. First, the budget: every section the loop retires (a spent Direction, accepted Acceptance Gates) is context that no later session pays for, so "DDL documents are temporary" is also a context rule. Second, the conversation is not durable: a compaction summary is not a user message and approves nothing. When the report a STOP asked about is no longer in context verbatim, the command rebuilds it from design.md, git, and the files it described and asks again; an approval given after a summary applies only to a report emitted after that summary, and a STOP that a restart interrupted is not resumed: the command runs again from the phase that stopped, skipping the stages whose gates are marked passed. Whatever the human approves is written down at once (the draft to design.md, a passed gate to its mark, a delegated choice to the table, an advance approval to its gate, the approved plan to Direction). Third, memory is not agreement: a decision that exists only in automatic memory is a proposal until design.md records it.
+
+#### Instructions and Mechanisms
+
+A harness now executes part of the protocol itself. Claude Code and Codex both offer lifecycle hooks that run a script before a tool call or at session start, agent definitions that fix what a worker may do, imports or injections that load a file into every session, and permission rules that stop before an outward action (Anthropic, 2026; OpenAI, 2026). DDL uses them the way it already used subagents: the commands and the protocol state the rule, the protocol's runtime table (§2.5 of the protocol) says how each runtime implements it, and the implementation lives in a small adapter per runtime (`.claude/settings.json`, `.claude/agents/`, `.claude/hooks/`, and the import line in `.claude/CLAUDE.md` for Claude Code; `AGENTS.md` and `.codex/` for Codex). Four directives have such an implementation:
+
+| Directive | Rule | Mechanism |
+|-----------|------|-----------|
+| `+++STOP` | After the report, the turn ends and nothing mutates until the human speaks | A gate hook reads the conversation record and refuses edits, writing shell commands, worker starts, and MCP tool calls after a `+++DDL_REPORT` until the next human message |
+| Phase 0 | design.md is in context before any work | An import in the instruction file (Claude Code) or an injection at session start (Codex), both repeated after a compaction |
+| `+++SWARM` `type:` | A read-only worker edits nothing and starts no workers; no worker starts workers | Agent definitions named `explorer` and `worker` in both runtimes; where the runtime allows, the definition removes the editing tools from `explorer` and the agent tools from both, and the spawn depth is one |
+| `+++NEVER` (outward actions, attribution) | A push is confirmed when it runs; commits carry no AI attribution | A permission rule that asks before `git push`, and a setting that turns the attribution off |
+
+Three rules keep this organic rather than bolted on. First, the mechanism enforces only what the harness can decide mechanically: the gate knows that a report was emitted and that no human has spoken since, and nothing more. Whether a reply is an approval is a matter of language, and stays with the agent. Second, the rule does not change with the mechanism. An untrusted project, a session without hooks, or a runtime without an adapter runs the same commands under the same rules, as instructions; the adapter adds enforcement and never adds a rule. Third, the human's actions are the same in every runtime: the same place to stop, the same word to continue, the same lines written to design.md. What differs is how much the harness catches when the agent strays, and that difference is written in the runtime table, dated, not in the commands.
 
 #### Structural Comparison
 
@@ -252,7 +266,7 @@ DDL's role fluidity works in small-team exploratory contexts. In enterprise cont
 
 ## 🔧 §3 Systematization Framework
 
-A framework for more systematic DDL operation. Use as an aid for understanding and operation, not as enforcement.
+A framework for more systematic DDL operation. Use it as an aid for understanding and operation; the harness adapters (§2.5) enforce the mechanical part of it, and the rest is discipline.
 
 ### 3.1 State Model
 
@@ -366,7 +380,7 @@ Phase N+1: Apply approved changes only
 Rules:
 - STOP gates are **blocking** — never auto-proceed
 - A STOP ends the agent's turn: report under a `+++DDL_REPORT` heading, ask, stop. Work resumes only on an explicit approval, with no mutation in between
-- No worker starts or continues between a STOP and its approval, because no runtime guarantees that a worker stays read-only
+- No worker starts or continues between a STOP and its approval: a worker is read-only only where the runtime adapter removes its writing tools, and nowhere by guarantee. Where the adapter has a gate hook (§2.5), the harness refuses the call; elsewhere the rule holds as an instruction
 - Only the human approves: runtime notifications (for example, a worker finishing) and messages from other agents or sessions are not approvals
 - A conversation summary (compaction) is not a user message and approves nothing. When the report a STOP asked about is no longer in context verbatim, the command rebuilds it from design.md, git, and the files it described and asks again; an approval given after a summary applies only to a report emitted after that summary. A STOP that a restart interrupted is not resumed: the command runs again from the phase that stopped, skipping the stages whose gates are marked passed. What the human approves is written down at once, because the conversation is not durable
 - Every command ends its REPORT with a STOP gate
@@ -393,10 +407,10 @@ Lead agent
 
 Rules:
 - Spawn agents only when 2+ independent scopes exist; when the condition holds, the command fans out. In `/realize`, the lanes of the current Direction stage count as scopes
-- Worker labels: `spawn:` is a label pattern such as `{role}-{scope}` (e.g., `reader-backend`, `scanner-docs`) that identifies each worker in reports. The label is passed as the worker's name only where the runtime adapter says so, because a name can change what a worker may do (a named Claude Code worker gets write tools)
+- Worker labels: `spawn:` is a label pattern such as `{role}-{scope}` (e.g., `reader-backend`, `scanner-docs`) that identifies each worker in reports. The label is passed as the worker's name only where the runtime adapter says so, because a name can change what a worker may do (a named Claude Code worker gets write tools unless the adapter's definition removes them)
 - Each agent reads only its assigned scope
 - The lead does not rely on workers inheriting its conversation: it writes each prompt from design.md (scope paths, the Experience items the scope serves, principles, Binding Decisions, the Direction stage, the scope's validation commands, the rows the human approved for the phase (verbatim), and in `/realize` the approved plan), so the prompt is self-contained and is the worker's whole context: the worker reloads neither the instruction file nor design.md in full. A worker that meets a STOP condition stops and reports, and the lead then stops for the human
-- The prompt also states that the worker starts no workers of its own (only the lead fans out) and, for read-only work, that the work is read-only. Both runtimes give workers the tools to do otherwise, so the instruction is what keeps them in bounds (in Claude Code, a worker that cannot edit files can still run shell commands, and a writer can start workers; Codex subagents inherit the parent session's sandbox and may spawn agents of their own)
+- The prompt also states that the worker starts no workers of its own (only the lead fans out) and, for read-only work, that the work is read-only. The instruction holds in every runtime, and where the adapter can remove tools it also enforces it (in Claude Code, the `explorer` definition drops the editing and agent tools, the `worker` definition the agent tools, and the spawn depth is one, while shell commands remain and stay read-only by instruction; Codex subagents inherit the parent session's sandbox and may spawn agents of their own, so there the instruction is all that keeps them in bounds)
 - Lead integrates results and runs cross-scope analysis
 - Single-scope tasks run without spawning
 - The protocol maps fan-out onto each runtime (Claude Code subagents, Codex subagents); without a parallel mechanism, the lead runs the assignments itself, read-only work as parallel reads and the rest one by one. Commands never name runtime tools
@@ -673,7 +687,7 @@ Each command follows the same structure:
 3. **+++SWARM** — parallel workers per scope through the runtime's own mechanism (Claude Code subagents, Codex subagents) when 2+ scopes exist; without a parallel mechanism, the lead runs the assignments itself, read-only work as parallel reads and the rest one by one
 4. **STOP gates** — mandatory human approval before mutating shared artifacts; the agent ends its turn and waits
 5. **Constraints** — invariants that must never be violated
-6. **Runtime adapters** — one table in the protocol maps the directives onto each harness, so commands never name runtime tools
+6. **Runtime adapters** — one table in the protocol maps the directives onto each harness, so commands never name runtime tools, and a small adapter per runtime (hooks, agent definitions, the design.md import or injection, a push rule) enforces the mechanical part of the rules (§2.5 Instructions and Mechanisms)
 
 Claude Code: → [examples/claude-commands/](../../examples/claude-commands/)
 OpenAI Codex: → [examples/codex-skills/](../../examples/codex-skills/)
@@ -763,8 +777,8 @@ Integration patterns:
 - Anthropic (2025b). [Effective context engineering for AI agents](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents). *Anthropic Engineering*.
 - Anthropic (2025c). [Equipping agents for the real world with Agent Skills](https://www.anthropic.com/engineering/equipping-agents-for-the-real-world-with-agent-skills). *Anthropic Engineering*.
 - Ji, Y. (2025). [Context Engineering for AI Agents: Lessons from Building Manus](https://manus.im/blog/Context-Engineering-for-AI-Agents-Lessons-from-Building-Manus). *Manus*.
-- Anthropic (2026). [How Claude remembers your project](https://code.claude.com/docs/en/memory) and [Context window](https://code.claude.com/docs/en/context-window). *Claude Code documentation* (accessed 2026-10-17).
-- OpenAI (2026). [Custom instructions with AGENTS.md](https://developers.openai.com/codex/guides/agents-md) and [Memories](https://developers.openai.com/codex/customization/memories). *Codex documentation* (accessed 2026-10-17).
+- Anthropic (2026). [How Claude remembers your project](https://code.claude.com/docs/en/memory), [Context window](https://code.claude.com/docs/en/context-window), [Hooks reference](https://code.claude.com/docs/en/hooks), [Subagents](https://code.claude.com/docs/en/sub-agents), and [Settings](https://code.claude.com/docs/en/settings) (permission rules). *Claude Code documentation* (accessed 2026-10-18).
+- OpenAI (2026). [Custom instructions with AGENTS.md](https://developers.openai.com/codex/guides/agents-md), [Memories](https://developers.openai.com/codex/customization/memories), [Hooks](https://developers.openai.com/codex/hooks), [Subagents](https://developers.openai.com/codex/subagents), [Rules](https://developers.openai.com/codex/rules), and [Skills](https://developers.openai.com/codex/skills) (`agents/openai.yaml`). *Codex documentation* (accessed 2026-10-18).
 
 ### Related Methodologies
 - Knuth, D. (1984). [Literate Programming](https://academic.oup.com/comjnl/article/27/2/97/343244). *The Computer Journal*, 27(2), 97-111.
@@ -778,6 +792,7 @@ Integration patterns:
 
 | Date | Change |
 |------|--------|
+| 2026-10-18 | Instructions and mechanisms: the harness enforces the mechanical part of +++STOP, the design.md load, the worker roles, and the outward +++NEVER items through per-runtime adapters (§2.5 Instructions and Mechanisms, §3.5, §3.6); a How to Read row |
 | 2026-10-18 | Follow-up: one format for passed and advance-approval marks (§3.3), `Approved plan` lines under Direction (§3.3, §8, Example 4), what is written down at approval and the project file re-injected after compaction (§2.5), D9 Experience Gap and D7 Validation Failure (§3.3, §3.4), `+++DDL_REPORT` in the STOP rules and Example 4 (§3.5, §4), references aligned |
 | 2026-10-17 | Harness-era revision: harness memory and design.md (§1.1, §1.4), harness engineering and technology choice (§2.5), VALIDATE in the state model (§3.1), harness session state (§3.2), Binding and Direction checks (§3.3, §3.4), G1–G7 IDs (§3.4), STOP semantics and parallel workers (§3.5, §3.6), Example 4, Binding Decisions in §5, §6, §8, template sections (§7), three references; follow-up: passed marks and retired Acceptance Gates (§3.3, §3.4, Example 4, §8), no worker started or continued during a STOP and no approval from notifications or other agents (§3.5), worker labels, self-contained prompts, and the read-only and no-nesting instructions in each prompt (§1.4, §3.6), terminology alignment (Codex subagents in §3.6 and §7; D1, D2, … in §7), a notebook named by runtime guidance (§5), Phases in the protocol's role order (§7); notebook named design.md throughout; `Unbound:` lines, approved picks, arguments that would change a Binding Decision, and existing premises (§2.5); gates never dropped (§3.3); every REPORT ending with a STOP gate and gates outside the approved report never approved in advance (§3.5); the lead's fallback without a parallel mechanism (§3.6, §7); `/resonate` marked repository-only (§3.1, §7); approval of a report as a Binding Decision source (§5); How to Read rows for §6–§8; the `/draft` intent (§7); context engineering (§1.4, §2.5, §3.5, §3.6) and its references |
 | 2026-04-25 | VALIDATE support command (§3.1, §7); README-as-design Alternative (§5) |

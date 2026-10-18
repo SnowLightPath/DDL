@@ -1,3 +1,12 @@
+---
+name: draft
+description: Write the ideal experience before implementation exists, with the technology decisions and outlook it depends on
+argument-hint: "[feature] [technology or outlook]"
+disable-model-invocation: true
+metadata:
+  short-description: Draft ideal experience
+---
+
 # draft
 
 Write the ideal experience before implementation exists, together with the decisions and outlook that the experience cannot be separated from.
@@ -12,7 +21,7 @@ Write the ideal experience before implementation exists, together with the decis
 
 ### Phase 0: INIT
 
-1. Read the DDL protocol for the current runtime when it is not already in context: repo-local `commands/DDL-PROTOCOL-SKILL.md` when present; otherwise, in Claude Code, `.claude/commands/DDL-PROTOCOL-SKILL.md`, then `$HOME/.claude/commands/DDL-PROTOCOL-SKILL.md`; in Codex, `$HOME/.codex/commands/DDL-PROTOCOL-SKILL.md`, then the protocol sections of `AGENTS.md`.
+1. Read the DDL protocol for the current runtime when it is not already in context: repo-local `commands/DDL-PROTOCOL-SKILL.md` when present; otherwise, in Claude Code, `.claude/skills/ddl-protocol/SKILL.md`, then `$HOME/.claude/skills/ddl-protocol/SKILL.md`; in Codex, `$HOME/.codex/commands/DDL-PROTOCOL-SKILL.md`, then the protocol sections of `AGENTS.md`.
 2. Read project-local runtime guidance when it is not already in context (the runtime loads `AGENTS.md` for Codex, and `CLAUDE.md` or `.claude/CLAUDE.md` for Claude Code, at session start), and any applicable command overlay.
 3. Read `design.md` when it is not already in context — extract scopes, existing principles, and any Experience, Binding Decisions, Direction, and Acceptance Gates (protocol §3)
 4. If no `design.md` exists → ask user to create one or proceed with defaults

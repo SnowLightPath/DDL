@@ -1,3 +1,12 @@
+---
+name: docs
+description: Audit and fix documentation quality
+argument-hint: "[path]"
+disable-model-invocation: true
+metadata:
+  short-description: Documentation audit
+---
+
 # docs
 
 Audit and fix documentation quality.
@@ -11,7 +20,7 @@ Audit and fix documentation quality.
 
 ### Phase 0: INIT
 
-1. Read the DDL protocol for the current runtime when it is not already in context: repo-local `commands/DDL-PROTOCOL-SKILL.md` when present; otherwise, in Claude Code, `.claude/commands/DDL-PROTOCOL-SKILL.md`, then `$HOME/.claude/commands/DDL-PROTOCOL-SKILL.md`; in Codex, `$HOME/.codex/commands/DDL-PROTOCOL-SKILL.md`, then the protocol sections of `AGENTS.md`.
+1. Read the DDL protocol for the current runtime when it is not already in context: repo-local `commands/DDL-PROTOCOL-SKILL.md` when present; otherwise, in Claude Code, `.claude/skills/ddl-protocol/SKILL.md`, then `$HOME/.claude/skills/ddl-protocol/SKILL.md`; in Codex, `$HOME/.codex/commands/DDL-PROTOCOL-SKILL.md`, then the protocol sections of `AGENTS.md`.
 2. Read project-local runtime guidance when it is not already in context (the runtime loads `AGENTS.md` for Codex, and `CLAUDE.md` or `.claude/CLAUDE.md` for Claude Code, at session start), and any applicable command overlay.
 3. Read `design.md` when it is not already in context — extract scopes, and documentation paths when design.md lists them
 4. If no `design.md` exists → treat the repository as one scope

@@ -3,7 +3,13 @@
 ## Protocol
 
 → DDL-PROTOCOL
-→ Read the DDL protocol before executing any command, when it is not already in context, in the lookup order of protocol §2.5: repo-local `commands/DDL-PROTOCOL-SKILL.md`, then `.claude/commands/DDL-PROTOCOL-SKILL.md`, then `$HOME/.claude/commands/DDL-PROTOCOL-SKILL.md`
+→ Read the DDL protocol before executing any command, when it is not already in context, in the lookup order of protocol §2.5: repo-local `commands/DDL-PROTOCOL-SKILL.md`, then `.claude/skills/ddl-protocol/SKILL.md`, then `$HOME/.claude/skills/ddl-protocol/SKILL.md`
+
+## Notebook
+
+@../design.md
+
+The line above imports `design.md` into this file, so the notebook is in context from session start and after a compaction (Claude Code adapter, protocol §2.5). A project with a root `CLAUDE.md` writes `@design.md`; a project whose notebook is another file (protocol §3) points the line at that file.
 
 ## Commands
 
@@ -20,6 +26,8 @@
 ## Structure
 
 - `design.md` - Project design document (scopes, principles, validation; Experience, Binding Decisions, Direction, Acceptance Gates when drafted — protocol §3)
+- `.claude/skills/<name>/SKILL.md` - The DDL command skills and the protocol skill `ddl-protocol`
+- `.claude/settings.json`, `.claude/agents/`, `.claude/hooks/` - The Claude Code adapter: the gate hook and its wiring, the `explorer` and `worker` definitions (protocol §2.5)
 
 ## Detection Targets
 
@@ -39,7 +47,7 @@ Every command defines its own D-targets (D1, D2, …). Cross-cutting targets bel
 ### On session start
 
 1. This file is already in context: Claude Code loads `CLAUDE.md` or `.claude/CLAUDE.md` at session start and re-injects it after compaction. Do not read it again
-2. Read `design.md` if it exists — extract scopes, principles, validation commands, and the Experience, Binding Decisions, Direction, and Acceptance Gates when present. It stays in context; commands re-read it only after a compaction, and a worker reads only the sections its prompt names
+2. `design.md` loads with this file through the adapter's import (protocol §2.5); when the import is unavailable, read `design.md` if it exists. Extract scopes, principles, validation commands, and the Experience, Binding Decisions, Direction, and Acceptance Gates when present. It stays in context; commands re-read it only when it is no longer in context after a compaction, and a worker reads only the sections its prompt names
 3. The DDL protocol loads when a command runs (Phase 0, lookup order in protocol §2.5), not at session start
 4. Automatic memory is a recall layer: a decision found only there is a proposal until design.md records it
 
