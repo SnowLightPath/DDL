@@ -8,6 +8,7 @@
 - 固有名詞と文献は原文のまま書く。人名（Clark & Chalmers、Nonaka & Takeuchi など）、組織と製品（Anthropic、OpenAI、Claude Code、Codex、Spec Kit、Kiro、Tessl、Next.js）、方法論の略語（SECI、DocDD、ADR、TDD、DbC、SDD、AI-DLC、MCP）、ファイル名と識別子（design.md、CLAUDE.md、AGENTS.md、`.claude/settings.json`、`explorer`、`worker`）はそのまま。参考文献の節は英語のままにする。
 - 見出しは日本語に訳す。ただし節の名前（Experience など）と固有名詞を含む見出しはそのまま残す。訳した見出しの例: In the Harness Era は「ハーネス時代」、Background: The Session Discontinuity Problem は「背景: セッションの断絶という問題」、Core Principle は「中核の原則」、Roles: Human and LLM は「役割: 人間と LLM」、Stay Flexible は「柔軟に」、Anti-Patterns は「アンチパターン」、Summary は「まとめ」、Option 1: Pure Discipline は「選択肢1: 規律だけ」、STOP Gates は「STOP ゲート」。見出しの数と階層は英語版と一致させる（V35）。
 - em-dash（—）は使わない。読点、括弧、コロンで書く。コード、表、引用、見出しの構造は英語版に合わせる。
+- コードブロック内の図は、概念名だけのもの（§1 の図、The Loop）は英語のまま、文を含むもの（§3 の STOP ゲートや SWARM の図）は訳す。
 - 同じ英語の語には同じ日本語を当てる。文脈で訳し分ける語は表の備考に書く。
 - 本文は「です・ます」で書く（現行の日本語版と同じ）。
 - 地の文は、主題を先に置き、読点は構造の切れ目だけに打ち、完全な述語文で書き、英語の語順や語をなぞった直訳調を避ける。
