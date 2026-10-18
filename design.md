@@ -23,7 +23,7 @@ DDLコマンド群（draft, realize, reflect, validate, resonate, commit, docs, 
 2. **言語がそのまま体験のとき。** ライブラリでは使う側のコードの言語が体験そのものなので、/draft はその言語で使用例を書き、言語を Binding Decisions に記録する。型の補完が使い勝手の中心なら、TypeScript を拘束する理由は「補完だけで使い方が分かる」になる。
 3. **実装の見通しを持っているとき。** 「CLI で API を固めてから画面へ。3状態は並列に作り、途中でスクショを見せて」は `## Direction` の表（Stage / Work (parallel lanes) / Human sees / Gate）になる。見通しであり拘束ではない。
 4. **/realize が守る。** 計画で各 Binding Decision の守り方と、Direction のどの段階から始めるかを示す。段取りの変更は報告に載るだけで止まらない。段階を統合したら、人間の承認点は統合後の段階の終わりに移す。Binding の理由が崩れたら（例: 静的ホスティングしか使えず、書きながら伸びる回答をサーバーから流せない）止まって選択肢を出す。Binding Decision を変えるのは人間だけ。段階の Gate が通ったら、Gate 欄に `passed <日付>` を書く。
-5. **/reflect が照合する。** Binding Decisions とコードの一致、終わった Direction の削除、実装で見つかった体験の追記を、Target 列つきの表で出す。Binding Decision から外れたコードは Binding Drift として止まる。
+5. **/reflect が照合する。** Binding Decisions とコードの一致、終わった Direction の削除、実装で見つかった体験の追記を、Target 列つきの表で出す。Binding Decision から外れたコードは Binding Drift として報告し、REPORT で止まる。解決は人間だけが選ぶ。
 6. **どのハーネスでも同じ。** Claude Code の `/draft` も Codex の `$draft` も同じ節を読み書きし、同じ所で止まる。並列実行と承認の実行方法は protocol §2.5 の対応表と、その実行環境のアダプタ（Claude Code なら `.claude/settings.json`・`.claude/agents/`・`.claude/hooks/`、Codex なら `.codex/`）にあり、ハーネスが変わってもコマンドファイルは変えない。サブエージェントが lead の会話を引き継ぐとは限らないので、lead は design.md の Experience・Binding Decisions・担当スコープから、それだけで足りる指示を作る。ワーカーがさらにワーカーを起動することはない。
 7. **完了の条件を先に書くとき。** 「npm test が通り、3画面のスクリーンショットを見て承認したら完了」は `## Acceptance Gates` になる。機械的ゲートは期待値つきのコマンド、人間の承認点は /realize が止まって見せる所である。受け入れが済んだら /reflect が節を片づけ、続けて使う検査は Validation に移す。
 
@@ -60,7 +60,7 @@ DDLコマンド群（draft, realize, reflect, validate, resonate, commit, docs, 
 |---|---|
 | 要約のあとに「OK」だけが来た | 報告を再掲して承認を取り直す。要約は承認の対象を示さない |
 | セッションを再開し、承認点の途中だった | その STOP は再開できない。コマンドを STOP の phase から走らせ直す。済んだ段階は印で飛ばせる |
-| design.md が大きい（この repo は 36 KB） | 数値の上限は置かず、/reflect が spent な節と履歴の注記の退役を提案する |
+| design.md が大きい（この repo は 2026-10-17 時点で 36 KB） | 数値の上限は置かず、/reflect が spent な節と履歴の注記の退役を提案する |
 | 自動メモリの決定が design.md と食い違う | design.md が正。メモリは報告に示すだけ |
 | Codex のサブエージェントが AGENTS.md を自動で読むかは未確認 | 束に必要な規則を書く（protocol §2.4 Step 3 のまま） |
 | global の指示ファイルが大きい（12.4 KB、DDL 以外の節を含む） | 個人環境リポジトリ（Harness、旧 Skills）の話なので、DDL では注記だけ |
@@ -69,7 +69,7 @@ DDLコマンド群（draft, realize, reflect, validate, resonate, commit, docs, 
 
 設計の芯。DDL ではコマンドがプログラム、`+++` ディレクティブが命令、LLM がプロセッサ、ハーネスがその実装である（P1）。+++SWARM はすでにこの形で動いている。命令の意味はコマンドと protocol に、各ハーネスでの実行手段は protocol §2.5 の行に、設定はアダプタにある。この改訂は残りの命令にも同じ形を与える。+++STOP、Phase 0 の読み込み、+++SWARM の `type:`、外向きの +++NEVER の四つに §2.5 の行とアダプタの設定を与え、コマンドファイルは変えない。
 
-新しい仕組みは一つだけ、門である。門は会話の記録を読み、+++DDL_REPORT が出てから次に人間が発言するまで、書き込みとワーカーの起動を通さない。これは protocol §1.5 のうち機械的に判定できる部分（手番を終える、承認までは変更しない、通知やワーカーの結果は承認にならない）をそのまま執行する。返事が承認かどうかは言葉の判断なので、従来どおり指示（Resume rule）が担う。ほかはすべて設定である。手帳の常時読み込み、ワーカーの役、入れ子の深さ、署名、外向き操作の確認がそれにあたる。
+新しい仕組みは一つだけ、門である。門は会話の記録を読み、+++DDL_REPORT が出てから次に人間が発言するまで、書き込み（編集、書き込むシェルコマンド、MCP ツールの呼び出し）とワーカーの起動・連絡を通さない。これは protocol §1.5 のうち機械的に判定できる部分（手番を終える、承認までは変更しない、通知やワーカーの結果は承認にならない）をそのまま執行する。返事が承認かどうかは言葉の判断なので、従来どおり指示（Resume rule）が担う。ほかはすべて設定である。手帳の常時読み込み、ワーカーの役、入れ子の深さ、AI の帰属表記、外向き操作の確認がそれにあたる。
 
 ユーザーの操作は両ランタイムで同じにする（2026-10-17 の Experience 6 の帰結）。同じ所で止まり、同じ語で進み、同じものが design.md に残る。仕組みが捕まえる範囲だけがランタイムで違い、その差は §2.5 の行に書く。したがって片方にしか無い計画モードは +++STOP の実装に使わない。
 
@@ -78,7 +78,7 @@ DDLコマンド群（draft, realize, reflect, validate, resonate, commit, docs, 
 3. **進める。** 「OK」と打つと次の手番は普通に動き、Phase 2 が design.md に `Approved plan` を書く。「いいけど S2 は外して」なら、エージェントは報告を直して出し直す。この判断は従来どおり指示が担う。
 4. **ワーカーが走る。** +++SWARM の `type: Explore` は両ランタイムで explorer、`general-purpose` は worker という同じ名前の定義に解ける。Claude Code の explorer は編集と起動の道具を持たず、worker は起動の道具を持たない。Codex の定義は同じ契約を本文に持つが、sandbox は親を継承する。どちらでもワーカーに design.md の全文は載らず、lead の束だけが渡る。
 5. **要約が入る。** design.md は入れ直され、承認待ちの報告があればセッション開始時の注入がそれを告げ、エージェントは報告を再掲して承認を待つ（Summary rule のまま）。門は会話の記録で閉じたまま。
-6. **外へ出す。** `/commit remote` の push は、報告での承認に加えて、実行の直前にハーネス自身の確認が出る。コミットに署名は付かない。
+6. **外へ出す。** `/commit remote` の push は、報告での承認に加えて、実行の直前にハーネス自身の確認が出る。コミットに AI の帰属表記は付かない。
 7. **Codex でも同じ。** `$realize` が同じ表を出して止まり、同じ語で進み、同じ定義のワーカーが走る。初回だけ、プロジェクトの信頼と `/hooks` での信頼が要る。
 8. **仕組みが無くても同じ規則。** 未信頼のプロジェクト、hooks の無いランタイム、アダプタの無いランタイムでは、同じ規則が指示として働く。仕組みは規則を執行するだけで、規則を足しも減らしもしない。
 9. **呼び出しの形。** Claude Code の `.claude/skills/<name>/SKILL.md` を Codex の `.agents/skills/<name>/SKILL.md` と同じ構造にする（2026-10-18 の /realize 計画で移行を選択）。`/draft` に引数のヒントが出て、モデルが自分の判断でコマンドを始めない。
@@ -97,7 +97,7 @@ DDLコマンド群（draft, realize, reflect, validate, resonate, commit, docs, 
 | hook が未信頼、プロジェクトが untrusted（Codex）、hook の無い環境 | 指示だけで動く。README が初回の信頼手順を案内する |
 | 門のスクリプト自体が失敗する | 拒否せず警告を出す（fail-open）。道具が壊れたとき全編集を止めない |
 | design.md が無い | Codex の注入は何もしない。Claude Code の取り込みは無いファイルを黙って飛ばす（2026-10-18 に確認）。コマンドは従来どおり「Run /draft first」 |
-| design.md が大きい（この repo は 2026-10-18 の退役後で 57 KB） | 毎セッション載る。上限は置かず、/reflect の退役提案で下げる |
+| design.md が大きい（この repo は 2026-10-18 の計画の退役後で 67 KB） | 毎セッション載る。上限は置かず、/reflect の退役提案で下げる |
 | Claude Code の取り込みが、指示ファイルを受け取るワーカーにも効く | エージェント定義で指示ファイルを外し、契約は定義の本文に、文脈は束に持たせる |
 | Codex のワーカーは親の sandbox を継承する | 読み取り専用は定義の指示で守る。差は §2.5 の行に書く |
 | セッションの承認ポリシーが確認を出さない設定（never、bypass） | push 直前の確認は出ない。利用者が選んだ環境であり、報告での承認は従来どおり要る |
@@ -109,16 +109,16 @@ DDLコマンド群（draft, realize, reflect, validate, resonate, commit, docs, 
 
 設計の芯。DDL は環境に入れるものであり、プロジェクトに置くのは design.md と短い指示ファイルだけである。正本は DDL リポジトリ（公開）の `claude-code/`（プロジェクトの `.claude/` と同じ配置）と `codex/`（プロジェクトのルートと同じ配置）に一か所だけ置き、Codex の skills は Claude Code の skills から生成する。個人環境リポジトリ Harness（非公開）はそれを git submodule として取り込み、`~/.claude` と `~/.codex` に導入する。写し（`examples/`）、dogfood、リポジトリ間の追従スクリプトという三重構造は消える。
 
-1. **導入する。** `git clone` と `bash bin/install.sh` の二手で、Claude Code と Codex の両方に DDL が入る。skills・エージェント定義・門・規則ファイルは `$HOME/.claude/` と `$HOME/.codex/` への symlink になり、hooks と `env`・`permissions.ask`・`attribution` の断片は `~/.claude/settings.json` と `~/.codex/hooks.json` に既存の設定を保ったまま追記される。`bin/doctor.sh` が配備を照合して `N OK, M not OK` を出し、`bin/uninstall.sh` が symlink と断片だけを取り除く。再実行は冪等で、断片の DDL の項目（command に `ddl_gate.py` を含む hook）は置き換えられる。
+1. **導入する。** `git clone` と `bash bin/install.sh` の二手で、Claude Code と Codex の両方に DDL が入る。skills・エージェント定義・門・規則ファイルは `$HOME/.claude/` と `$HOME/.codex/` への symlink になり、hooks と `env`・`permissions.ask`・`attribution` の断片は `~/.claude/settings.json` と `~/.codex/hooks.json` に既存の設定を保ったまま追記される。`bin/doctor.sh` が配備と断片を照合し、門の単体テストと Codex の規則（`codex execpolicy check` で `git push` が prompt になること）も確かめて `N OK, M not OK` を出す。`bin/uninstall.sh` は symlink と断片だけを取り除き、空になった settings ファイルは消し、控えは作らない。再実行は冪等で、断片の DDL の項目（command に `ddl_gate.py` を含む hook）は置き換えられる。`--dry-run` は書かずに手順だけを出す。settings ファイルを初めて書き換えるときは、控えを `settings.json.ddl-backup`（Codex は `hooks.json.ddl-backup`）として隣に残す。Codex の `config.toml` には断片を混ぜず、SWARM の上限（`[agents] max_concurrent_threads_per_session = 5`）は利用者が `~/.codex/config.toml` に置き、doctor が未設定を報告する。
 2. **プロジェクトを始める。** `claude-code/CLAUDE.md` を `.claude/CLAUDE.md` に、または `codex/AGENTS.md` を `AGENTS.md` に置き、`/draft` を打つ。コマンドは利用者レベルの写しから走り、プロジェクトに同名の写し（`.claude/skills/<name>/SKILL.md`、`.agents/skills/<name>/SKILL.md`、または指示ファイルが名指しするファイル）があればそれに従う（Phase 0 の規則）。Claude Code は個人スキルを先に、Codex は両方を列挙するが、どちらで選んでもプロジェクトの版が動く。
 3. **追従する。** DDL の clone で `git pull`（Harness では `git submodule update --remote ddl`）し、断片が変わったときだけ `bash bin/install.sh` を打ち直す。symlink なので skills とエージェント定義は pull だけで最新になる。リポジトリ間のファイルコピーは無い。
-4. **プロジェクトに置く形も残る。** `cp -R claude-code/. your-project/.claude/` と `cp -R codex/. your-project/`（`bin/install.sh --project` も同じ写しを作る）。hook の command はプロジェクトの形では `$CLAUDE_PROJECT_DIR` とリポジトリのルートを、環境の形では `$HOME` を指し、導入スクリプトがマージのときに書き換える。
+4. **プロジェクトに置く形も残る。** `cp -R claude-code/{CLAUDE.md,settings.json,agents,hooks,skills} your-project/.claude/` と `cp -R codex/{.agents,.codex,AGENTS.md} your-project/`（`bin/install.sh --project` も同じ写しを作る。README は写さず、既存の指示ファイルは保つ）。hook の command はプロジェクトの形では `$CLAUDE_PROJECT_DIR` とリポジトリのルートを、環境の形では `$HOME` を指し、導入スクリプトがマージのときに書き換える。
 5. **両ランタイムで同じ形。** protocol は `ddl-protocol` という同じ名前・同じ本文のスキル、指示ファイルは短い双子（`CLAUDE.md` と `AGENTS.md`。Protocol、Notebook、Commands / Skills、Structure、Detection Targets、Behavior、Constraints）、アダプタは各ランタイムの設定ファイルである。`AGENTS.md` は protocol の節を持たなくなり、Codex のスキルも `§` で protocol を参照する。
-6. **DDL 自身を開発する。** DDL リポジトリの `.claude/` には `CLAUDE.md` だけがあり、それが `claude-code/skills/ddl-protocol/SKILL.md` と `claude-code/skills/<name>/SKILL.md` をプロジェクトの写しとして名指しする。利用者レベルに導入された写し（Harness の submodule の版）から走っても、Phase 0 の規則で開発中の版が動く。
+6. **DDL 自身を開発する。** DDL リポジトリの `.claude/` で追跡するのは `CLAUDE.md` だけで、それが `claude-code/skills/ddl-protocol/SKILL.md` と `claude-code/skills/<name>/SKILL.md` をプロジェクトの写しとして名指しする。利用者レベルに導入された写し（Harness の submodule の版）から走っても、Phase 0 の規則で開発中の版が動く。
 7. **個人環境。** Harness は `ddl/`（submodule）、`skills/`（個人スキル。付属スクリプトは `scripts/`、資料は `references/`）、`global/`（rc ファイル）、`bin/`（`ddl/bin/install.sh` を呼んでから個人スキルと rc を symlink し、古いリンクを消す）だけを持つ。`commands/` と `tools/` は廃止する。
 8. **文書で名前をつける。** README に二つの使い方（環境に入れる、プロジェクトに置く）を書き、日本語の哲学ドキュメントは用語集（`docs/ja/GLOSSARY.md`）を先に決めて節ごとに訳し直す。
 
-採らなかったもの: plugin（スキル名が `/ddl:draft` のように名前空間つきになり、`permissions`・`env`・`attribution`・指示ファイルを持てず、Codex の plugin は hooks と CLI 導入が揃っていない。2026-10-18 の調査）。`examples/` という名前（プロジェクトの配置そのものであり、例ではない）。dogfood の生成（利用者レベルの写しがプロジェクトの写しに従うので要らない）。`AGENTS.md` に protocol の節を持たせ続けること（protocol が二か所になり、Codex はスキルを呼ぶたびに 27 KB を読み直していた）。
+採らなかったもの: plugin（スキル名が `/ddl:draft` のように名前空間つきになり、`permissions`・`env`・`attribution`・指示ファイルを持てず、Codex の plugin は hooks と CLI 導入が揃っていない。2026-10-18 の調査）。`examples/` という名前（プロジェクトの配置そのものであり、例ではない）。dogfood の生成（利用者レベルの写しがプロジェクトの写しに従うので要らない）。`AGENTS.md` に protocol の節を持たせ続けること（protocol が二か所になり、Codex はスキルを呼ぶたびに 27 KB（2026-10-18 時点）を読み直していた）。
 
 境界の振る舞い:
 
@@ -133,6 +133,8 @@ DDLコマンド群（draft, realize, reflect, validate, resonate, commit, docs, 
 | Codex の skills の置き場（`~/.codex/skills` と文書上の `$HOME/.agents/skills`） | `~/.codex/skills` に置く。2026-10-18 の probe（両方に試しのスキルを置いて `codex exec` に列挙させた）では両方が読まれたので、置き場は増やさない |
 | プロジェクトに置いた上で環境にも入れた | 門が二重に走るが判定は同じ。コマンドはプロジェクトの写しに従う |
 | `~/.claude` も `~/.codex` も無い | 導入スクリプトは何もせず、`--claude` か `--codex` を求める |
+| Codex の `config.toml`（TOML） | 断片を混ぜない。install が案内を印字し、doctor が未設定を報告する |
+| `ddl-protocol` の見え方 | Claude Code では `user-invocable: false` で一覧に出ない。Codex には同等の欄が無く `$` の一覧に出るが、利用者は呼ばず、スキルが Phase 0 で読む |
 | design.md が公開される | 機械固有の記述（個人のパス、この Mac の設定）は書かない。実測値は日付つきで残す |
 
 ## Binding Decisions
@@ -161,17 +163,17 @@ DDLコマンド群（draft, realize, reflect, validate, resonate, commit, docs, 
 | draft | claude-code/skills/draft/SKILL.md | 体験と、体験と切り離せない決定・見通し・完了条件をdesign.mdに記録する |
 | realize | claude-code/skills/realize/SKILL.md | design.mdの設計をコードとして実装する（Binding Decisions を守り、Direction に従う） |
 | reflect | claude-code/skills/reflect/SKILL.md | 実装とdesign.mdの乖離を検出・修正する（Binding Drift と終わった Direction を含む） |
-| resonate | claude-code/skills/resonate/SKILL.md | 多言語ドキュメント（en/ja など）を同期する |
+| resonate | claude-code/skills/resonate/SKILL.md | 多言語ドキュメント（en/ja）を同期する |
 | refactoring | claude-code/skills/refactoring/SKILL.md | コード品質の監査・修正 |
 | docs | claude-code/skills/docs/SKILL.md | ドキュメント品質の監査・修正 |
-| commit | claude-code/skills/commit/SKILL.md | 検証済みコード変更のgitコミット |
+| commit | claude-code/skills/commit/SKILL.md | 検証済みコード変更のgitコミット。リポジトリや機械の間の同期はファイルコピーではなくリモート経由（+++NEVER） |
 | validate | claude-code/skills/validate/SKILL.md | design.md の Validation ブロックと Acceptance Gates の機械的ゲートを走らせる機械的検証ゲート |
 | claude-code | claude-code/CLAUDE.md, claude-code/settings.json, claude-code/agents/**, claude-code/hooks/**, claude-code/README.md | Claude Code の正本のうち skills 以外。プロジェクトの `.claude/CLAUDE.md` の雛形、アダプタ（settings・agents・hooks）、README。`hooks/ddl_gate.py` だけは `tools/ddl_gate.py` から生成する |
 | codex | codex/** | Codex の正本。`AGENTS.md` の雛形、`.codex/` のアダプタ、README は手で保守し、`.agents/skills/**` と `.codex/hooks/ddl_gate.py` は `tools/sync_mirrors.py` が生成する |
 | install | bin/** | 利用者レベルへの導入（`install.sh`・`doctor.sh`・`uninstall.sh` と本体の `ddl_setup.py`）。symlink と設定の断片のマージ、照合、除去 |
 | tools | tools/sync_mirrors.py, tools/ddl_gate.py, tools/test_ddl_gate.py, tools/fixtures/** | 生成スクリプト（`claude-code/skills` から Codex の skills と `openai.yaml` を作り、門を両アダプタに写す。P3）と、門のスクリプト（`+++STOP` を執行する hook の正本）とその単体テスト |
-| public-docs | README.md, docs/**, assets/** | 公開する説明文書（ルートの README と哲学ドキュメント en/ja、用語集）と、README が表示する画像。英語版が正本として参照され、/resonate は両方の言語を磨き、どちらも一方的な写し元として扱わない |
-| repo-config | .claude/CLAUDE.md | このリポジトリ自身の指示ファイル。`.claude/` にある唯一のファイルで、`claude-code/skills/**` をプロジェクトの写しとして名指しする。アダプタと skills は利用者レベルの導入から来る |
+| public-docs | README.md, docs/**, assets/** | 公開する説明文書（ルートの README と哲学ドキュメント en/ja、用語集）と、README が表示する画像。英語版が正本として参照され、/resonate は両方の言語を磨き、どちらも一方的な写し元として扱わない。`docs/README.md` は言語別の索引。4文書は末尾の Changelog に改訂を日付つきで記録し、en/ja で行を揃える。日本語は用語集の訳語と方針（見出し、表記）に従い、新しい語は表に足す |
+| repo-config | .claude/CLAUDE.md | このリポジトリ自身の指示ファイル。`.claude/` で追跡する唯一のファイルで、`claude-code/skills/**` をプロジェクトの写しとして名指しする。アダプタと skills は利用者レベルの導入から来る |
 
 draft〜validate の8スコープ（コマンドファイル）を、Validation では「コマンド」とまとめて呼ぶ。
 
@@ -216,9 +218,11 @@ Codex では同文の protocol を `ddl-protocol` スキルとして生成し、
 
 protocol の共有定義（§1.5 の STOP、§3 の節など）への参照は P1 による参照であり、外部参照に当たらない。Phase・DETECT・Constraint の定義そのものはコマンドファイルに置く。
 
+プロジェクトはコマンドの写しを置くほかに、プロジェクトルートの `commands/<name>.md`（overlay）で対象パス・用語・検証コマンドといった事実を足せる。全文上書きを宣言した overlay は写しとして働く（protocol §2.5 Project copy and overlay）。
+
 ### P3: 正本と生成
 
-正本は `claude-code/` と `codex/` にあり、どちらもプロジェクトの配置そのもの（Claude Code は `.claude/`、Codex は `.agents/skills/` と `.codex/` と `AGENTS.md`）で、コピーするだけでも使える。手で書くのは一か所、生成物は `tools/sync_mirrors.py` が作る。
+正本は `claude-code/` と `codex/` にあり、どちらもプロジェクトの配置そのもの（Claude Code は `.claude/`、Codex は `.agents/skills/` と `.codex/` と `AGENTS.md`）で、README を除いてコピーするだけでも使える。手で書くのは一か所、生成物は `tools/sync_mirrors.py` が作る。
 
 **手で保守するもの:**
 
@@ -230,9 +234,10 @@ protocol の共有定義（§1.5 の STOP、§3 の節など）への参照は P
 
 - `codex/.agents/skills/<name>/SKILL.md`（9本）。コマンドは Claude の本文と同じ文で、差分は frontmatter（`name`・`description`・`metadata.short-description`。`argument-hint` と `disable-model-invocation` は持たない）と `/cmd`→`$cmd` だけ。protocol は本文を変えない（両ランタイムを記述しているため）。Phase 0 も `§` の参照もそのまま
 - `codex/.agents/skills/<name>/agents/openai.yaml`（9本。`allow_implicit_invocation: false`。Claude の `disable-model-invocation` に当たる）
+- protocol の frontmatter の `user-invocable: false` は Codex 側に写さない（同等の欄が無い）。そのため `ddl-protocol` は Codex の `$` の一覧に出るが、利用者は呼ばず、スキルが Phase 0 で読む（README が案内し、生成する `openai.yaml` のコメントもそう書く）
 - `claude-code/hooks/ddl_gate.py` と `codex/.codex/hooks/ddl_gate.py`（`tools/ddl_gate.py` の写し）
 
-**二つの指示ファイルは双子である:** `claude-code/CLAUDE.md` と `codex/AGENTS.md` は同じ節（Protocol、Notebook、Commands / Skills、Structure、Detection Targets、Behavior、Constraints）を同じ順に持ち、ランタイムが違う所（探索先、design.md の載せ方、`/`と`$`、配置）だけが違う（V11、V32）。どちらにも protocol の節は無い。
+**二つの指示ファイルは双子である:** `claude-code/CLAUDE.md` と `codex/AGENTS.md` は同じ節（Protocol、Notebook、Commands / Skills、Structure、Detection Targets、Behavior、Constraints）を同じ順に持ち、ランタイムが違う所（探索先、design.md の載せ方、`/`と`$`、配置）と、Constraints の末尾に置く Codex 固有の +++NEVER 2行（+++DDL_PHASE と +++DDL_REPORT。V9）だけが違う（V11、V32）。どちらにも protocol の節は無い。
 
 **命名規則:** Codex では `$skill` / `AGENTS.md`。手帳の名前はどの実行環境でも `design.md` とする（2026-10-17 に人間が決定。1つのプロジェクトに手帳が2つできないようにするため）。
 
@@ -280,7 +285,7 @@ DDL 本体リポジトリは `design.md` を持つが、philosophy docs (`docs/e
 
 ### P9: コマンドは意味だけを書き、実行手段は対応表とアダプタに置く
 
-コマンドファイルはハーネスのツール名を書かない（V27）。ツール名と実行環境ごとの事実は protocol §2.5 に置き、実行環境側の設定が要るものはその実行環境のアダプタ（Claude Code なら `.claude/settings.json`・`.claude/agents/`・`.claude/hooks/`、Codex なら `.codex/`。利用者レベルに導入したときは `$HOME/.claude/`・`$HOME/.codex/` 配下の同じファイル）に置く。実行環境が変わったときに直すのは §2.5 とそのアダプタであり、コマンドファイルは変えない。
+コマンドファイルはハーネスのツール名を書かない（V27）。ツール名と実行環境ごとの事実は protocol §2.5 に置き、実行環境側の設定が要るものはその実行環境のアダプタ（Claude Code なら `.claude/settings.json`・`.claude/agents/`・`.claude/hooks/` と `.claude/CLAUDE.md` の取り込み行、Codex なら `.codex/`。利用者レベルに導入したときは `$HOME/.claude/`・`$HOME/.codex/` 配下の同じファイル）に置く。実行環境が変わったときに直すのは §2.5 とそのアダプタであり、コマンドファイルは変えない。
 
 - 確かめた事実（どのワーカーが書き込みのツールやワーカーを起動するツールを持つか、会話を引き継ぐ起動）は、確かめた日付とともに protocol §2.5 に置き、design.md には複製しない
 - どちらのハーネスでも、ワーカーが lead の会話を引き継ぐとは限らず、ワーカーが別のワーカーを起動できる（Claude Code ではアダプタが起動の道具を外し、入れ子の深さを1にする）。このため指示はそれだけで足りるように書き、ワーカーを起動しないことも指示に含める（protocol §2.4 Step 3）
@@ -315,7 +320,7 @@ DDL 本体リポジトリは `design.md` を持つが、philosophy docs (`docs/e
 
 2026-10-18 の /draft（指示と仕組みの DDL）で承認した。
 
-- 規則の本文はコマンドと protocol にあり、仕組みを入れても変わらない。命令ごとの実装は protocol §2.5 の行に、設定はその実行環境のアダプタ（Claude Code は `.claude/settings.json` と `.claude/agents/`、Codex は `.codex/`）に置く
+- 規則の本文はコマンドと protocol にあり、仕組みを入れても変わらない。命令ごとの実装は protocol §2.5 の行に、設定はその実行環境のアダプタ（Claude Code は `.claude/settings.json`・`.claude/agents/`・`.claude/hooks/` と `.claude/CLAUDE.md` の取り込み行、Codex は `.codex/`）に置く
 - 仕組みは機械的に判定できる部分だけを執行し、言葉の判断（返事が承認かどうか）は指示に残す
 - 仕組みが無い環境（未信頼のプロジェクト、hooks の無いランタイム、アダプタの無いランタイム）でも規則は同じで、仕組みは規則を足しも減らしもしない
 - ユーザーの操作（止まる所、進める語、design.md に残るもの）は両ランタイムで同じにし、仕組みが捕まえる範囲の差は §2.5 の行に書く

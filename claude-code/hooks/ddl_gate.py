@@ -20,7 +20,10 @@ Decisions (JSON on stdout; the exit status is always 0):
                       codex also gets design.md injected (claude imports it through CLAUDE.md)
 
 State: the conversation record (`transcript_path`) is read from the end and decides whenever
-it is readable. A marker file `<state dir>/<session_id>.pending` carries the signal across
+it is readable. An answered AskUserQuestion and an approved plan count as the human speaking
+(toolUseResult / permissionDecision from the user). Claude Code writes the transcript
+asynchronously, so a continuation in the same turn can escape the gate; the rule then holds as
+an instruction. A marker file `<state dir>/<session_id>.pending` carries the signal across
 turns and for runtimes whose record is unreadable, and `<state dir>/<session_id>.warned` makes
 the unreadable-record warning appear once per session; the state dir is $DDL_GATE_STATE_DIR,
 else $TMPDIR/ddl-gate, else /tmp/ddl-gate. Wire all four events, or the marker is never cleared.

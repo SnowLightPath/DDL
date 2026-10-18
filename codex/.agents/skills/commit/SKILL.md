@@ -84,4 +84,4 @@ Only if user specified `remote` or explicitly requested:
 +++NEVER: Add AI attribution to commit messages
 +++NEVER: Skip +++STOP even for small changes
 +++NEVER: Hardcode validation commands — they come from design.md
-+++NEVER: Sync changes between repositories or machines by local filesystem copy; use GitHub branches, pushes, pulls, or pull requests
++++NEVER: Sync changes between repositories or machines by copying files; use the remote (branches, pushes, pulls, pull requests)
