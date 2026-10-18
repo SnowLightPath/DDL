@@ -22,7 +22,8 @@ Mirror rules:
     and protocol references become AGENTS.md section names.
 
 Rules production must follow, or generation stops with an error:
-  - every text replaced below occurs exactly once;
+  - the three texts replaced with replace_once (reflect's /resonate suggestion, the template title,
+    the $validate row) occur exactly once, and no § remains after the Codex wording replacements;
   - Phase 0 starts with "1. Read the DDL protocol" and "2. Read project-local runtime guidance";
   - commands cite the protocol only as "(§1.5)", "§1.5 of the protocol", "(§2.3 of the protocol)",
     or "protocol §3".
@@ -116,7 +117,7 @@ def dogfood_runtime(name, text):
     """This repository's own Codex adapter, from the template."""
     if name == "AGENTS.md":
         text = replace_once(text, "# Project Name\n", "# DDL Repository\n", name)
-        row = "| `$validate` | Run mechanical validation per scope |\n"
+        row = "| `$validate` | Run mechanical validation per scope: the Validation block and the mechanical gates in Acceptance Gates |\n"
         text = replace_once(text, row, row + "| `$resonate` | Sync en/ja docs (this repository only) |\n", name)
     return text
 

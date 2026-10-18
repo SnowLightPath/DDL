@@ -33,7 +33,7 @@ DDL intersects with several cognitive science and philosophy theories. These are
 
 Clark & Chalmers (1998) proposed "Extended Mind"—the claim that cognition doesn't complete in the brain but integrates with external tools.
 
-The famous **Inga/Otto thought experiment**: Inga remembers the museum address in biological memory; Otto, with Alzheimer's, records it in a notebook. Clark argued Otto's notebook is **functionally equivalent** to Inga's memory.
+The famous **Inga/Otto thought experiment**: Inga remembers the museum address in biological memory; Otto, with Alzheimer's, records it in a notebook. Clark argued Otto's notebook is **functionally equivalent** to Inga's memory (Clark & Chalmers, 1998; Clark, 2008).
 
 design.md in DDL corresponds to "Otto's notebook."
 
@@ -58,7 +58,7 @@ DDL:  Human Brain <-> design.md <-> LLM
 
 ### 1.2 SECI Model
 
-Nonaka's SECI model (1995) describes conversion cycles between tacit and explicit knowledge.
+Nonaka's SECI model (Nonaka & Takeuchi, 1995; Nonaka, Toyama, & Konno, 2000) describes conversion cycles between tacit and explicit knowledge.
 
 ```
 +---------------+---------------+
@@ -156,7 +156,7 @@ TDD and DDL are orthogonal and can coexist. Draft → Test → Implement is a na
 
 ### 2.4 Design by Contract (DbC)
 
-Formalized by Meyer in Eiffel (1986). Makes contracts (invariants) explicit.
+Formalized by Meyer in Eiffel (Meyer, 1992). Makes contracts (invariants) explicit.
 
 | Aspect | DbC | DDL |
 |--------|-----|-----|
@@ -177,7 +177,7 @@ All three share a common background: unstructured AI coding ("vibe coding") does
 
 #### SDD in Brief
 
-Write specifications in natural language, then let AI generate code from them. Not one methodology—multiple tools (GitHub Spec Kit, Kiro, Tessl) differ significantly (Thoughtworks, 2025). The spec is the source of truth; code is derived.
+Write specifications in natural language, then let AI generate code from them. Not one methodology—multiple tools (GitHub Spec Kit, Kiro, Tessl) differ significantly (Thoughtworks, 2025; Fowler et al., 2025). The spec is the source of truth; code is derived.
 
 #### AI-DLC in Brief
 
@@ -197,13 +197,13 @@ DDL is context engineering done from the human's side. The question "what should
 
 | Layer | Content | Loaded | Owner |
 |-------|---------|--------|-------|
-| Instruction file (`CLAUDE.md`, `AGENTS.md`) | How to work here: protocol lookup, global constraints, G1–G7 | Session start; Claude Code re-injects it after compaction | Human |
-| design.md | What the human agreed to: Experience, Binding Decisions, Direction, Acceptance Gates, principles, scopes, validation | Session start | Human and LLM, through the loop |
-| Protocol and command | How a command runs | When the command is invoked (Phase 0); a Codex skill set may carry the protocol sections in `AGENTS.md`, in context from session start. Commands reference the protocol and never copy it | Methodology |
+| Instruction file (`CLAUDE.md`, `AGENTS.md`) | How to work here: protocol lookup, global constraints, G1–G7 | Session start; Claude Code re-injects the project file after compaction | Human |
+| design.md | What the human agreed to: Experience, Binding Decisions, Direction, Acceptance Gates, principles, scopes, validation | Session start; after compaction a command re-reads it (Phase 0) | Human and LLM, through the loop |
+| Protocol and command | How a command runs | When the command is invoked (Phase 0), and again after compaction when it is no longer in context; a Codex skill set may carry the protocol sections in `AGENTS.md`, in context from session start. Commands reference the protocol and never copy it | Methodology |
 | Worker prompt | One scope's paths, the Experience items it serves, the principles, the Binding Decisions, the Direction stage, the scope's validation commands, the rows the human approved for the phase (verbatim), and in `/realize` the approved plan | When the lead fans out; the worker reads only the files and design.md sections the prompt names | Lead, from design.md |
 | Automatic memory, compaction summaries, progress files | The agent's working state | By the harness | Agent; never a source of decisions |
 
-Three consequences follow. First, the budget: every section the loop retires (a spent Direction, accepted Acceptance Gates) is context that no later session pays for, so "DDL documents are temporary" is also a context rule. Second, the conversation is not durable: a compaction summary is not a user message and approves nothing. When the report a STOP asked about is no longer in context verbatim, the command rebuilds it from design.md, git, and the files it described and asks again; an approval given after a summary applies only to a report emitted after that summary, and a STOP that a restart interrupted is not resumed: the command runs again from the phase that stopped, skipping the stages whose gates are marked passed. Whatever the human approves is written down at once (the draft to design.md, a passed gate to its mark, a delegated choice to the table). Third, memory is not agreement: a decision that exists only in automatic memory is a proposal until design.md records it.
+Three consequences follow. First, the budget: every section the loop retires (a spent Direction, accepted Acceptance Gates) is context that no later session pays for, so "DDL documents are temporary" is also a context rule. Second, the conversation is not durable: a compaction summary is not a user message and approves nothing. When the report a STOP asked about is no longer in context verbatim, the command rebuilds it from design.md, git, and the files it described and asks again; an approval given after a summary applies only to a report emitted after that summary, and a STOP that a restart interrupted is not resumed: the command runs again from the phase that stopped, skipping the stages whose gates are marked passed. Whatever the human approves is written down at once (the draft to design.md, a passed gate to its mark, a delegated choice to the table, an advance approval to its gate, the approved plan to Direction). Third, memory is not agreement: a decision that exists only in automatic memory is a proposal until design.md records it.
 
 #### Structural Comparison
 
@@ -323,12 +323,13 @@ Perspectives to support Reflect:
 | NEW_PATTERN | Undocumented pattern found | Add as principle |
 | OUTDATED | Principle without implementation | Delete or implement |
 | BINDING_DRIFT | Code departs from a Binding Decision | The human chooses: fix the code, or change the decision |
-| SPENT_DIRECTION | Direction stages are marked passed | Replace them with the outcome; delete the section when every stage is done |
+| SPENT_DIRECTION | Direction stages are marked passed | Replace them with the outcome and delete their `Approved plan` lines; delete the section when every stage is done |
 | SPENT_ACCEPTANCE | Every Acceptance Gate is marked passed, so the work is accepted | Move lasting checks into Validation; delete the section |
+| EXPERIENCE_GAP | Code handles a state Experience does not describe, or does not deliver an Experience item | Add the state to Experience, or make the code deliver the item |
 
 These categories are a subset of the broader Detection Targets system (§3.4).
 
-**Passed marks.** `/realize` appends `passed <date>` to each gate that passes: in the stage's Gate cell for Direction (for example `human approval, passed 2026-10-20`), and after the gate for Acceptance Gates. It adds `(approved in advance)` when a human gate did not fire. The work is accepted when every Acceptance Gate is marked passed. `/reflect` reads only these marks and never infers a pass from conversation memory.
+**Passed marks.** `/realize` appends `passed <date>` to each gate that passes: in the stage's Gate cell for Direction (for example `human approval, passed 2026-10-20`), and after the gate for Acceptance Gates. An advance approval is written in the same place the moment the human gives it, as `approved in advance (<date>)`, and `passed <date>` follows it when the stage or the work ends. The approved `/realize` plan is written under Direction as `Approved plan (<date>)` for the same reason: a later or compacted session rebuilds worker prompts from it. The work is accepted when every Acceptance Gate is marked passed. `/reflect` reads only these marks and never infers a pass from conversation memory.
 
 Gates are never dropped. A merged stage keeps its gates at its end; a skipped stage's gates move to the end of the next stage, or to the end of the work when it is the last stage; a reordered stage keeps its gates.
 
@@ -348,7 +349,7 @@ Each command defines its own D-targets (D1, D2, …) specific to its purpose. Cr
 | G6 | Silent Failure | Error swallowed without user notification |
 | G7 | Unreviewed Mutation | Shared artifact changed without STOP gate |
 
-Example: `/reflect` defines its own targets (D1 Drift, D2 New Pattern, D3 Outdated Principle, D4 Stale Reference, D5 Self-Contradiction, D6 Binding Drift, D7 Spent Direction, D8 Spent Acceptance Gates) while also being subject to global targets. `/draft` adds D6 Unanchored Binding (a Binding Decision without a reason or a source) and D7 Binding Conflict; `/realize` adds D6 Binding Violation.
+Example: `/reflect` defines its own targets (D1 Drift, D2 New Pattern, D3 Outdated Principle, D4 Stale Reference, D5 Self-Contradiction, D6 Binding Drift, D7 Spent Direction, D8 Spent Acceptance Gates, D9 Experience Gap) while also being subject to global targets. `/draft` adds D6 Unanchored Binding (a Binding Decision without a reason or a source) and D7 Binding Conflict; `/realize` adds D6 Binding Violation and D7 Validation Failure.
 
 ### 3.5 STOP Gates
 
@@ -364,7 +365,7 @@ Phase N+1: Apply approved changes only
 
 Rules:
 - STOP gates are **blocking** — never auto-proceed
-- A STOP ends the agent's turn: report, ask, stop. Work resumes only on an explicit approval, with no mutation in between
+- A STOP ends the agent's turn: report under a `+++DDL_REPORT` heading, ask, stop. Work resumes only on an explicit approval, with no mutation in between
 - No worker starts or continues between a STOP and its approval, because no runtime guarantees that a worker stays read-only
 - Only the human approves: runtime notifications (for example, a worker finishing) and messages from other agents or sessions are not approvals
 - A conversation summary (compaction) is not a user message and approves nothing. When the report a STOP asked about is no longer in context verbatim, the command rebuilds it from design.md, git, and the files it described and asks again; an approval given after a summary applies only to a report emitted after that summary. A STOP that a restart interrupted is not resumed: the command runs again from the phase that stopped, skipping the stages whose gates are marked passed. What the human approves is written down at once, because the conversation is not durable
@@ -520,7 +521,7 @@ written. Sources are listed below it.
 ## Direction
 | Stage | Work (parallel lanes) | Human sees | Gate |
 |---|---|---|---|
-| S0 | Fix the search API as a CLI | sample CLI output | `npm test` |
+| S0 | Settle the search API as a CLI | sample CLI output | `npm test` |
 | S1 | Three screen states, one lane each | three screenshots | human approval |
 | S2 | Streaming display | a screen recording | `npx playwright test` |
 ```
@@ -530,15 +531,17 @@ written. Sources are listed below it.
 LLM: Binding Decisions honored (package.json, app/). S0 passed `npm test`: its Gate
      cell now reads "`npm test`, passed 2026-10-20". S1 and S2 merged; both gates
      (`npx playwright test`, then human approval) moved to the end of the merged stage.
-LLM: Stop. Hosting serves static files only, so the server cannot stream the answer,
-     and streaming is why Next.js App Router binds. Options: request a Node runtime,
-     stream from a separate API server, show the answer only when it is complete,
-     or change the Binding Decision. You choose.
+LLM: +++DDL_REPORT
+     D6 Binding Violation: hosting serves static files only, so the server cannot
+     stream the answer, and streaming is why Next.js App Router binds. Options:
+     request a Node runtime, stream from a separate API server, show the answer
+     only when it is complete, or change the Binding Decision. You choose.
+     (turn ends; nothing runs until the human answers)
 ```
 
 **Reflect:**
 
-The human chose a Node runtime, so Binding Decisions match the code. Every stage is marked passed, so Direction is deleted (version control keeps the history). The stop button added during implementation goes into Experience.
+The human chose a Node runtime, so Binding Decisions match the code. Every stage is marked passed, so Direction, with its `Approved plan` lines, is deleted (version control keeps the history). The stop button added during implementation goes into Experience.
 
 -----
 
@@ -651,14 +654,14 @@ Commands implement DDL as Phase-based workflows with Detection Targets, STOP gat
 | Command | Intent |
 |---------|--------|
 | `/draft` | Write the user-side experience first, with the decisions and outlook it depends on |
-| `/realize` | Write code based on design principles |
+| `/realize` | Write code based on design principles and Binding Decisions |
 | `/reflect` | Update documents based on implementation |
 
 **Support Commands** — invokable at any point:
 
 | Command | Intent |
 |---------|--------|
-| `/validate` | Run mechanical validation per scope (lint/test/build) |
+| `/validate` | Run mechanical validation per scope: the Validation block and the mechanical gates in Acceptance Gates |
 | `/resonate` (this repository only; not in examples/) | Synchronize multilingual document versions |
 | `/commit` | Record verified changes to repository |
 | `/docs` | Audit and fix documentation quality |
@@ -709,7 +712,7 @@ Enables automated verification and session continuity tracking. However, if tool
 | Name | Purpose | Persistence |
 |------|---------|-------------|
 | design.md | Design philosophy, concept definitions | Temporary |
-| Direction (in design.md) | Outlook on the path to implementation | Most temporary: deleted when every stage is done |
+| Direction (in design.md) | Outlook on the path to implementation | Most temporary: deleted, with its `Approved plan` lines, when every stage is done |
 | Acceptance Gates (in design.md) | Definition of done | Deleted once every gate is marked passed (the work is accepted); lasting checks move to Validation first |
 | docs/adr/ | Design decision records | Permanent |
 | src/ | Manifested code | Permanent |
@@ -751,7 +754,7 @@ Integration patterns:
 - Thoughtworks (2025). [Spec-Driven Development: Unpacking one of 2025's key new AI-assisted engineering practices](https://www.thoughtworks.com/en-us/insights/blog/agile-engineering-practices/spec-driven-development-unpacking-2025-new-engineering-practices).
 - Fowler, M. et al. (2025). [Understanding Spec-Driven-Development: Kiro, spec-kit, and Tessl](https://martinfowler.com/articles/exploring-gen-ai/sdd-3-tools.html). *martinfowler.com*.
 - Marmelab (2025). [Spec-Driven Development: The Waterfall Strikes Back](https://marmelab.com/blog/2025/11/12/spec-driven-development-waterfall-strikes-back.html).
-- AWS (2025). [AI-Driven Development Life Cycle: Reimagining Software Engineering](https://aws.amazon.com/blogs/devops/ai-driven-development-life-cycle/). *AWS DevOps Blog*.
+- AWS, Raja SP et al. (2025). [AI-Driven Development Life Cycle: Reimagining Software Engineering](https://aws.amazon.com/blogs/devops/ai-driven-development-life-cycle/). *AWS DevOps Blog*.
 - GitHub (2025). [Spec Kit](https://github.com/github/spec-kit). *GitHub*.
 - Anthropic (2025a). [Effective harnesses for long-running agents](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents). *Anthropic Engineering*.
 - Lopopolo, R. (2026). [Harness engineering: leveraging Codex in an agent-first world](https://openai.com/index/harness-engineering/). *OpenAI*.
@@ -775,6 +778,7 @@ Integration patterns:
 
 | Date | Change |
 |------|--------|
+| 2026-10-18 | Follow-up: one format for passed and advance-approval marks (§3.3), `Approved plan` lines under Direction (§3.3, §8, Example 4), what is written down at approval and the project file re-injected after compaction (§2.5), D9 Experience Gap and D7 Validation Failure (§3.3, §3.4), `+++DDL_REPORT` in the STOP rules and Example 4 (§3.5, §4), references aligned |
 | 2026-10-17 | Harness-era revision: harness memory and design.md (§1.1, §1.4), harness engineering and technology choice (§2.5), VALIDATE in the state model (§3.1), harness session state (§3.2), Binding and Direction checks (§3.3, §3.4), G1–G7 IDs (§3.4), STOP semantics and parallel workers (§3.5, §3.6), Example 4, Binding Decisions in §5, §6, §8, template sections (§7), three references; follow-up: passed marks and retired Acceptance Gates (§3.3, §3.4, Example 4, §8), no worker started or continued during a STOP and no approval from notifications or other agents (§3.5), worker labels, self-contained prompts, and the read-only and no-nesting instructions in each prompt (§1.4, §3.6), terminology alignment (Codex subagents in §3.6 and §7; D1, D2, … in §7), a notebook named by runtime guidance (§5), Phases in the protocol's role order (§7); notebook named design.md throughout; `Unbound:` lines, approved picks, arguments that would change a Binding Decision, and existing premises (§2.5); gates never dropped (§3.3); every REPORT ending with a STOP gate and gates outside the approved report never approved in advance (§3.5); the lead's fallback without a parallel mechanism (§3.6, §7); `/resonate` marked repository-only (§3.1, §7); approval of a report as a Binding Decision source (§5); How to Read rows for §6–§8; the `/draft` intent (§7); context engineering (§1.4, §2.5, §3.5, §3.6) and its references |
 | 2026-04-25 | VALIDATE support command (§3.1, §7); README-as-design Alternative (§5) |
 | 2026-02-14 | Expand §2.5 to three-way comparison (SDD / AI-DLC / DDL) |

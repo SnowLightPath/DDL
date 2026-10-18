@@ -33,7 +33,7 @@ DDLは複数の認知科学・哲学の理論と接点があります。後付�
 
 Clark & Chalmers (1998) の「Extended Mind」は、認知が脳内で完結せず外部ツールと一体化するという主張です。
 
-有名な **Inga/Otto 思考実験** があります。Inga は美術館の住所を記憶で覚えており、アルツハイマー病の Otto はノートに記録しています。Clark らは Otto のノートが Inga の記憶と**機能的に等価**だと論じました。
+有名な **Inga/Otto 思考実験** があります。Inga は美術館の住所を記憶で覚えており、アルツハイマー病の Otto はノートに記録しています。Clark らは Otto のノートが Inga の記憶と**機能的に等価**だと論じました（Clark & Chalmers, 1998; Clark, 2008）。
 
 DDL における design.md は、この「Otto のノート」に相当します。
 
@@ -58,7 +58,7 @@ DDL:  Human Brain <-> design.md <-> LLM
 
 ### 1.2 SECI モデル
 
-野中郁次郎の SECI モデル（1995）は、暗黙知と形式知の変換サイクルを記述します。
+野中郁次郎の SECI モデル（Nonaka & Takeuchi, 1995; Nonaka, Toyama, & Konno, 2000）は、暗黙知と形式知の変換サイクルを記述します。
 
 ```
 +---------------+---------------+
@@ -156,7 +156,7 @@ TDD と DDL は直交しており、併用可能です。Draft → テスト →
 
 ### 2.4 Design by Contract (DbC)
 
-Meyer が Eiffel（1986）で形式化。契約（不変条件）を明示します。
+Meyer が Eiffel で形式化（Meyer, 1992）。契約（不変条件）を明示します。
 
 | 観点 | DbC | DDL |
 |------|-----|-----|
@@ -177,7 +177,7 @@ Meyer が Eiffel（1986）で形式化。契約（不変条件）を明示しま
 
 #### SDD の概要
 
-自然言語で仕様を書き、AI にコードを生成させる。単一の方法論ではなく、複数のツール（GitHub Spec Kit, Kiro, Tessl）が大きく異なります（Thoughtworks, 2025）。仕様が正（source of truth）であり、コードはそこから導出されます。
+自然言語で仕様を書き、AI にコードを生成させる。単一の方法論ではなく、複数のツール（GitHub Spec Kit, Kiro, Tessl）が大きく異なります（Thoughtworks, 2025; Fowler et al., 2025）。仕様が正（source of truth）であり、コードはそこから導出されます。
 
 #### AI-DLC の概要
 
@@ -197,13 +197,13 @@ DDL は、人間の側から行うコンテキストエンジニアリングで�
 
 | 層 | 中身 | 読み込み | 持ち主 |
 |---|---|---|---|
-| 指示ファイル（`CLAUDE.md`、`AGENTS.md`） | ここでの働き方：protocol の探索順、全体の制約、G1〜G7 | セッション開始時。Claude Code は要約のあとに入れ直す | 人間 |
-| design.md | 人間が合意したこと：Experience、Binding Decisions、Direction、Acceptance Gates、原則、スコープ、検証 | セッション開始時 | ループを通じた人間と LLM |
-| protocol とコマンド | コマンドの動き方 | コマンドを呼んだとき（Phase 0）。Codex のスキル一式は protocol の節を `AGENTS.md` に持ち、セッション開始時から文脈に載せてよい。コマンドは protocol を参照し、複製しない | 方法論 |
-| ワーカーへの指示 | 一つのスコープのパス、そのスコープが担う Experience の項目、原則、Binding Decisions、Direction の段階、スコープの検証コマンド、その phase で人間が承認した行（逐語）、`/realize` では承認された計画 | リードが並列に分けるとき。ワーカーは指示が名指しするファイルと design.md の節だけを読む | design.md から作るリード |
+| 指示ファイル（`CLAUDE.md`、`AGENTS.md`） | ここでの働き方：プロトコルの探索順、全体の制約、G1〜G7 | セッション開始時。Claude Code はプロジェクトのファイルを要約のあとに入れ直す | 人間 |
+| design.md | 人間が合意したこと：Experience、Binding Decisions、Direction、Acceptance Gates、原則、スコープ、検証 | セッション開始時。要約のあとはコマンドが読み直す（Phase 0） | ループを通じた人間と LLM |
+| プロトコルとコマンド | コマンドの動き方 | コマンドを呼んだとき（Phase 0）。要約のあとに文脈から消えていれば改めて読む。Codex のスキル一式はプロトコルの節を `AGENTS.md` に持つことがあり、その場合はセッション開始時から文脈に載る。コマンドはプロトコルを参照し、複製しない | 方法論 |
+| ワーカーへの指示 | 一つのスコープのパス、そのスコープが担う Experience の項目、原則、Binding Decisions、Direction の段階、スコープの検証コマンド、そのフェーズで人間が承認した行（逐語）、`/realize` では承認された計画 | リードが並列に分けるとき。ワーカーは指示が名指しするファイルと design.md の節だけを読む | design.md から作るリード |
 | 自動メモリ、会話の要約、進捗ファイル | エージェントの作業状態 | ハーネスが行う | エージェント。決定の出どころにはならない |
 
-ここから三つの帰結が出ます。第一に予算です。ループが片づける節（終わった Direction、受け入れ済みの Acceptance Gates）は、以後のどのセッションも払わずに済む文脈なので、「DDL ドキュメントは一時的である」は文脈の規則でもあります。第二に、会話は残りません。会話の要約はユーザーの発言ではなく何も承認しないので、STOP が問うた報告が文脈に逐語で残っていなければ、コマンドは design.md と git とその報告が述べたファイルからそれを組み立て直して改めて問います。要約のあとに与えられた承認は、その要約のあとに出した報告にだけ効きます。再起動が中断した STOP は再開せず、コマンドは止まった phase からやり直し、ゲートが passed と記された段階は飛ばします。人間が承認したものはその場で書き留めます（下書きは design.md へ、通ったゲートは印へ、委任された選択は表へ）。第三に、記憶は合意ではありません。自動メモリにしかない決定は、design.md が記録するまで提案にとどまります。
+ここから三つの帰結が出ます。第一に予算です。ループが片づける節（終わった Direction、受け入れ済みの Acceptance Gates）は、以後のどのセッションも払わずに済む文脈なので、「DDL ドキュメントは一時的である」は文脈の規則でもあります。第二に、会話は残りません。会話の要約はユーザーの発言ではなく何も承認しないので、STOP が問うた報告が文脈に逐語で残っていなければ、コマンドは design.md と git とその報告が述べたファイルからそれを組み立て直して改めて問います。要約のあとに与えられた承認は、その要約のあとに出した報告にだけ効きます。再起動が中断した STOP は再開せず、コマンドは止まったフェーズからやり直し、ゲートが passed と記された段階は飛ばします。人間が承認したものはその場で書き留めます（下書きは design.md へ、通ったゲートは印へ、委任された選択は表へ、事前承認はそのゲートへ、承認された計画は Direction へ）。第三に、記憶は合意ではありません。自動メモリにしかない決定は、design.md が記録するまで提案にとどまります。
 
 #### 構造的比較
 
@@ -287,7 +287,7 @@ DDL は **コアループ** と **サポートコマンド** の2層で動作し
 
 | サポートコマンド | 目的 |
 |-----------------|------|
-| VALIDATE | design.md で宣言された scope ごとの機械的検証 |
+| VALIDATE | design.md で宣言されたスコープごとの機械的検証 |
 | RESONATE | 多言語ドキュメントの同期（このリポジトリ専用、examples/ には含まない） |
 | COMMIT | 検証済み変更のリポジトリ記録 |
 | DOCS | ドキュメント品質の監査・修正 |
@@ -323,12 +323,13 @@ Reflect を支援する検証の視点：
 | NEW_PATTERN | 未文書化のパターンを発見 | 原則として追加 |
 | OUTDATED | 実装のない原則 | 削除するか、実装 |
 | BINDING_DRIFT | コードが Binding Decision から外れた | 人間が選ぶ: コードを直すか、決定を変える |
-| SPENT_DIRECTION | Direction の段階に passed の記録がついた | 実績で置き換え、全段階が終われば節を消す |
+| SPENT_DIRECTION | Direction の段階に passed の記録がついた | 実績で置き換えて `Approved plan` 行を消し、全段階が終われば節を消す |
 | SPENT_ACCEPTANCE | Acceptance Gates のすべてのゲートに passed の記録がつき、作業が受け入れられた | 残す検証を Validation に移し、節を消す |
+| EXPERIENCE_GAP | Experience に書かれていない状態をコードが扱っている、または Experience の項目をコードが実現していない | その状態を Experience に加えるか、コードにその項目を実現させる |
 
 これらのカテゴリは、より広範な Detection Targets システム（§3.4）の一部です。
 
-**passed の記録。** `/realize` は通ったゲートごとに `passed <date>` を書き足し、書く場所は Direction では段階の Gate 列のセル（例: `human approval, passed 2026-10-20`）、Acceptance Gates ではゲートの後ろです。人間の承認点が事前承認によって止まらなかったときは、`(approved in advance)` も添えます。作業が受け入れられるのは Acceptance Gates のすべてのゲートに passed の記録がついたときです。`/reflect` はこの記録だけを読み、会話の記憶から通ったと推し量ることはしません。
+**passed の記録。** `/realize` は通ったゲートごとに `passed <date>` を書き足し、書く場所は Direction では段階の Gate 列のセル（例: `human approval, passed 2026-10-20`）、Acceptance Gates ではゲートの後ろです。事前承認は人間が与えた時点で同じ場所に `approved in advance (<date>)` として書き、段階か作業が終わると `passed <date>` が続きます。承認された `/realize` の計画も同じ理由で Direction の下に `Approved plan (<date>)` として書き、あとのセッションや要約されたセッションはそこからワーカーへの指示を組み立て直します。作業が受け入れられるのは Acceptance Gates のすべてのゲートに passed の記録がついたときです。`/reflect` はこの記録だけを読み、会話の記憶から通ったと推し量ることはしません。
 
 ゲートを落とすことはありません。統合した段階はゲートを統合後の段階の終わりに残し、飛ばした段階のゲートは次の段階の終わりへ、それが最後の段階なら作業の終わりへ移します。順序を入れ替えた段階はゲートをそのまま保ちます。
 
@@ -348,7 +349,7 @@ Detection Targets は、コマンドの各フェーズの中で並列に走る�
 | G6 | Silent Failure | エラーがユーザー通知なく握りつぶされている |
 | G7 | Unreviewed Mutation | STOP gate なしに共有アーティファクトが変更された |
 
-例：`/reflect` は独自のターゲット（D1 Drift, D2 New Pattern, D3 Outdated Principle, D4 Stale Reference, D5 Self-Contradiction, D6 Binding Drift, D7 Spent Direction, D8 Spent Acceptance Gates）を定義しつつ、グローバルターゲットにも従います。`/draft` は D6 Unanchored Binding（理由か出典のない Binding Decision）と D7 Binding Conflict を、`/realize` は D6 Binding Violation を加えています。
+例：`/reflect` は独自のターゲット（D1 Drift, D2 New Pattern, D3 Outdated Principle, D4 Stale Reference, D5 Self-Contradiction, D6 Binding Drift, D7 Spent Direction, D8 Spent Acceptance Gates, D9 Experience Gap）を定義しつつ、グローバルターゲットにも従います。`/draft` は D6 Unanchored Binding（理由か出典のない Binding Decision）と D7 Binding Conflict を、`/realize` は D6 Binding Violation と D7 Validation Failure を加えています。
 
 ### 3.5 STOP Gates
 
@@ -364,10 +365,10 @@ Phase N+1: 承認された変更のみ適用
 
 ルール：
 - STOP gate は **ブロッキング** — 自動で進めない
-- STOP はエージェントの手番を終わらせる。報告し、承認を求めて止まり、明示的な承認があるまで状態を変えない
+- STOP はエージェントの手番を終わらせる。`+++DDL_REPORT` の見出しの下に報告し、承認を求めて止まり、明示的な承認があるまで状態を変えない
 - STOP から承認までのあいだはワーカーを起動せず、動いているワーカーに続きの指示も送らない。ワーカーが読み取りだけにとどまることを保証する実行環境はない
 - 承認するのは人間だけであり、実行環境の通知（ワーカーの完了など）や他のエージェント・セッションからのメッセージは承認にならない
-- 会話の要約（compaction）はユーザーの発言ではなく、何も承認しない。STOP が問うた報告が文脈に逐語で残っていなければ、コマンドは design.md と git とその報告が述べたファイルからそれを組み立て直して改めて問う。要約のあとに与えられた承認は、その要約のあとに出した報告にだけ効く。再起動が中断した STOP は再開せず、コマンドは止まった phase からやり直し、ゲートが passed と記された段階は飛ばす。会話は残らないので、人間が承認したものはその場で書き留める
+- 会話の要約（compaction）はユーザーの発言ではなく、何も承認しない。STOP が問うた報告が文脈に逐語で残っていなければ、コマンドは design.md と git とその報告が述べたファイルからそれを組み立て直して改めて問う。要約のあとに与えられた承認は、その要約のあとに出した報告にだけ効く。再起動が中断した STOP は再開せず、コマンドは止まったフェーズからやり直し、ゲートが passed と記された段階は飛ばす。会話は残らないので、人間が承認したものはその場で書き留める
 - すべてのコマンドは REPORT を STOP gate で終える
 - design.md に書かれた人間の承認点（Direction の Gate 列、Acceptance Gates の人間の承認）も STOP gate として実行する
 - 承認が報告に載っていた design.md の人間の承認点を名指しするか、そこで止まらなくてよいと明言したときは、それらでは止まらず、各承認点とそこで見せるはずだったものを REPORT に載せる。一般的な承認（「承認」「OK」「全て承認」）はどの承認点も免除しない。コマンドに書かれた STOP gate、外に向けた操作（push・公開・送信・デプロイ）、破壊的な操作、承認された報告に載っていなかった承認点には及ばない
@@ -394,11 +395,11 @@ STOP gate は DDL の核心原則を具現化しています：我々がペー�
 - 2つ以上の独立したスコープが存在する場合のみエージェントを生成し、条件が成り立てばコマンドは必ずスコープごとに分ける。`/realize` では、Direction の現在の段階のレーンをスコープとして数える
 - ワーカーのラベル: `spawn:` は報告の中で各ワーカーを見分けるラベルのパターン（`{role}-{scope}`、例: `reader-backend`, `scanner-docs`）である。名前によってワーカーにできることが変わる実行環境もあるため、ラベルをワーカーの名前として渡すのは実行環境のアダプタがそう定める場合に限る（名前をつけて起動した Claude Code のワーカーは書き込みのツールを持つ）
 - 各エージェントは割り当てられたスコープのみを読む
-- リードは自分の会話がワーカーに引き継がれることを当てにせず、各ワーカーへの指示をそれだけで足りるように design.md から作る（スコープのパス、スコープが担う Experience の項目、原則、Binding Decisions、担当する Direction の段階、スコープの検証コマンド、その phase で人間が承認した行（逐語）、`/realize` では承認された計画）。この指示がワーカーの文脈のすべてであり、ワーカーは指示ファイルも design.md 全体も読み直さない。STOP の条件に当たったワーカーは止まって報告し、リードが人間の承認を求めて止まる
+- リードは自分の会話がワーカーに引き継がれることを当てにせず、各ワーカーへの指示をそれだけで足りるように design.md から作る（スコープのパス、スコープが担う Experience の項目、原則、Binding Decisions、担当する Direction の段階、スコープの検証コマンド、そのフェーズで人間が承認した行（逐語）、`/realize` では承認された計画）。この指示がワーカーの文脈のすべてであり、ワーカーは指示ファイルも design.md 全体も読み直さない。STOP の条件に当たったワーカーは止まって報告し、リードが人間の承認を求めて止まる
 - 指示にはワーカーが自分のワーカーを起動しないこと（仕事を並列に分けるのはリードだけである）も書き、読み取り専用の作業ならそのことも書く。どちらの実行環境もワーカーに範囲を越えられる道具を与えているため、ワーカーを範囲の中にとどめるのは指示である（Claude Code ではファイルを編集できないワーカーもシェルのコマンドを実行でき、書き込むワーカーはワーカーを起動できる。Codex のサブエージェントは親セッションのサンドボックスを引き継ぎ、自分のエージェントを起動できる）
 - リードが結果を統合し、クロススコープ分析を実行
 - 単一スコープのタスクはエージェント生成なしで実行
-- protocol が並列実行を各実行環境の仕組み（Claude Code のサブエージェント、Codex のサブエージェント）に対応づける。仕組みがなければリードが割り当てを自分で実行し、読み取りだけの作業は並列の読み取りで、その他は一つずつ処理する。コマンドは実行環境のツール名を書かない
+- プロトコルが並列実行を各実行環境の仕組み（Claude Code のサブエージェント、Codex のサブエージェント）に対応づける。仕組みがなければリードが割り当てを自分で実行し、読み取りだけの作業は並列の読み取りで、その他は一つずつ処理する。コマンドは実行環境のツール名を書かない
 
 スコープは design.md で定義され、ハードコードしません。これによりフレームワークはプロジェクト非依存を保ちます。
 
@@ -499,14 +500,14 @@ design.md が頻繁に書き換わります。これは正常です。設計が�
 Human: 社内ナレッジ検索。回答が書きながら出てくるのが肝。Next.jsでやりたい
 LLM:   体験と拘束に分けました。2点確認させてください。App Router に限りますか。
        0件のときと検索に失敗したときは、どう見えるのがよいですか
-Human: App Router で。0件なら近い言い換えを3つ、失敗なら入力を残して再試行
+Human: App Router で。0件なら関連する検索語を3つ、失敗なら入力を残して再試行
 ```
 
 design.md に記録：
 ```markdown
 ## Experience
 質問を送ると1秒以内に回答が出始め、書きながら伸びていく。引用元は回答の下に並ぶ。
-- 0件: 「見つかりませんでした」と、近い言い換えを3つ
+- 0件: 「見つかりませんでした」と、関連する検索語を3つ
 - 失敗: 入力を残したまま「再試行」
 
 ## Binding Decisions
@@ -528,15 +529,17 @@ LLM: Binding Decisions を確認しました（package.json、app/）。S0 は `
      通ったので、Gate 列を「`npm test`, passed 2026-10-20」にしました。
      S1 と S2 を統合し、両方のゲート（`npx playwright test`、続いて人間の承認）を
      統合後の段階の終わりに移しました。
-LLM: 停止します。配信基盤が静的ホスティングのみのため、Binding の理由である
+LLM: +++DDL_REPORT
+     D6 Binding Violation：配信基盤が静的ホスティングのみのため、Binding の理由である
      「書きながら伸びる回答」をサーバーから流せません。案は、Node の実行環境を申請する、
      別の API サーバーから流す、完成後にまとめて表示する、Binding Decision を変える、
      の4つです。選んでください。
+     （手番を終える。人間が答えるまで何も動かない）
 ```
 
 **Reflect:**
 
-人間が Node の実行環境を選んだため、Binding Decisions はコードと一致しています。Direction は全段階に passed の記録がついたので削除し、経緯はバージョン管理に残します。実装中に足した停止ボタンは Experience に追記します。
+人間が Node の実行環境を選んだため、Binding Decisions はコードと一致しています。Direction は全段階に passed の記録がついたので `Approved plan` 行とともに削除し、経緯はバージョン管理に残します。実装中に足した停止ボタンは Experience に追記します。
 
 -----
 
@@ -582,7 +585,7 @@ design.md に書くべき:
 
 design.md は必須ではありません。本質は Human と LLM の間に **共有ノート** が存在することであり、ファイル名はその次です（Otto のノートはどんな形でもよい）。
 
-公開 API そのものが設計となるプロジェクト（OSS ライブラリ、CLI、HTTP API など）では、README に API リファレンスとガイドを合わせて living spec として運用できます。
+公開 API そのものが設計となるプロジェクト（OSS ライブラリ、CLI、HTTP API など）では、README に API リファレンスとガイドを合わせて生きた仕様として運用できます。
 
 | 状況 | 推奨される共有ノート |
 |------|---------------------|
@@ -592,7 +595,7 @@ design.md は必須ではありません。本質は Human と LLM の間に **�
 
 運用ルール：
 - **セッション開始時にロード** され、**変更前に参照** されることが要件であり、ファイル名は問わない
-- 共有ノートにするファイルは実行環境の指示ファイル（`CLAUDE.md` や `AGENTS.md`）で指定する。protocol はこの形を認めており、コマンドは design.md と書かれた所で指定されたファイルを読み書きする。これにより、README の更新はそのまま設計の更新になり、`/reflect` は README とガイドに書き込む
+- 共有ノートにするファイルは実行環境の指示ファイル（`CLAUDE.md` や `AGENTS.md`）で指定する。プロトコルはこの形を認めており、コマンドは design.md と書かれた所で指定されたファイルを読み書きする。これにより、README の更新はそのまま設計の更新になり、`/reflect` は README とガイドに書き込む
 - 設計がユーザー向けの説明から乖離した瞬間に design.md を分離する
 
 これは AgenticFlow パターンです。Python の公開ライブラリである AgenticFlow は `CLAUDE.md` と `AGENTS.md` の両方で `README.md` と `docs/en/` を設計ドキュメントとして指定しています。README が契約を文書化し、開発ガイド（AgenticFlow のリポジトリ内の `docs/en/guides/development-workflow.md`）がスコープの表と検証コマンドを載せているため、別途 design.md を持つと冗長になります。Otto のノート4条件（常に利用可能・直接アクセス可能・自動的に信頼・過去に意識的に記録）はこれらのファイル自身で満たされます。
@@ -649,26 +652,26 @@ PR チェックリストに Reflect を組み込む。チーム開発向け。
 | コマンド | 目的 |
 |---------|------|
 | `/draft` | 体験を、それが依存する決定と見通しとともに先に書く |
-| `/realize` | 設計原則に基づいてコードを書く |
+| `/realize` | 設計原則と Binding Decisions に基づいてコードを書く |
 | `/reflect` | 実装結果をドキュメントに反映する |
 
 **サポートコマンド** — 任意のタイミングで実行可能：
 
 | コマンド | 目的 |
 |---------|------|
-| `/validate` | scope ごとの機械的検証（lint/test/build） |
+| `/validate` | スコープごとの機械的検証：Validation ブロックと Acceptance Gates の機械的ゲートを走らせる |
 | `/resonate`（このリポジトリ専用、examples/ には含まない） | 多言語ドキュメントの同期 |
 | `/commit` | 検証済み変更のリポジトリ記録 |
 | `/docs` | ドキュメント品質の監査・修正 |
 | `/refactoring` | コード品質の監査・修正 |
 
 各コマンドは共通の構造に従います：
-1. **Phases** — 順序付きステップ（INIT → SURVEY/READ → WORK → REPORT (+++STOP) → EXECUTE → VERIFY）
-2. **Detection Targets** — 各フェーズの中で並列に走る自動チェック（コマンドごとに D1、D2、…）
-3. **+++SWARM** — 2つ以上のスコープが存在する場合に、実行環境の仕組み（Claude Code のサブエージェント、Codex のサブエージェント）でスコープごとに並列実行する。仕組みがなければリードが割り当てを自分で実行し、読み取りだけの作業は並列の読み取りで、その他は一つずつ処理する
-4. **STOP gates** — 共有アーティファクト変更前の必須人間承認。エージェントは手番を終えて待つ
-5. **Constraints** — 決して違反してはならない不変条件
-6. **Runtime adapters** — protocol の一つの表がディレクティブを各ハーネスに対応づけるため、コマンドは実行環境のツール名を書かない
+1. **Phases**：順序付きステップ（INIT → SURVEY/READ → WORK → REPORT (+++STOP) → EXECUTE → VERIFY）
+2. **Detection Targets**：各フェーズの中で並列に走る自動チェック（コマンドごとに D1、D2、…）
+3. **+++SWARM**：2つ以上のスコープが存在する場合に、実行環境の仕組み（Claude Code のサブエージェント、Codex のサブエージェント）でスコープごとに並列実行する。仕組みがなければリードが割り当てを自分で実行し、読み取りだけの作業は並列の読み取りで、その他は一つずつ処理する
+4. **STOP gates**：共有アーティファクト変更前の必須人間承認。エージェントは手番を終えて待つ
+5. **Constraints**：決して違反してはならない不変条件
+6. **Runtime adapters**：プロトコルの一つの表がディレクティブを各ハーネスに対応づけるため、コマンドは実行環境のツール名を書かない
 
 Claude Code: → [examples/claude-commands/](../../examples/claude-commands/)
 OpenAI Codex: → [examples/codex-skills/](../../examples/codex-skills/)
@@ -707,7 +710,7 @@ session:
 | Name | Purpose | 永続性 |
 |------|---------|--------|
 | design.md | 設計思想、概念定義 | 一時的 |
-| Direction（design.md 内） | 実装までの見通し | 最も一時的: 全段階が終われば削除 |
+| Direction（design.md 内） | 実装までの見通し | 最も一時的: 全段階が終われば `Approved plan` 行とともに削除 |
 | Acceptance Gates（design.md 内） | 完了の定義 | すべてのゲートに passed の記録がつけば作業は受け入れ済みとなり、残す検証を Validation に移してから削除する |
 | docs/adr/ | 設計決定の記録 | 永続的 |
 | src/ | 具現化されたコード | 永続的 |
@@ -749,7 +752,7 @@ DDL ドキュメントが長期間残っているのは、設計がまだ安定�
 - Thoughtworks (2025). [Spec-Driven Development: Unpacking one of 2025's key new AI-assisted engineering practices](https://www.thoughtworks.com/en-us/insights/blog/agile-engineering-practices/spec-driven-development-unpacking-2025-new-engineering-practices).
 - Fowler, M. et al. (2025). [Understanding Spec-Driven-Development: Kiro, spec-kit, and Tessl](https://martinfowler.com/articles/exploring-gen-ai/sdd-3-tools.html). *martinfowler.com*.
 - Marmelab (2025). [Spec-Driven Development: The Waterfall Strikes Back](https://marmelab.com/blog/2025/11/12/spec-driven-development-waterfall-strikes-back.html).
-- AWS (2025). [AI-Driven Development Life Cycle: Reimagining Software Engineering](https://aws.amazon.com/blogs/devops/ai-driven-development-life-cycle/). *AWS DevOps Blog*.
+- AWS, Raja SP et al. (2025). [AI-Driven Development Life Cycle: Reimagining Software Engineering](https://aws.amazon.com/blogs/devops/ai-driven-development-life-cycle/). *AWS DevOps Blog*.
 - GitHub (2025). [Spec Kit](https://github.com/github/spec-kit). *GitHub*.
 - Anthropic (2025a). [Effective harnesses for long-running agents](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents). *Anthropic Engineering*.
 - Lopopolo, R. (2026). [Harness engineering: leveraging Codex in an agent-first world](https://openai.com/index/harness-engineering/). *OpenAI*.
@@ -773,6 +776,7 @@ DDL ドキュメントが長期間残っているのは、設計がまだ安定�
 
 | Date | Change |
 |------|--------|
+| 2026-10-18 | 追補: passed と事前承認の印の形式を統一（§3.3）、Direction の下の `Approved plan` 行（§3.3, §8, Example 4）、承認時に書き留めるものと要約のあとに入れ直されるプロジェクトのファイル（§2.5）、D9 Experience Gap と D7 Validation Failure（§3.3, §3.4）、STOP の規則と Example 4 の `+++DDL_REPORT`（§3.5, §4）、参考文献の整合 |
 | 2026-10-17 | ハーネス時代の改訂: ハーネスの記憶と design.md（§1.1, §1.4）、ハーネスエンジニアリングと技術の選択（§2.5）、状態モデルの VALIDATE（§3.1）、ハーネスのセッション状態（§3.2）、Binding と Direction の照合（§3.3, §3.4）、G1〜G7 の ID（§3.4）、STOP の意味論と並列ワーカー（§3.5, §3.6）、Example 4、§5・§6・§8 の Binding Decisions、テンプレートの節（§7）、参考文献3件。追補: passed の記録と Acceptance Gates の削除（§3.3, §3.4, Example 4, §8）、STOP 中のワーカーの起動と継続の禁止と通知・他のエージェントによる承認の否定（§3.5）、ワーカーのラベル・それだけで足りる指示・指示に書く読み取り専用と入れ子の起動の禁止（§1.4, §3.6）、用語の統一（§3.6 と §7 の Codex のサブエージェント、§7 の「D1、D2、…」）、実行環境の指示ファイルが指定する共有ノート（§5）、protocol の役割の順に並べた Phases（§7）。共有ノートの名前を design.md に統一。`Unbound:` 行、承認された選択、Binding Decision を変える引数、既存の前提（§2.5）。ゲートを落とさない規則（§3.3）。REPORT を STOP gate で終えることと、承認された報告になかった承認点を事前承認の対象外とすること（§3.5）。並列の仕組みがないときのリードの実行（§3.6, §7）。`/resonate` をこのリポジトリ専用と明記（§3.1, §7）。報告の承認を Binding Decision の出典とすること（§5）。読み方の表に §6〜§8 を追加。`/draft` の目的（§7）、コンテキストエンジニアリング（§1.4, §2.5, §3.5, §3.6）とその参考文献 |
 | 2026-04-25 | VALIDATE サポートコマンド（§3.1, §7）、README を共有ノートとして使う代替（§5） |
 | 2026-02-14 | §2.5 を三者比較（SDD / AI-DLC / DDL）に拡張 |

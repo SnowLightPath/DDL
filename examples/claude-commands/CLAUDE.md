@@ -39,7 +39,7 @@ Every command defines its own D-targets (D1, D2, …). Cross-cutting targets bel
 ### On session start
 
 1. This file is already in context: Claude Code loads `CLAUDE.md` or `.claude/CLAUDE.md` at session start and re-injects it after compaction. Do not read it again
-2. Read `design.md` if it exists — extract scopes, principles, validation commands, and the Experience, Binding Decisions, Direction, and Acceptance Gates when present. It stays in context; commands re-read it only after a compaction or in a fresh worker
+2. Read `design.md` if it exists — extract scopes, principles, validation commands, and the Experience, Binding Decisions, Direction, and Acceptance Gates when present. It stays in context; commands re-read it only after a compaction, and a worker reads only the sections its prompt names
 3. The DDL protocol loads when a command runs (Phase 0, lookup order in protocol §2.5), not at session start
 4. Automatic memory is a recall layer: a decision found only there is a proposal until design.md records it
 
@@ -59,5 +59,5 @@ Every command defines its own D-targets (D1, D2, …). Cross-cutting targets bel
 
 +++NEVER: Hardcode paths or commands — scopes and validation come from design.md
 +++NEVER: Auto-proceed past a +++STOP
-+++NEVER: Spawn agents when a SWARM has fewer than 2 units (scopes, Direction lanes, files) — for 2+, follow +++SWARM semantics (mandatory when condition is true; only the lead fans out; runtime mapping in protocol §2.5)
++++NEVER: Spawn agents when a SWARM has fewer than 2 units (scopes, Direction lanes, files, document pairs, approved changes; protocol §2.3) — for 2+, follow +++SWARM semantics (mandatory when condition is true; only the lead fans out; runtime mapping in protocol §2.5)
 +++NEVER: Add AI attribution to commits or generated code

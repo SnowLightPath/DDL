@@ -22,7 +22,7 @@ Write the ideal experience before implementation exists, together with the decis
 +++SWARM: 2+ scopes in design.md
 
 ```
-  team: draft-survey
+  team: draft-understand
   spawn: survey-{scope}
   type: Explore
   max: 5
