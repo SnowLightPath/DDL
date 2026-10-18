@@ -165,6 +165,6 @@ Ultimately, code becomes the source of truth. Delete DDL documents when no longe
 
 | Date       | Change                    |
 |------------|---------------------------|
-| 2026-10-18 | Instructions and mechanisms (In the Harness Era) |
+| 2026-10-18 | Instructions and mechanisms (In the Harness Era); Tool-Assisted Option links to `claude-code/` and `codex/` |
 | 2026-10-17 | Harness-era revision: harness-era background; Binding Decisions, Direction, and Acceptance Gates in Draft, with Acceptance Gates retired once the work is accepted; the human's role at gates; three anti-patterns; removed the Scribe Plugin option; approval of a report as a Binding Decision source, and technology already in the code as an existing premise; context-engineering background and one anti-pattern |
 | 2026-01-04 | Initial version |

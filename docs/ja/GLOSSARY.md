@@ -1,13 +1,13 @@
 # 用語集（日本語版の訳語）
 
-英語版（`docs/en/`）を正本として日本語版（`docs/ja/`）を訳すときの対応表である。訳し直すときはこの表に従い、表に無い語を新しく訳したら表に足す。機械検査（design.md の V50）は「使わない訳」の列が日本語版に残っていないことと、主要な訳語が日本語版に現れることを確かめる。
+この用語集は英語版（`docs/en/`）を正本として日本語版（`docs/ja/`）を訳すときの対応表である。訳し直すときはこの表に従い、表に無い語を新しく訳したら表に足す。機械検査（design.md の V50）では、「使わない訳」の列の語が日本語版に残っていないか、主要な訳語が日本語版に現れているかを確かめる。
 
 ## 方針
 
 - 節の名前とディレクティブは英語のまま書く。Experience、Binding Decisions、Direction、Acceptance Gates、Validation、Scopes、Principles、Intent、Detection Targets、`+++STOP`、`+++SWARM`、`+++NEVER`、`+++DDL_REPORT`、D1 や G7 の名前、`passed` や `Unbound:` のような印は訳さない。
-- 固有名詞と文献は原文のまま書く。人名（Clark & Chalmers、Nonaka & Takeuchi など）、組織と製品（Anthropic、OpenAI、Claude Code、Codex、Spec Kit、Kiro、Tessl、Next.js）、方法論の略語（SECI、DocDD、ADR、TDD、DbC、SDD、AI-DLC、MCP）、ファイル名と識別子（design.md、CLAUDE.md、AGENTS.md、`.claude/settings.json`、`explorer`、`worker`）はそのまま。参考文献の節は英語のまま置く。
+- 固有名詞と文献は原文のまま書く。人名（Clark & Chalmers、Nonaka & Takeuchi など）、組織と製品（Anthropic、OpenAI、Claude Code、Codex、Spec Kit、Kiro、Tessl、Next.js）、方法論の略語（SECI、DocDD、ADR、TDD、DbC、SDD、AI-DLC、MCP）、ファイル名と識別子（design.md、CLAUDE.md、AGENTS.md、`.claude/settings.json`、`explorer`、`worker`）はそのまま。参考文献の節は英語のままにする。
 - 見出しは日本語に訳す。ただし節の名前（Experience など）と固有名詞を含む見出しはそのまま残す。訳した見出しの例: In the Harness Era は「ハーネス時代」、Background: The Session Discontinuity Problem は「背景: セッションの断絶という問題」、Core Principle は「中核の原則」、Roles: Human and LLM は「役割: 人間と LLM」、Stay Flexible は「柔軟に」、Anti-Patterns は「アンチパターン」、Summary は「まとめ」、Option 1: Pure Discipline は「選択肢1: 規律だけ」、STOP Gates は「STOP ゲート」。見出しの数と階層は英語版と一致させる（V35）。
-- em-dash（—）は使わない。読点、括弧、コロンで書く。コード、表、引用、見出しの構造は英語版と同じに保つ。
+- em-dash（—）は使わない。読点、括弧、コロンで書く。コード、表、引用、見出しの構造は英語版に合わせる。
 - 同じ英語の語には同じ日本語を当てる。文脈で訳し分ける語は表の備考に書く。
 - 本文は「です・ます」で書く（現行の日本語版と同じ）。
 - 太字ラベルのあとのコロンは半角の「: 」で書く（例: **背景: セッションの断絶という問題**）。
@@ -35,6 +35,7 @@
 | instruction（規則としての指示） | 指示 |  | prompt とは区別する |
 | prompt（ワーカーに渡す文） | プロンプト |  | 「ワーカーのプロンプト」。prompt を「指示」と訳さない |
 | mechanism | 仕組み | メカニズム |  |
+| mechanical | 機械的な |  |  |
 | enforce / enforcement | 執行する / 執行 | 強制力 | 指示が規則を述べ、仕組みが執行する |
 | gate | ゲート | 門 | STOP gate は「STOP ゲート」、human gate は「人間のゲート」、gate hook は「ゲートの hook」。Acceptance Gates は英語のまま。検査では「専門」のような複合語の「門」を除く |
 | human gate | 人間のゲート | 承認点 | 人間が見て承認する地点 |
@@ -53,7 +54,7 @@
 | spawn（ワーカーを） | 起動する | ワーカーを生成、エージェントを生成 | `spawn:` フィールドは英字のまま |
 | spawn depth / nesting | 起動の深さ / 入れ子 |  |  |
 | fan out | 並列に割り振る |  | 「スコープごとに割り振る」も可。4通りあった訳を一つに |
-| team / team primitive | チーム / チームの原語 |  |  |
+| team / team primitive | チーム / チームの基本機能 |  | primitive は実行環境が備える基本機能 |
 | role | 役割 | 役目 | 「役」一字でも書かない |
 | turn（エージェントの手番） | 手番 |  | 「end the turn」は「手番を終える」 |
 | halt | 停止する |  |  |
@@ -75,6 +76,8 @@
 | import（指示ファイルへの） | 取り込み / 取り込む |  | Claude Code の `@` 行 |
 | inject / injection | 注入する / 注入 |  | Codex の SessionStart hook |
 | re-inject | 入れ直す |  |  |
+| load（コンテキストに） | 読み込む |  |  |
+| name（指示ファイルがファイルを） | 名指しする |  |  |
 | progressive disclosure | 段階的開示 |  |  |
 | skill | スキル |  | Agent Skills は英字のまま |
 | command | コマンド |  | `/draft` と `$draft` は英字のまま |
@@ -135,7 +138,7 @@
 | high-signal tokens | 信号の濃いトークン |  |  |
 | role fluidity | 役割の流動性 |  |  |
 | co-thinker | 共に考える者 |  |  |
-| persist / persistence | 永続させる / 永続化 |  |  |
+| persist / persistence | 永続させる / 永続化 |  | 表の見出し Persistence は「永続性」 |
 | endorse | 承認する |  |  |
 | units of work | 作業単位 |  |  |
 | sprint / bolt / epic | スプリント / ボルト / エピック |  |  |
@@ -160,9 +163,13 @@
 | Entry Condition / Exit Condition | 開始条件 / 終了条件 |  |  |
 | public surface | 外部に公開する面 |  |  |
 | rules of thumb | 経験則 |  |  |
+| merge / integration | 統合 |  |  |
+| alignment | 整合 |  | terminology alignment は「用語の統一」 |
+| Example N | 例N |  | 見出しも本文も |
+| where / wherever（場所の意味） | ところ | 所では | 「所では」「所だけ」とは書かない |
 
 ## 決定（2026-10-18）
 
-1. gate の訳は「ゲート」に統一する（STOP ゲート、人間のゲート、ゲートの hook）。この repo の design.md が仕組みの名として使う「門」は repo 内部の呼び名として残す。
+1. gate の訳は「ゲート」に統一する（STOP ゲート、人間のゲート、ゲートの hook）。この repo の design.md は仕組みの名として「門」を使っているが、これは repo 内部の呼び名として残す。
 2. モデルに載っている内容としての context は「コンテキスト」、一般の意味だけ「文脈」とする。
 3. 見出しは固有名詞と節の名前を除いて日本語に訳す。

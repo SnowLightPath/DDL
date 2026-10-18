@@ -31,8 +31,11 @@ The line above imports `design.md` into this file, so the notebook is in context
 - `docs/en/design_philosophy_extended.md` - English extended
 - `docs/ja/design_philosophy.md` - Japanese
 - `docs/ja/design_philosophy_extended.md` - Japanese extended
+- `docs/ja/GLOSSARY.md` - The glossary the Japanese translation follows (Binding Decisions; V50 checks it)
+- `docs/README.md` - Index of the philosophy documents by language
 - `README.md` - Public overview (shows `assets/main.webp`)
 - `assets/` - The overview image: `main.webp` is what the README shows, and `main.png` is the original it was made from (kept as the source)
+- `LICENSE` - CC BY 4.0 with publishing restriction
 - `claude-code/` - The Claude Code source, in the layout of a project's `.claude/`:
   - `claude-code/skills/<name>/SKILL.md` - The single source of the 9 skills (the 8 commands and the protocol skill `ddl-protocol`)
   - `claude-code/CLAUDE.md`, `claude-code/settings.json`, `claude-code/agents/`, `claude-code/README.md` - The project template, the Claude Code adapter, and its README, hand-maintained
@@ -43,7 +46,7 @@ The line above imports `design.md` into this file, so the notebook is in context
 - `bin/install.sh`, `bin/uninstall.sh`, `bin/doctor.sh` (wrappers around `bin/ddl_setup.py`) - The user-level install: the skills, agent definitions, gate, and rules are symlinked into `$HOME/.claude/` and `$HOME/.codex/`, and the hook wiring is merged into the user settings (`--project DIR` copies the per-project layout instead)
 - `tools/sync_mirrors.py` - The generator (`--check` exits 1 when a generated file differs)
 - `tools/ddl_gate.py`, `tools/test_ddl_gate.py`, `tools/fixtures/` - The gate hook (the source of every `hooks/ddl_gate.py`) and its tests (`python3 tools/test_ddl_gate.py`)
-- `.claude/CLAUDE.md` - This file, the only file under `.claude/` (the adapter and the skills come from the user-level install)
+- `.claude/CLAUDE.md` - This file, the only tracked file under `.claude/` (the adapter and the skills come from the user-level install)
 
 ## Detection Targets
 

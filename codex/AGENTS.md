@@ -26,7 +26,7 @@
 
 - `design.md` - Project design document (scopes, principles, validation; Experience, Binding Decisions, Direction, Acceptance Gates when drafted — protocol §3)
 - `.agents/skills/<name>/SKILL.md` with `agents/openai.yaml` - The DDL skills and the protocol skill `ddl-protocol`, when DDL is copied into the project (`openai.yaml` keeps Codex from starting a skill on its own; a skill runs on `$name`); with the user-level install they live in `$HOME/.codex/skills/` and a project copy, when present, takes precedence (protocol §2.5)
-- `.codex/` - The Codex adapter: `config.toml`, `agents/` (`explorer`, `worker`), `hooks.json` with `hooks/ddl_gate.py`, `rules/ddl.rules` (protocol §2.5), when copied into the project; with the user-level install the same files live under `$HOME/.codex/`
+- `.codex/` - The Codex adapter: `config.toml`, `agents/` (`explorer`, `worker`), `hooks.json` with `hooks/ddl_gate.py`, `rules/ddl.rules` (protocol §2.5), when copied into the project; with the user-level install `agents/`, `hooks/ddl_gate.py`, and `rules/ddl.rules` are symlinked under `$HOME/.codex/`, the hooks are merged into `$HOME/.codex/hooks.json`, and the `config.toml` cap is set by hand
 
 ## Detection Targets
 
@@ -55,7 +55,6 @@ Every skill defines its own D-targets (D1, D2, …). Cross-cutting targets below
 1. Identify which scopes (from `design.md`) are affected
 2. Run the skill's Phase sequence
 3. Scan for Detection Targets at each phase boundary
-4. Never skip a STOP gate
 
 ### On completion
 
@@ -67,7 +66,7 @@ Every skill defines its own D-targets (D1, D2, …). Cross-cutting targets below
 
 +++NEVER: Hardcode paths or commands — scopes and validation come from design.md
 +++NEVER: Auto-proceed past a +++STOP
++++NEVER: Spawn agents when a SWARM has fewer than 2 units (scopes, Direction lanes, files, document pairs, approved changes; protocol §2.3) — for 2+, follow +++SWARM semantics (mandatory when condition is true; only the lead fans out; runtime mapping in protocol §2.5)
 +++NEVER: Add AI attribution to commits or generated code
 +++NEVER: Skip emitting +++DDL_PHASE before mutation — Codex's execution-forward bias must be visibly checkpointed
 +++NEVER: Output a +++STOP gate without +++DDL_REPORT followed by the +++Report: table, or a brief finding when the phase defines none
-+++NEVER: Spawn agents when a SWARM has fewer than 2 units (scopes, Direction lanes, files, document pairs, approved changes; protocol §2.3) — for 2+, follow +++SWARM semantics (mandatory when condition is true; only the lead fans out; runtime mapping in protocol §2.5)

@@ -200,7 +200,7 @@ DDL is context engineering done from the human's side. The question "what should
 |-------|---------|--------|-------|
 | Instruction file (`CLAUDE.md`, `AGENTS.md`) | How to work here: protocol lookup, global constraints, G1–G7 | Session start; Claude Code re-injects the project file after compaction | Human |
 | design.md | What the human agreed to: Experience, Binding Decisions, Direction, Acceptance Gates, principles, scopes, validation | Session start; the adapter re-injects it after compaction (the import with the project instruction file in Claude Code, the SessionStart injection in Codex), and a command re-reads it in Phase 0 only when it is not in context | Human and LLM, through the loop |
-| Protocol and command | How a command runs (a command is a skill: `.claude/skills/<name>/SKILL.md` in Claude Code, `.agents/skills/<name>/SKILL.md` in Codex) | When the command is invoked (Phase 0), and again after compaction when it is no longer in context; in Codex the protocol is the skill `ddl-protocol`, the same text as in Claude Code. Commands reference the protocol and never copy it | Methodology |
+| Protocol and command | How a command runs (a command is a skill: `.claude/skills/<name>/SKILL.md` in Claude Code, `.agents/skills/<name>/SKILL.md` in Codex) | When the command is invoked (Phase 0), and again after compaction when it is no longer in context; the protocol is the skill `ddl-protocol` in both runtimes (one text; the Codex copy is generated), read from the project's copy or else the user-level one (`$HOME/.claude/skills/`, `$HOME/.codex/skills/`). Commands reference the protocol and never copy it | Methodology |
 | Worker prompt | One scope's paths, the Experience items it serves, the principles, the Binding Decisions, the Direction stage, the scope's validation commands, the rows the human approved for the phase (verbatim), and in `/realize` the approved plan | When the lead fans out; the worker reads only the files and design.md sections the prompt names | Lead, from design.md |
 | Automatic memory, compaction summaries, progress files | The agent's working state | By the harness | Agent; never a source of decisions |
 
@@ -208,7 +208,7 @@ Three consequences follow. First, the budget: every section the loop retires (a 
 
 #### Instructions and Mechanisms
 
-A harness now executes part of the protocol itself. Claude Code and Codex both offer lifecycle hooks that run a script before a tool call or at session start, agent definitions that fix what a worker may do, imports or injections that load a file into every session, and permission rules that stop before an outward action (Anthropic, 2026; OpenAI, 2026). DDL uses them the way it already used subagents: the commands and the protocol state the rule, the protocol's runtime table (§2.5 of the protocol) says how each runtime implements it, and the implementation lives in a small adapter per runtime (`.claude/settings.json`, `.claude/agents/`, `.claude/hooks/`, and the import line in `.claude/CLAUDE.md` for Claude Code; `.codex/` and the short project `AGENTS.md` for Codex). Four directives have such an implementation:
+A harness now executes part of the protocol itself. Claude Code and Codex both offer lifecycle hooks that run a script before a tool call or at session start, agent definitions that fix what a worker may do, imports or injections that load a file into every session, and permission rules that stop before an outward action (Anthropic, 2026; OpenAI, 2026). DDL uses them the way it already used subagents: the commands and the protocol state the rule, the protocol's runtime table (§2.5 of the protocol) says how each runtime implements it, and the implementation lives in a small adapter per runtime (`.claude/settings.json`, `.claude/agents/`, `.claude/hooks/`, and the import line in `.claude/CLAUDE.md` for Claude Code; `.codex/` for Codex; with the user-level install the same files sit under `$HOME/.claude/` and `$HOME/.codex/`). Four directives have such an implementation:
 
 | Directive | Rule | Mechanism |
 |-----------|------|-----------|
@@ -286,9 +286,8 @@ Core Loop:
 
 Support Commands (invokable at any point):
     +--------+  +---------+  +------+  +------------+  +---------+
-    |VALIDATE|  |RESONATE*|  |COMMIT|  |REFACTORING |  |  DOCS   |
+    |VALIDATE|  |RESONATE |  |COMMIT|  |REFACTORING |  |  DOCS   |
     +--------+  +---------+  +------+  +------------+  +---------+
-    * multilingual documentation
 ```
 
 The Core Loop drives design evolution. Support Commands maintain quality around it.
@@ -792,7 +791,7 @@ Integration patterns:
 
 | Date | Change |
 |------|--------|
-| 2026-10-18 | Instructions and mechanisms: the harness enforces the mechanical part of +++STOP, the design.md load, the worker roles, and the outward +++NEVER items through per-runtime adapters (§2.5 Instructions and Mechanisms, §3.5, §3.6); a How to Read row |
+| 2026-10-18 | Instructions and mechanisms: the harness enforces the mechanical part of +++STOP, the design.md load, the worker roles, and the outward +++NEVER items through per-runtime adapters (§2.5 Instructions and Mechanisms, §3.5, §3.6); a How to Read row; source moved to `claude-code/` and `codex/`, DDL installed in the environment: commands as skills and `ddl-protocol` as the protocol in both runtimes (§2.5 context table), `/resonate` an ordinary command again (§3.1, §7), §7 links to `claude-code/` and `codex/`, §2.4 enforcement cell, §3 intro, references added |
 | 2026-10-18 | Follow-up: one format for passed and advance-approval marks (§3.3), `Approved plan` lines under Direction (§3.3, §8, Example 4), what is written down at approval and the project file re-injected after compaction (§2.5), D9 Experience Gap and D7 Validation Failure (§3.3, §3.4), `+++DDL_REPORT` in the STOP rules and Example 4 (§3.5, §4), references aligned |
 | 2026-10-17 | Harness-era revision: harness memory and design.md (§1.1, §1.4), harness engineering and technology choice (§2.5), VALIDATE in the state model (§3.1), harness session state (§3.2), Binding and Direction checks (§3.3, §3.4), G1–G7 IDs (§3.4), STOP semantics and parallel workers (§3.5, §3.6), Example 4, Binding Decisions in §5, §6, §8, template sections (§7), three references; follow-up: passed marks and retired Acceptance Gates (§3.3, §3.4, Example 4, §8), no worker started or continued during a STOP and no approval from notifications or other agents (§3.5), worker labels, self-contained prompts, and the read-only and no-nesting instructions in each prompt (§1.4, §3.6), terminology alignment (Codex subagents in §3.6 and §7; D1, D2, … in §7), a notebook named by runtime guidance (§5), Phases in the protocol's role order (§7); notebook named design.md throughout; `Unbound:` lines, approved picks, arguments that would change a Binding Decision, and existing premises (§2.5); gates never dropped (§3.3); every REPORT ending with a STOP gate and gates outside the approved report never approved in advance (§3.5); the lead's fallback without a parallel mechanism (§3.6, §7); `/resonate` marked repository-only (§3.1, §7); approval of a report as a Binding Decision source (§5); How to Read rows for §6–§8; the `/draft` intent (§7); context engineering (§1.4, §2.5, §3.5, §3.6) and its references |
 | 2026-04-25 | VALIDATE support command (§3.1, §7); README-as-design Alternative (§5) |
