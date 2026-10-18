@@ -8,3 +8,5 @@ Design-Doc Loop (DDL) documentation.
 |----------|------|----------|
 | English | [design_philosophy.md](./en/design_philosophy.md) | [design_philosophy_extended.md](./en/design_philosophy_extended.md) |
 | 日本語 | [design_philosophy.md](./ja/design_philosophy.md) | [design_philosophy_extended.md](./ja/design_philosophy_extended.md) |
+
+日本語の訳語は [GLOSSARY.md](./ja/GLOSSARY.md) に従います。

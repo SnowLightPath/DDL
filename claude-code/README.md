@@ -11,7 +11,7 @@ git clone https://github.com/SnowLightPath/DDL.git
 bash DDL/bin/install.sh --claude
 ```
 
-The script symlinks `~/.claude/skills/<name>` for the nine skills, `~/.claude/agents/explorer.md` and `worker.md`, and `~/.claude/hooks/ddl_gate.py`, and merges the DDL fragment into `~/.claude/settings.json`: the gate hooks, `env` `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=1`, `permissions.ask` for `Bash(git push *)`, and `attribution` off. Existing settings are kept. Without `--claude`, it installs for each runtime whose home directory exists (`~/.claude`, `~/.codex`). `bash DDL/bin/doctor.sh` checks the install; `bash DDL/bin/uninstall.sh` removes the links and the merged fragment. To update, `git pull` in the clone (the links follow) and run `bash DDL/bin/install.sh` again; it is idempotent.
+The script symlinks `~/.claude/skills/<name>` for the nine skills, `~/.claude/agents/explorer.md` and `worker.md`, and `~/.claude/hooks/ddl_gate.py`, and merges the DDL fragment into `~/.claude/settings.json`: the gate hooks, `env` `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=1`, `permissions.ask` for `Bash(git push *)`, and `attribution` off. Existing settings are kept, and the first time `settings.json` is changed a copy is kept next to it as `settings.json.ddl-backup`. Without `--claude`, it installs for each runtime whose home directory exists (`~/.claude`, `~/.codex`); when neither exists, the script stops and asks for `--claude` or `--codex`. `--dry-run` prints what install, doctor, and uninstall would do without writing. `bash DDL/bin/doctor.sh` checks the install: it lists every link and merged entry as OK or not OK, runs the gate's tests, ends with `N OK, M not OK`, and exits 1 when anything is not OK. `bash DDL/bin/uninstall.sh` removes the links and the merged fragment. To update, `git pull` in the clone (the links follow) and run `bash DDL/bin/install.sh` again; it is idempotent.
 
 A project then needs only `design.md` and a short instruction file:
 
@@ -20,10 +20,10 @@ mkdir -p your-project/.claude
 cp DDL/claude-code/CLAUDE.md your-project/.claude/CLAUDE.md
 ```
 
-**In the project.** Copy this directory into the project's `.claude/` (`bash DDL/bin/install.sh --project your-project` does the same copy):
+**In the project.** Copy this directory into the project's `.claude/` (`bash DDL/bin/install.sh --project your-project --claude` makes the same copy, skipping the README and keeping an existing `CLAUDE.md`):
 
 ```bash
-cp -R DDL/claude-code/. your-project/.claude/
+cp -R DDL/claude-code/{CLAUDE.md,settings.json,agents,hooks,skills} your-project/.claude/
 ```
 
 Claude Code runs project hooks after you trust the folder.
@@ -32,7 +32,9 @@ Claude Code runs project hooks after you trust the folder.
 - A command skill runs on `/name`; its frontmatter shows an argument hint and keeps the model from starting it on its own (`disable-model-invocation`). Commands look up the protocol, when it is not already in context, in the project's copy `.claude/skills/ddl-protocol/SKILL.md`, then the user-level copy `$HOME/.claude/skills/ddl-protocol/SKILL.md`.
 - What loads when: Claude Code loads `CLAUDE.md` at session start and re-injects it after compaction; `CLAUDE.md` imports design.md then; the protocol and a command load when the command runs (Phase 0); a worker's prompt is its whole context.
 - The adapter: `settings.json` (the gate hook on PreToolUse, Stop, UserPromptSubmit, and SessionStart; spawn depth 1; an ask rule before `git push`; attribution off), `agents/` (`explorer` for read-only work, `worker` for writers), and `hooks/ddl_gate.py`. `CLAUDE.md` imports design.md with the line `@../design.md`, so the notebook is in context from session start. The gate is a `python3` script (standard library only); if `python3` is missing, the hook fails open and the rules hold as instructions. The adapter enforces the mechanical part of the rules (a STOP holds until you speak, workers keep their roles); the rules are the same without it, as instructions (protocol §2.5).
-- A project can add an overlay in `commands/<name>.md` to give a command project facts (target paths, protected terms, validation commands) without copying the whole command, and a project's own copy of a command (`.claude/skills/<name>/SKILL.md`) takes precedence over the user-level one.
+- A project can add an overlay in `commands/<name>.md` at the project root to give a command project facts (target paths, protected terms, validation commands) without copying the whole command, and a project's own copy of a command (`.claude/skills/<name>/SKILL.md`) takes precedence over the user-level one.
+
+Do not create an empty `design.md`: `/realize`, `/reflect`, and `/validate` refuse to run without one, and an empty file defeats that guard. Run `/draft` instead; it writes `design.md` from the experience you describe.
 
 ## Commands
 
