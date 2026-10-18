@@ -1,4 +1,0 @@
-# DDL: a command skill runs when the user invokes $draft; Codex does not start it on its own
-# (AGENTS.md, Codex Runtime Contract).
-policy:
-  allow_implicit_invocation: false

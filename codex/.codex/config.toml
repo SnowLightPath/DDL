@@ -1,0 +1,10 @@
+# DDL Codex adapter: configuration (Codex loads a project's .codex/ only for a trusted project; with the user-level install, set the same cap in $HOME/.codex/config.toml)
+# Subagents are on by default in current Codex releases (agents.enabled = true).
+# The custom agents in .codex/agents/ map +++SWARM `type:` fields:
+#   Explore         → explorer (read-only work, enforced by its instructions)
+#   general-purpose → worker   (work that may write)
+# Subagents inherit this session's sandbox and approval settings; an agent file cannot change them.
+
+[agents]
+# The cap below matches the `max: 5` of every +++SWARM block.
+max_concurrent_threads_per_session = 5

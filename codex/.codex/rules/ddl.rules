@@ -1,0 +1,9 @@
+# DDL adapter for Codex: command rules (loaded only for a trusted project).
+# A push leaves the machine, so it is confirmed at the moment it runs, on top of the approval
+# given in the $commit report. Sessions whose approval policy never prompts show nothing;
+# the report's approval still applies (protocol §1.5).
+prefix_rule(
+    pattern = ["git", "push"],
+    decision = "prompt",
+    justification = "DDL: a push needs the user's approval at the moment it runs",
+)

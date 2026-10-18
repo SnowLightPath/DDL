@@ -1,0 +1,3 @@
+# DDL: a skill runs when the user invokes $ddl-protocol; Codex does not start it on its own (protocol §2.5).
+policy:
+  allow_implicit_invocation: false

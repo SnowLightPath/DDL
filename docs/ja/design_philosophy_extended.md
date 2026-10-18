@@ -288,7 +288,7 @@ DDL は **コアループ** と **サポートコマンド** の2層で動作し
     +--------+  +---------+  +------+  +------------+  +---------+
     |VALIDATE|  |RESONATE*|  |COMMIT|  |REFACTORING |  |  DOCS   |
     +--------+  +---------+  +------+  +------------+  +---------+
-    * このリポジトリ専用、examples/ には含まない
+    * 多言語ドキュメント
 ```
 
 コアループが設計の進化を駆動します。サポートコマンドはその周囲の品質を維持します。
@@ -302,7 +302,7 @@ DDL は **コアループ** と **サポートコマンド** の2層で動作し
 | サポートコマンド | 目的 |
 |-----------------|------|
 | VALIDATE | design.md で宣言されたスコープごとの機械的検証 |
-| RESONATE | 多言語ドキュメントの同期（このリポジトリ専用、examples/ には含まない） |
+| RESONATE | 多言語ドキュメントの同期 |
 | COMMIT | 検証済み変更のリポジトリ記録 |
 | DOCS | ドキュメント品質の監査・修正 |
 | REFACTORING | コード品質の監査・修正 |
@@ -674,7 +674,7 @@ PR チェックリストに Reflect を組み込む。チーム開発向け。
 | コマンド | 目的 |
 |---------|------|
 | `/validate` | スコープごとの機械的検証：Validation ブロックと Acceptance Gates の機械的ゲートを走らせる |
-| `/resonate`（このリポジトリ専用、examples/ には含まない） | 多言語ドキュメントの同期 |
+| `/resonate` | 多言語ドキュメントの同期 |
 | `/commit` | 検証済み変更のリポジトリ記録 |
 | `/docs` | ドキュメント品質の監査・修正 |
 | `/refactoring` | コード品質の監査・修正 |
@@ -687,8 +687,8 @@ PR チェックリストに Reflect を組み込む。チーム開発向け。
 5. **Constraints**：決して違反してはならない不変条件
 6. **Runtime adapters**：プロトコルの一つの表がディレクティブを各ハーネスに対応づけるため、コマンドは実行環境のツール名を書かない。実行環境ごとの小さなアダプタ（hook、エージェントの定義、design.md の取り込みか注入、push の規則）が規則の機械的な部分を執行する（§2.5 指示と仕組み）
 
-Claude Code: → [examples/claude-commands/](../../examples/claude-commands/)
-OpenAI Codex: → [examples/codex-skills/](../../examples/codex-skills/)
+Claude Code: → [claude-code/](../../claude-code/)
+OpenAI Codex: → [codex/](../../codex/)
 
 ### Option 5: Structured Schema
 
