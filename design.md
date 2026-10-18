@@ -13,6 +13,8 @@ DDLコマンド群（draft, realize, reflect, validate, resonate, commit, docs, 
 
 同日、DDL を環境に入れる改訂を承認した。正本は DDL リポジトリ（公開）の `claude-code/` と `codex/` に一か所だけ置き、design.md を含めて全てを git で追跡する。利用者は `bin/install.sh` で `$HOME/.claude` と `$HOME/.codex` に導入し、プロジェクトには design.md と短い指示ファイルだけを置く。個人環境リポジトリ（Harness、旧 Skills。非公開）は DDL を git submodule で取り込む。`examples/` という写し、dogfood の生成、リポジトリ間の追従スクリプトは無くなった。Codex の protocol は Claude Code と同文の `ddl-protocol` スキルになり、`AGENTS.md` は `.claude/CLAUDE.md` と対になる短い指示ファイルになった。
 
+この改訂の Direction（T0 記録、T1 正本化、T2 導入スクリプト、T3 Harness への移行、T4 日本語文書の再訳、T5 締め）と Acceptance Gates は 2026-10-18 にすべて通過し、同日 /reflect で退役した。続けて使う検査は Validation の V49（導入の往復）、V50（用語集）、V51（旧配置の名前）に残る。
+
 ## Experience
 
 2026-10-17 の /draft（ハーネス時代の DDL）で承認した、DDL を使う人の体験。
@@ -128,7 +130,7 @@ DDLコマンド群（draft, realize, reflect, validate, resonate, commit, docs, 
 | `~/.claude/skills/<name>` が別の場所への symlink（旧 Skills の wrapper など） | DDL の正本へ付け替え、元の先を報告する |
 | python3 が無い | 導入スクリプトは動かない（門と同じ依存）。プロジェクトに置く形は `cp -R` で足り、規則は指示として働く |
 | Codex が利用者レベルの hooks を初めて見た | `/hooks` で信頼する。信頼するまで規則は指示として働く |
-| Codex の skills の置き場（`~/.codex/skills` と文書上の `$HOME/.agents/skills`） | 実機で読むことを確かめた `~/.codex/skills` に置く。`$HOME/.agents/skills` は Harness への移行で probe し、読まれれば切り替えを検討する |
+| Codex の skills の置き場（`~/.codex/skills` と文書上の `$HOME/.agents/skills`） | `~/.codex/skills` に置く。2026-10-18 の probe（両方に試しのスキルを置いて `codex exec` に列挙させた）では両方が読まれたので、置き場は増やさない |
 | プロジェクトに置いた上で環境にも入れた | 門が二重に走るが判定は同じ。コマンドはプロジェクトの写しに従う |
 | `~/.claude` も `~/.codex` も無い | 導入スクリプトは何もせず、`--claude` か `--codex` を求める |
 | design.md が公開される | 機械固有の記述（個人のパス、この Mac の設定）は書かない。実測値は日付つきで残す |
@@ -144,7 +146,7 @@ DDLコマンド群（draft, realize, reflect, validate, resonate, commit, docs, 
 | 再利用の単位はスキル（`SKILL.md` のディレクトリ）であり、plugin は採らない | plugin ではスキル名が名前空間つき（`/ddl:draft`）になり、`permissions`・`env`・`attribution`・指示ファイルを持てず、Codex の plugin は hooks と CLI 導入が揃っていない（2026-10-18 の調査）。`/draft`・`$draft` という操作名と設定を伴う DDL には個人スキルの置き場が合う | 「現代の仕組みで、私の実施したいこと、最善手をとって欲しい」(2026-10-18)、計画の承認 |
 | DDL（公開、SnowLightPath/DDL）が正本で、design.md を含めて全てを追跡する。個人環境 Harness（非公開、旧 Skills を改名）は DDL を git submodule で取り込む | 「私の個人環境がパブリックではなく、他の皆さんもまた利用可能となる最善の方法」。リポジトリ間のファイルコピーによる同期は global の指示が禁じる | 2026-10-18 の選択「環境に入れる」「Harness に改名」 |
 | 正本のディレクトリ名は `claude-code/` と `codex/`。どちらもプロジェクトの配置そのもの | 「claude-commands や codex-skills はもはや正しくない」。写しではなく正本であり、例でもない | 2026-10-18 |
-| Codex の配備先は `~/.codex/skills/`（codex-cli 0.163.0 が実際に読む）。文書上の `$HOME/.agents/skills` は Harness への移行で probe し、読まれなければ現状維持 | 文書と実機の差。読まれない置き場に置くと `$draft` が出ない | 計画の承認 (2026-10-18) |
+| Codex の配備先は `~/.codex/skills/`（codex-cli 0.163.0 が実際に読む）。文書上の `$HOME/.agents/skills` も 2026-10-18 の probe で読まれたが、既存のスキルがある `~/.codex/skills/` を使い続ける | 文書と実機の差。読まれない置き場に置くと `$draft` が出ない。両方読まれるなら置き場を増やす理由がない | 計画の承認 (2026-10-18)、同日の probe |
 | 日本語の哲学ドキュメントは用語集 `docs/ja/GLOSSARY.md` を正として訳す（context window はコンテキストウィンドウ。「窓」は禁止） | 「context window を窓と訳したり、意味が理解できていない」。用語の揺れを機械検査にかける | 2026-10-18 |
 
 コンテキストエンジニアリング時代の /draft（2026-10-17）では新しい行なし。人間が技術を名指ししていない。`Unbound:` もなし。
@@ -318,24 +320,6 @@ DDL 本体リポジトリは `design.md` を持つが、philosophy docs (`docs/e
 - 仕組みが無い環境（未信頼のプロジェクト、hooks の無いランタイム、アダプタの無いランタイム）でも規則は同じで、仕組みは規則を足しも減らしもしない
 - ユーザーの操作（止まる所、進める語、design.md に残るもの）は両ランタイムで同じにし、仕組みが捕まえる範囲の差は §2.5 の行に書く
 - hooks・エージェント定義・settings はアダプタなので、ツール名を書いてよい（P9 の範囲）。コマンドファイルは引き続きツール名を書かない（V27）
-
-## Direction
-
-2026-10-18 の計画「DDL を環境に入れる」。T0 → T1 → T2 → T3 の順（T3 は T1・T2 の push 後）。T4 は T1 のあとならいつでも始められる。
-
-| Stage | Work (parallel lanes) | Human sees | Gate |
-|---|---|---|---|
-| T0 記録 | design.md に Experience「DDL を環境に入れる」、Binding Decisions、この Direction、Acceptance Gates を書く | design.md の差分 | 計画の承認, passed 2026-10-18 |
-| T1 DDL の正本化 | lane A: `examples/claude-commands/.claude/*` → `claude-code/`、`examples/codex-skills/*` → `codex/`、production の `.claude/skills` を `claude-code/skills` に統合（resonate を含める）、`.gitignore` を改めて design.md と `.claude/CLAUDE.md` を追跡。lane B: `tools/sync_mirrors.py` を「claude-code の skills から Codex の skills と `openai.yaml` を生成し、門を両アダプタに写す」だけに書き直す。lane C: 全コマンドの Phase 0 にプロジェクトの写しに従う規則を1文で足し、protocol の探索先を新しい配置にし、§2.5 の Protocol lookup・Project copy and overlay の行と冒頭のアダプタ名を直す。lane D: 二つの指示ファイルの雛形を双子にし（`AGENTS.md` から protocol の節を外し、Codex は `ddl-protocol` スキルを持つ）、`.claude/CLAUDE.md` の Structure、README（二つの使い方）、哲学ドキュメントのリンクを直す。design.md の Scopes・P1・P3・P5・P8・P9・Validation を合わせる | 差分、新しい README の導入の節、`codex/AGENTS.md` の全文 | `--check` exit 0、V1〜V48 と V51、門のテスト、リンク切れ0、旧配置の名前が0。human approval, passed 2026-10-18。承認後に commit・push |
-| T2 DDL の導入スクリプト | `bin/ddl_setup.py`（install: symlink と `~/.claude/settings.json`・`~/.codex/hooks.json` への断片の冪等マージ、`--project DIR` でプロジェクトに置く形。doctor: 配備と断片の照合、`codex execpolicy check`、門のテスト。uninstall: 断片とリンクの除去）と `bin/install.sh`・`bin/doctor.sh`・`bin/uninstall.sh` | 一時 HOME での install → doctor → uninstall の記録 | V49。human approval（T1 と同じ報告で）, passed 2026-10-18。承認後に commit・push |
-| T3 Harness への移行 | GitHub で `Skills` → `Harness` に改名（PRIVATE のまま）、ローカルを `~/Dashboard/Harness` に、ブランチ `harness`。lane A: `ddl/` submodule、`bin/` を「`ddl/bin/install.sh` を呼ぶ → 個人 skills と global を symlink → 古いリンク（commands・tools・無くなったスキル）を消す」に書き直す。lane B: 6つの utility（gen-image、transcribe、transcribe-workshop、outlook、outlook-room-booking、memo）を skills に統合（本文、`scripts/`・`references/`、`argument-hint`、`allowed-tools`、`agents/openai.yaml`）。lane C: `global/CLAUDE.md`・`global/codex-AGENTS.md`・`CLAUDE.md`・`design.md`・`README.md`、work-continuity-designer の protocol 探索先。`commands/`・`tools/` を `git rm`。この Mac で install と doctor。`~/.agents/skills` を probe | install と doctor の結果、新しいセッションで `/draft` と `$draft` が動き、`/dra` に引数ヒントが出ること、DDL リポジトリで `/draft` がプロジェクトの写しに従うこと | `bash -n bin/*.sh`、doctor が 0 not OK（WCD の automation 由来は除く）、Harness の design.md の検証。human approval。承認後に commit・push・PR・merge・main を pull・再 install |
-| T4 日本語文書の再訳 | lane 0: 用語集 `docs/ja/GLOSSARY.md`。lane 1〜5: `docs/ja/design_philosophy_extended.md` を §1、§2（2.5 を含む）、§3、§4、§5〜§8 と参考文献に分け、`docs/ja/design_philosophy.md` を1レーンとして、en と段落単位で突き合わせて訳し直す（見出し・表・コード・引用は保つ、W1〜W14、em-dash なし） | 先に用語集と §1・§2.5 の見本。承認後に全体 | V50（用語集の禁止訳語が ja に無い）、V35 SAME。human approval: 用語集、見本、読み通し。承認後に commit・push |
-| T5 締め | V1〜V51、`--check`、両リポジトリの doctor。Extended Mind に記録。`/reflect` で Direction と Acceptance Gates を退役 | 最終報告 | すべて passed |
-
-## Acceptance Gates
-
-機械: DDL の V1〜V51（V50 は T4 で追加）、`python3 tools/sync_mirrors.py . --check` exit 0、`python3 tools/test_ddl_gate.py` OK、DDL の `bin/doctor.sh`（一時 HOME で 0 not OK）、Harness の `bin/doctor.sh` が commands・tools 由来の not OK を出さない、Harness の design.md の検証、両リポジトリのリンク切れ0。
-人間: T1 の README と `codex/AGENTS.md`、T3 の導入結果と新しいセッションの記録、T4 の用語集・見本・読み通し。
 
 ## Validation
 
@@ -520,6 +504,24 @@ python3 tools/test_ddl_gate.py 2>&1 | tail -1
 bash -n bin/install.sh bin/uninstall.sh bin/doctor.sh && echo "SYNTAX_OK"
 H=$(mktemp -d); mkdir -p "$H/.claude" "$H/.codex"; HOME="$H" bash bin/install.sh > /dev/null && HOME="$H" bash bin/doctor.sh | tail -1; HOME="$H" bash bin/uninstall.sh > /dev/null; find "$H" -type l | wc -l; rm -rf "$H"
 # 期待値: SYNTAX_OK、「… 0 not OK」、0
+
+# V50 public-docs: 用語集の「使わない訳」が日本語の哲学ドキュメントに残らず、主要な訳語が現れる（Binding Decisions の用語集。T4 で通す）
+python3 - <<'PY'
+import pathlib, re
+rows = [l for l in pathlib.Path("docs/ja/GLOSSARY.md").read_text().splitlines() if l.startswith("| ") and not l.startswith("| 英語")]
+forbidden = []
+for r in rows:
+    cells = [c.strip() for c in r.strip().strip("|").split("|")]
+    if len(cells) >= 3:
+        forbidden += [x.strip() for x in cells[2].split("、") if x.strip()]
+docs = {p: pathlib.Path(p).read_text() for p in ("docs/ja/design_philosophy.md", "docs/ja/design_philosophy_extended.md")}
+def found(tok, text):
+    return re.search(r"(?<![専部名])門", text) is not None if tok == "門" else tok in text
+left = sorted({tok for tok in forbidden for text in docs.values() if found(tok, text)})
+missing = [tok for tok in ("コンテキストウィンドウ", "コンパクション", "帰属表記", "ゲート") if not any(tok in text for text in docs.values())]
+print("forbidden-left:", left); print("required-missing:", missing)
+PY
+# 期待値: forbidden-left: [] と required-missing: []
 
 # V51 claude-code, codex, public-docs, tools, install, repo-config: 旧配置の名前（examples/、commands の写し、Codex Runtime Contract、dogfood）が残っていない
 grep -rn -E "examples/|\.codex/commands|\.claude/commands|DDL-PROTOCOL-SKILL|Codex Runtime Contract|dogfood" README.md docs claude-code codex tools bin .claude/CLAUDE.md | wc -l
