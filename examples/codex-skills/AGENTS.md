@@ -5,9 +5,9 @@
 | Skill | Intent |
 |-------|--------|
 | `$draft` | Write the user-side experience first, with the decisions and outlook it depends on |
-| `$realize` | Write code based on design principles |
+| `$realize` | Write code based on design principles and Binding Decisions |
 | `$reflect` | Update documents based on implementation |
-| `$validate` | Run mechanical validation per scope |
+| `$validate` | Run mechanical validation per scope: the Validation block and the mechanical gates in Acceptance Gates |
 | `$commit` | Git commit |
 | `$docs` | Audit and fix documentation |
 | `$refactoring` | Audit and fix code quality |
@@ -22,7 +22,7 @@
 |-----------|--------|-------|------|
 | `# header` | `# skill-name` followed by one-line intent | 1 | Required |
 | `## usage` | `## Usage` followed by dash-list of invocations | 1+ lines | Required |
-| `### phase` | `### Phase 0: INIT`, `### Phase 1: SURVEY`, etc. | 3+ | N starts at 0, ascending. At least INIT, one work phase, and REPORT. Phase 0 INIT is required: load AGENTS.md (the protocol and the project guidance) and any applicable command overlay (`commands/<name>.md`, which adds project facts to a skill unless it declares itself a full override), then design.md, reading only what is not already in context: Codex reads the AGENTS.md chain before any work and design.md stays in context from session start, so only a fresh agent or a compacted session reads them again. Recommended role names: INIT, SURVEY/READ, WORK/IMPLEMENT, REPORT, EXECUTE, VERIFY. Skills may use domain-specific names (e.g. SCAN, COMPARE, COMMIT) that map to these roles |
+| `### phase` | `### Phase 0: INIT`, `### Phase 1: SURVEY`, etc. | 3+ | N starts at 0, ascending. At least INIT, one work phase, and REPORT. Phase 0 INIT is required: load AGENTS.md (the protocol and the project guidance) and any applicable command overlay (`commands/<name>.md`, which adds project facts to a skill unless it declares itself a full override), then design.md, reading only what is not already in context: Codex reads the AGENTS.md chain before any work and design.md stays in context from session start, so a compacted session reads again only what is no longer in context, and a fresh agent reads the sections its prompt names (see +++SWARM Execution). Recommended role names: INIT, SURVEY/READ, WORK/IMPLEMENT, REPORT, EXECUTE, VERIFY. Skills may use domain-specific names (e.g. SCAN, COMPARE, COMMIT) that map to these roles |
 | `+++STOP` | `+++STOP: always` or `+++STOP: on D1` | 1+ | `always` required at REPORT phase. `on D{n}` halts when that DETECT fires. A STOP is an executable halt (see Codex Runtime Contract below). A phase that follows a `+++STOP: always` opens with a **Pre-condition** line: enter only after explicit approval at that STOP, otherwise return and re-emit the report. Never auto-proceed past a STOP gate |
 | `+++DETECT` | `+++DETECT:` followed by indented `D1: name — trigger` lines | 1+ | D starts at 1, ascending, unique per skill. Global targets in AGENTS.md use `G{n}` (Detection Targets below). Trigger must be operationally verifiable. All targets run in parallel within their phase |
 | `+++SWARM` | `+++SWARM: condition` followed by `team:`, `spawn:`, `type:`, `max:`, `batch:`, `each:`, `collect:` block | 0+ | Instruction: fan the `each:` task out to agents, one per scope or batch. The condition is on the same line as `+++SWARM:` and is evaluated against design.md scopes or the units the skill names. If false or single scope: execute inline. If true with 2+ scopes: spawn one subagent per assignment (`explorer` or `worker`, by `type:`), or use the fallback when subagents are unavailable (see +++SWARM Execution below) |
@@ -39,7 +39,7 @@ Codex is execution-forward — it tends to begin mutating files as soon as a pat
 2. **At every `+++STOP` gate:** emit `+++DDL_REPORT` as the section heading, then output the table defined by the skill's `+++Report:` directive. This locks the structure of the human-facing report.
 3. **Approval before crossing `+++STOP`:** any continuation past a `+++STOP` line without explicit user approval is a G7 violation (Unreviewed Mutation).
 
-These markers are output-only. They do not appear in skill files (skill files use `### Phase N: NAME` and `+++Report:`). They appear in Codex's emitted text so a human reading the transcript can locate phase boundaries and reports without re-reading the skill.
+These markers are output-only. They are not directives in skill files, which use `### Phase N: NAME` and `+++Report:`, and appear there only inside example transcripts. They appear in Codex's emitted text so a human reading the transcript can locate phase boundaries and reports without re-reading the skill.
 
 ### Executing a `+++STOP`
 
@@ -131,7 +131,7 @@ design.md is the shared notebook between human and LLM, in context from session 
 | `## Principles` (or `## Core Principles`) | Design principles | `$draft` (D5), `$reflect` | `$draft`, `$realize`, `$reflect` |
 | `## Experience` | Consumer-side usage: inputs, outputs, and error / empty / boundary states | `$draft`, `$reflect` (additions found in code) | `$draft`, `$realize`, `$reflect` |
 | `## Binding Decisions` | Means fixed before implementation (framework, language, platform, runtime, software, output format) because the Experience depends on them, an external constraint requires them, or the human prefers them and says so | the human, through `$draft`; `$realize` records a delegated choice after the human approves it in the plan; a change the human approves in `$realize` or `$reflect` (D6) | `$draft`, `$realize` (honors), `$reflect` (checks), `$refactoring` (keeps) |
-| `## Direction` | Non-binding outlook on the path to implementation | `$draft`; `$realize` marks gates passed; `$reflect` replaces passed stages | `$draft`, `$realize` (follows), `$reflect` (retires) |
+| `## Direction` | Non-binding outlook on the path to implementation | `$draft`; `$realize` writes the `Approved plan` lines and the gate marks (`approved in advance`, `passed`); `$reflect` replaces passed stages and deletes their `Approved plan` lines | `$draft`, `$realize` (follows), `$reflect` (retires) |
 | `## Acceptance Gates` | What must hold when done: mechanical gates and human gates | `$draft`; `$realize` marks gates passed; `$reflect` retires it after acceptance | `$draft`, `$realize`, `$validate`, `$reflect` (retires) |
 | `## Validation` | Per-scope mechanical checks | human, `$reflect` | `$validate`, `$realize`, `$commit`, `$refactoring` |
 
@@ -160,7 +160,7 @@ Unbound: Language — options TypeScript / JavaScript (delegated to $realize)
 ```markdown
 | Stage | Work (parallel lanes) | Human sees | Gate |
 |-------|-----------------------|------------|------|
-| S0 | Fix the search API as a CLI | sample CLI output | `npm test` |
+| S0 | Settle the search API as a CLI | sample CLI output | `npm test` |
 | S1 | Three screen states (normal, empty, failure), one lane each | three screenshots | human approval |
 ```
 
@@ -177,7 +177,7 @@ Unbound: Language — options TypeScript / JavaScript (delegated to $realize)
 - Human gates are approvals. `$realize` executes them as `+++STOP` (see Codex Runtime Contract) at the end of the work.
 - The work is accepted when every gate is marked passed. `$reflect` then retires the section: mechanical gates that should keep running move into the Validation block first.
 
-**Passed marks.** A gate passes when its command gives the expected result, or when the human approves it at the gate or in advance (see Codex Runtime Contract). `$realize` appends `passed <date>` to each gate that passes, in the stage's Gate cell for Direction (for example `human approval, passed 2026-10-20`) and after the gate for Acceptance Gates, adding `(approved in advance)` when a human gate did not fire. An advance approval is written when the user gives it: `$realize` puts `approved in advance (<date>)` in that Gate cell at once and appends `passed <date>` when the stage ends. These marks are the record of progress and acceptance: `$reflect` reads them and never infers a pass from conversation memory.
+**Passed marks.** A gate passes when its command gives the expected result, or when the human approves it at the gate or in advance (see Codex Runtime Contract). `$realize` appends `passed <date>` to each gate that passes, in the stage's Gate cell for Direction (for example `human approval, passed 2026-10-20`) and after the gate for Acceptance Gates. An advance approval is written in the same place the moment the user gives it, as `approved in advance (<date>)`; when the stage or the work ends, `passed <date>` follows it, so a waived gate reads `human approval, approved in advance (2026-10-20), passed 2026-10-21`. These marks are the record of progress and acceptance: `$reflect` reads them and never infers a pass from conversation memory.
 
 **Existing headings.** A project may keep its own headings (for example `Stack` or `Execution plan`). `$reflect` proposes one mapping onto these sections and never forces a rename.
 
@@ -199,7 +199,7 @@ Every skill defines its own D-targets (D1, D2, …). Cross-cutting targets below
 ### On session start
 
 1. This file is already in context: Codex reads the `AGENTS.md` chain before any work. Read it again only when it is no longer in context (after a compaction)
-2. Read `design.md` if it exists — extract scopes, principles, validation commands, and the Experience, Binding Decisions, Direction, and Acceptance Gates when present. It stays in context; skills re-read it only after a compaction or in a fresh agent
+2. Read `design.md` if it exists — extract scopes, principles, validation commands, and the Experience, Binding Decisions, Direction, and Acceptance Gates when present. It stays in context; skills re-read it only after a compaction, and an agent reads only the sections its prompt names
 3. Memories are a recall layer: a decision found only there is a proposal until design.md records it
 
 ### On any task
@@ -222,4 +222,4 @@ Every skill defines its own D-targets (D1, D2, …). Cross-cutting targets below
 +++NEVER: Add AI attribution to commits or generated code
 +++NEVER: Skip emitting +++DDL_PHASE before mutation — Codex's execution-forward bias must be visibly checkpointed
 +++NEVER: Output a +++STOP gate without +++DDL_REPORT followed by the +++Report: table, or a brief finding when the phase defines none
-+++NEVER: Spawn agents when a SWARM has fewer than 2 units (scopes, Direction lanes, files) — for 2+, follow +++SWARM semantics (mandatory when condition is true; only the lead fans out; see +++SWARM Execution)
++++NEVER: Spawn agents when a SWARM has fewer than 2 units (scopes, Direction lanes, files, document pairs, approved changes) — for 2+, follow +++SWARM semantics (mandatory when condition is true; only the lead fans out; see +++SWARM Execution)

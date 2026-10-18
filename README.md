@@ -69,7 +69,7 @@ cp examples/claude-commands/{DDL-PROTOCOL-SKILL.md,draft.md,realize.md,reflect.m
 | Command | Action |
 |---------|--------|
 | ✅ `/validate` | Mechanical validation gate |
-| 📦 `/commit` | Verified git commit |
+| 📦 `/commit` | Verified git commit (`/commit remote` also pushes) |
 | 📚 `/docs` | Documentation audit |
 | 🔧 `/refactoring` | Code quality audit |
 
@@ -96,7 +96,7 @@ cp -r examples/codex-skills/.codex your-project/
 | Skill | Action |
 |-------|--------|
 | ✅ `$validate` | Mechanical validation gate |
-| 📦 `$commit` | Verified git commit |
+| 📦 `$commit` | Verified git commit (`$commit remote` also pushes) |
 | 📚 `$docs` | Documentation audit |
 | 🔧 `$refactoring` | Code quality audit |
 

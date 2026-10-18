@@ -45,9 +45,9 @@ Present the implementation plan: files to touch, principles applied, how each Bi
 
 ### Phase 2: IMPLEMENT
 
-**Pre-condition.** Enter this phase only after explicit user approval at the STOP that preceded it: the Phase 1 plan on first entry, later a stage's human gate or a D1 or D6 STOP (per the Codex Runtime Contract in `AGENTS.md`). If the most recent user message is not an approval token, return to the phase whose STOP is pending and re-emit its report.
+**Pre-condition.** Enter this phase only after explicit user approval at the STOP that preceded it: the Phase 1 plan on first entry, later a stage's human gate, a D1 or D6 STOP, or a D7 STOP from Phase 3 (per the Codex Runtime Contract in `AGENTS.md`). If the most recent user message is not an approval token, return to the phase whose STOP is pending and re-emit its report.
 
-On first entry, move into `## Binding Decisions` only the delegated `Unbound:` lines whose choice the approved plan stated and the lines the user picked, with Source `approved in $realize plan (<date>)`; write the plan's durable parts under `## Direction` as `Approved plan (<date>)`, and any gate the user approved in advance into its Gate cell (design.md Sections in `AGENTS.md`).
+On first entry, move into `## Binding Decisions` only the delegated `Unbound:` lines whose choice the approved plan stated and the lines the user picked, with Source `approved in $realize plan (<date>)`; write the plan's durable parts under `## Direction` as `Approved plan (<date>)` (design.md Sections in `AGENTS.md`). Whenever the user approves gates in advance, at the plan or at a later STOP, write `approved in advance (<date>)` after each such gate at once (design.md Sections in `AGENTS.md`).
 
 +++SWARM: 2+ independent scopes or Direction lanes need changes
 
@@ -86,7 +86,7 @@ If D1 or D6 fires, stop before continuing implementation. For D6, present option
 
 ### Phase 3: VALIDATE
 
-After a stage, run that stage's mechanical gate and the validation commands of the scopes it changed. After the last stage, run all validation commands in `design.md` and the mechanical gates in Acceptance Gates, in parallel, and mark the gates that pass (design.md Sections in `AGENTS.md`). Then execute each human gate in Acceptance Gates as a STOP (Codex Runtime Contract in `AGENTS.md`) unless the user approved it in advance; after approval, mark it passed and enter Phase 4. Without Direction, the work is a single stage.
+After a stage, run that stage's mechanical gate and the validation commands of the scopes it changed. After the last stage, run all validation commands in `design.md` and the mechanical gates in Acceptance Gates, in parallel, and mark the gates that pass (design.md Sections in `AGENTS.md`). Then execute each human gate in Acceptance Gates as a STOP (Codex Runtime Contract in `AGENTS.md`) unless the user approved it in advance; after approval, mark it passed and enter Phase 4. Without Direction, the work is a single stage. When D7 fires, STOP below; after approval, return to Phase 2 to fix what failed, then run this phase again.
 
 +++DETECT:
   D7: Validation Failure — any validation command or mechanical gate from `design.md` exits non-zero, cannot run, prints other than the expected value declared with it, or reports an unresolved failure
