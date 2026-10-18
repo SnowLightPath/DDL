@@ -15,7 +15,7 @@ DDL documents are not final artifacts—they're temporary notes until the design
 
 ## 🎯 Background: The Session Discontinuity Problem
 
-Collaborative development with LLMs has a discontinuity problem:
+Collaborative development with LLMs has a session discontinuity problem:
 
 - What one agent remembers, the next session, agent, or harness does not see
 - What the agent remembers is not what the human agreed to
@@ -79,9 +79,9 @@ Some decisions cannot be separated from the experience. A library's language is 
 | Next.js App Router | Answers stream in while they are written, and per-route loading and error states are the core of the experience | "I want to build it with Next.js", "Yes, App Router" (2026-10-17) |
 ```
 
-When you already see the path to implementation, Draft records it as **Direction**: stages, parallel lanes, and the points where you want to look. Direction is an outlook, not a contract. **Acceptance Gates** say what must hold when the work is done: commands that must pass, and approvals you will give. They are retired once the work is accepted.
+When you already see the path to implementation, Draft records it as **Direction**: stages, parallel lanes, and the points where the human wants to look. Direction is an outlook, not a contract. **Acceptance Gates** say what must hold when the work is done: commands that must pass, and approvals the human will give. They are retired once the work is accepted.
 
-Only the human binds. The LLM may propose a technology; it stays unbound until you choose it. Technology already present in the code is an existing premise: commands show it in their reports, and design.md does not record it; it becomes a Binding Decision only when the human gives a reason.
+Only the human binds. The LLM may propose a technology; it stays unbound until the human chooses it. Technology already present in the code is an existing premise: commands show it in their reports, and design.md does not record it; it becomes a Binding Decision only when the human gives a reason.
 
 ### Realize
 
