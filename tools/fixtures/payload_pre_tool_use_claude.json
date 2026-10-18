@@ -1,0 +1,10 @@
+{
+  "session_id": "@SESSION@",
+  "transcript_path": "@TRANSCRIPT@",
+  "cwd": "@CWD@",
+  "hook_event_name": "PreToolUse",
+  "permission_mode": "default",
+  "tool_name": "Edit",
+  "tool_input": {"file_path": "/Users/me/proj/design.md", "old_string": "a", "new_string": "b"},
+  "tool_use_id": "toolu_01"
+}

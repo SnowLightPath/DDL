@@ -1,6 +1,7 @@
-.claude/
+/.claude/
 design.md
 .DS_Store
 /.agents/
 /.codex/
 /AGENTS.md
+__pycache__/

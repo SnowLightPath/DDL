@@ -8,13 +8,15 @@
 | `$realize` | Write code based on design principles and Binding Decisions |
 | `$reflect` | Update documents based on implementation |
 | `$validate` | Run mechanical validation per scope: the Validation block and the mechanical gates in Acceptance Gates |
-| `$commit` | Git commit |
+| `$commit` | Git commit (`$commit remote` also pushes) |
 | `$docs` | Audit and fix documentation |
 | `$refactoring` | Audit and fix code quality |
 
 ## Structure
 
 - `design.md` - Design Document (scopes, principles, validation; Experience, Binding Decisions, Direction, Acceptance Gates when drafted — see design.md Sections)
+- `.agents/skills/<name>/SKILL.md` with `agents/openai.yaml` - The DDL command skills (`openai.yaml` keeps Codex from starting a skill on its own; a skill runs on `$name`)
+- `.codex/` - The Codex adapter: `config.toml`, `agents/` (`explorer`, `worker`), `hooks.json` with `hooks/ddl_gate.py`, `rules/ddl.rules` (Codex Runtime Contract)
 
 ## Directive Reference
 
@@ -53,7 +55,11 @@ A `+++STOP` is an executable halt, not a label. When a `+++STOP` fires (`always`
 
 **Summary rule.** A conversation summary (compaction) is not a user message and approves nothing. The user approves the report in front of them: when the report a `+++STOP` asked about is no longer in context verbatim (after a summary or a restart), rebuild it from durable state (design.md, git, the files it described), emit it again with steps 1–2, and wait; an approval given after a summary applies only to a report emitted after that summary. A `+++STOP` that a restart interrupted cannot be resumed: run the skill again from the phase that emitted it, skipping the stages whose gates are marked passed. Because the conversation is not durable, what the user approved is written down as soon as it is approved: a draft to design.md, a passed gate to its mark, a delegated choice to the Binding Decisions table, an advance approval to the gate it waives, and the approved `$realize` plan to Direction (see design.md Sections).
 
-**Mutation rule.** Between a fired `+++STOP` and explicit approval, do not, for example, edit files (apply_patch), run shell commands that write, start or message any agent, or call an MCP tool that creates, updates, sends, publishes, or deletes. Starting or messaging an agent is a mutation even when the agent is `explorer`: no runtime guarantees that an agent stays read-only (see +++SWARM Execution). Read-only commands and tools may run only to clarify the report, never to begin the next phase. This rule overrides the momentum of phase ordering: "I already presented the plan in this turn, I might as well execute" is the exact failure mode `+++STOP` exists to prevent.
+**Mutation rule.** Between a fired `+++STOP` and explicit approval, do not, for example, edit files (apply_patch), run shell commands that write, start or message any agent, or call an MCP tool that creates, updates, sends, publishes, or deletes. Starting or messaging an agent is a mutation even when the agent is `explorer`: an agent file cannot remove its tools, so nothing but its instructions keeps it read-only (see +++SWARM Execution). Where the project's hooks are trusted, the gate hook `.codex/hooks/ddl_gate.py`, wired in `.codex/hooks.json`, refuses `apply_patch`, writing shell commands, `spawn_agent`, and MCP tool calls after a `+++DDL_REPORT` until the next user prompt; the rule holds unchanged without it, and whether a reply is an approval stays Codex's judgment (Resume rule). Read-only commands and tools may run only to clarify the report, never to begin the next phase.
+
+This rule overrides the momentum of phase ordering: "I already presented the plan in this turn, I might as well execute" is the exact failure mode `+++STOP` exists to prevent.
+
+**Adapter.** The Codex adapter is this file and `.codex/`: `config.toml` (agent limits), `agents/` (`explorer`, `worker`), `hooks.json` with `hooks/ddl_gate.py` (the gate: PreToolUse denies, Stop records the report, and UserPromptSubmit clears it; and the design.md injection at session start and after a compaction), and `rules/ddl.rules` (a prompt before `git push`, on top of the approval in the `$commit` report; a session whose approval policy never prompts shows nothing). Codex loads `.codex/` only for a trusted project and runs hand-written hooks only after they are trusted in `/hooks`. Each skill's `agents/openai.yaml` (`policy.allow_implicit_invocation: false`) keeps Codex from starting a command skill on its own; a skill runs on `$name`. The adapter enforces only what Codex can decide mechanically; without it, every rule in this file holds as an instruction, unchanged.
 
 **Human gates from design.md.** A human gate written in design.md (the `Gate` column of Direction, or a human gate in Acceptance Gates; see design.md Sections) runs as a `+++STOP` in the skill that reaches it, with the same three steps.
 
@@ -84,14 +90,14 @@ When a skill is given a scope or path argument, only the scopes it selects count
 
 ### With subagents
 
-Subagents are on by default: `agents.enabled` defaults to `true`, and the `multi_agent` feature is stable and on by default.
+Subagents are on by default: `agents.enabled` defaults to `true`, and the `multi_agent` feature is stable and on by default (codex-cli 0.163.0, 2026-10-18).
 
 1. Map the `type:` field to a custom agent in `.codex/agents/`:
    - `Explore` → `explorer` (read-only work)
    - `general-purpose` → `worker` (work that may write)
 
    Each custom agent is a standalone TOML file that defines `name`, `description`, and `developer_instructions`. A custom agent named like a built-in agent (`explorer`, `worker`) takes precedence over the built-in one.
-2. Subagents inherit the parent session's sandbox and approval settings, and an agent file cannot replace them: agent instructions can ask an agent to avoid edits, but they do not create a separate read-only sandbox. Read-only work is therefore enforced by the `explorer` instructions and stated in the prompt. Set the sandbox and approval policy on the parent session.
+2. Subagents inherit the parent session's sandbox and approval settings, and an agent file cannot replace them: agent instructions can ask an agent to avoid edits, but they do not create a separate read-only sandbox. Read-only work is therefore kept by the `explorer` instructions and stated in the prompt (the Claude Code adapter removes the tools instead; the rule is the same). Set the sandbox and approval policy on the parent session.
 3. Scale by scope count against `max:` and `batch:` (defaults in Fields above):
    - 0 scopes: skip SWARM
    - 1 scope: run inline, no fan-out
@@ -100,7 +106,7 @@ Subagents are on by default: `agents.enabled` defaults to `true`, and the `multi
    - More than `max:` with `batch: none`: the first `max:` assignments start and the rest are queued; the lead starts a queued assignment each time an agent finishes
    - Once an agent reports a STOP condition, start no queued assignment: collect the running agents, then execute the STOP (step 6)
    - Scopes whose changes depend on each other are merged into one assignment (see In both modes below)
-4. Spawn one agent per scope (or batch when scope count exceeds `max:`). Each spawn sets `agent_type` to `explorer` or `worker` (step 1), passes the `spawn:` label as `task_name`, and sets `fork_turns = "none"`, because the prompt is self-contained and the agent does not need the lead's conversation (verified in codex-cli 0.160.1). The `spawn:` value, with the scope resolved, is a label that identifies the agent in reports. Do not rely on an agent inheriting the lead's conversation (a Codex subagent may fork it via `fork_turns`), so each prompt is the `each:` task with `{scope}` (or `{scopes}`) resolved, plus the scope's paths from `design.md`, the Experience items the scope serves, the principles that apply, the Binding Decisions for the scope, the Direction stage it works on, the scope's validation commands, the rows the user approved for this phase (verbatim, in an apply or fix phase), and in `$realize` the approved plan. The prompt names the files and the design.md sections the agent reads; the agent does not reload AGENTS.md or design.md in full, because the prompt is its context. The prompt also states that the agent starts no agents of its own (only the lead fans out) and, for an `explorer` agent, that the work is read-only (see In both modes below). A Codex subagent may spawn agents of its own and inherits the parent session's sandbox (step 2), so the agent file instructions and the prompt are what keep it read-only and non-nesting
+4. Spawn one agent per scope (or batch when scope count exceeds `max:`). Each spawn sets `agent_type` to `explorer` or `worker` (step 1), passes the `spawn:` label as `task_name`, and sets `fork_turns = "none"`, because the prompt is self-contained and the agent does not need the lead's conversation (verified in codex-cli 0.160.1). The `spawn:` value, with the scope resolved, is a label that identifies the agent in reports. Do not rely on an agent inheriting the lead's conversation (a Codex subagent may fork it via `fork_turns`), so each prompt is the `each:` task with `{scope}` (or `{scopes}`) resolved, plus the scope's paths from `design.md`, the Experience items the scope serves, the principles that apply, the Binding Decisions for the scope, the Direction stage it works on, the scope's validation commands, the rows the user approved for this phase (verbatim, in an apply or fix phase), and in `$realize` the approved plan. The prompt names the files and the design.md sections the agent reads; the agent does not reload AGENTS.md or design.md in full, because the prompt is its context. The prompt also states that the agent starts no agents of its own (only the lead fans out) and, for an `explorer` agent, that the work is read-only (see In both modes below). A Codex subagent may spawn agents of its own and inherits the parent session's sandbox (step 2), so the agent file instructions and the prompt are what keep it read-only and non-nesting; the rule does not depend on what the runtime can enforce
 5. Each agent executes the `each:` task for its assigned scope(s); the lead waits for every agent result before collecting, without polling. With `batch: none`, the lead starts a queued assignment when an agent finishes, unless an agent has reported a STOP condition (step 3)
 6. Lead collects results per the `collect:` field. An agent that failed or returned nothing is reported as such, never dropped silently. An agent cannot end the user's turn: an agent that meets a STOP condition (a DETECT with `+++STOP: on D{n}`, or a human gate) stops its work and reports it, and after collecting, the lead executes that STOP (see Codex Runtime Contract)
 7. After collecting, close any agent that is still open
@@ -122,7 +128,7 @@ When subagents are unavailable (turned off in the configuration with `agents.ena
 
 ## design.md Sections
 
-design.md is the shared notebook between human and LLM, in context from session start, so it carries what the human agreed to and nothing else: agent progress and memories stay out of it. Skills read and write these sections by heading name. A project may keep its notebook in other files (for example a library whose README and guides are its living specification) when its runtime guidance (`AGENTS.md`) names them; skills then read and write those files wherever this file or a skill says design.md. A project uses only the sections it needs and may keep other headings. Experience comes first: Binding Decisions, Direction, and Acceptance Gates serve the Experience and never contradict it.
+design.md is the shared notebook between human and LLM, in context from session start (injected by the adapter, or read by Phase 0 without it), so it carries what the human agreed to and nothing else: agent progress and memories stay out of it. Skills read and write these sections by heading name. A project may keep its notebook in other files (for example a library whose README and guides are its living specification) when its runtime guidance (`AGENTS.md`) names them; skills then read and write those files wherever this file or a skill says design.md. A project uses only the sections it needs and may keep other headings. Experience comes first: Binding Decisions, Direction, and Acceptance Gates serve the Experience and never contradict it.
 
 | Section | Holds | Written by | Read by |
 |---------|-------|------------|---------|
@@ -199,7 +205,7 @@ Every skill defines its own D-targets (D1, D2, …). Cross-cutting targets below
 ### On session start
 
 1. This file is already in context: Codex reads the `AGENTS.md` chain before any work. Read it again only when it is no longer in context (after a compaction)
-2. Read `design.md` if it exists — extract scopes, principles, validation commands, and the Experience, Binding Decisions, Direction, and Acceptance Gates when present. It stays in context; skills re-read it only after a compaction, and an agent reads only the sections its prompt names
+2. `design.md` is injected at session start and after a compaction by the adapter's SessionStart hook when the project's hooks are trusted; otherwise read `design.md` if it exists. Extract scopes, principles, validation commands, and the Experience, Binding Decisions, Direction, and Acceptance Gates when present. It stays in context; skills re-read it only when it is no longer in context, and an agent reads only the sections its prompt names
 3. Memories are a recall layer: a decision found only there is a proposal until design.md records it
 
 ### On any task

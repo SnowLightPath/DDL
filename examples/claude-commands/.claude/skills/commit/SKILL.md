@@ -1,3 +1,12 @@
+---
+name: commit
+description: Record verified code changes to the repository
+argument-hint: "[remote]"
+disable-model-invocation: true
+metadata:
+  short-description: Verified git commit
+---
+
 # commit
 
 Record verified code changes to the repository.
@@ -11,7 +20,7 @@ Record verified code changes to the repository.
 
 ### Phase 0: INIT
 
-1. Read the DDL protocol for the current runtime when it is not already in context: repo-local `commands/DDL-PROTOCOL-SKILL.md` when present; otherwise, in Claude Code, `.claude/commands/DDL-PROTOCOL-SKILL.md`, then `$HOME/.claude/commands/DDL-PROTOCOL-SKILL.md`; in Codex, `$HOME/.codex/commands/DDL-PROTOCOL-SKILL.md`, then the protocol sections of `AGENTS.md`.
+1. Read the DDL protocol for the current runtime when it is not already in context: repo-local `commands/DDL-PROTOCOL-SKILL.md` when present; otherwise, in Claude Code, `.claude/skills/ddl-protocol/SKILL.md`, then `$HOME/.claude/skills/ddl-protocol/SKILL.md`; in Codex, `$HOME/.codex/commands/DDL-PROTOCOL-SKILL.md`, then the protocol sections of `AGENTS.md`.
 2. Read project-local runtime guidance when it is not already in context (the runtime loads `AGENTS.md` for Codex, and `CLAUDE.md` or `.claude/CLAUDE.md` for Claude Code, at session start), and any applicable command overlay.
 3. Read `design.md` when it is not already in context — extract scopes, validation commands
 4. If no `design.md` exists → skip the design.md checks and say so in the report

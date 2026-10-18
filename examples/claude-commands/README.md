@@ -1,18 +1,20 @@
 # DDL Commands
 
-Example implementation of [Design-Doc Loop (DDL)](../../docs/en/design_philosophy.md) as Claude Code custom slash commands.
+Example implementation of [Design-Doc Loop (DDL)](../../docs/en/design_philosophy.md) as Claude Code project skills, invoked as `/name` slash commands.
 
 ## Installation
 
 ```bash
-mkdir -p your-project/.claude/commands
-cp examples/claude-commands/CLAUDE.md your-project/.claude/
-cp examples/claude-commands/{draft,realize,reflect,validate,commit,docs,refactoring,DDL-PROTOCOL-SKILL}.md your-project/.claude/commands/
+mkdir -p your-project/.claude
+cp -R examples/claude-commands/.claude/. your-project/.claude/
 ```
 
+The template mirrors the project layout: `.claude/CLAUDE.md`, `.claude/skills/<name>/SKILL.md` for the seven commands and the protocol skill `ddl-protocol`, and the adapter (`settings.json`, `agents/`, `hooks/`).
+
 - Edit the `# Project Name` title in the copied `CLAUDE.md`.
-- A global install works too: copy the command files into `$HOME/.claude/commands/` to use them in every project. Commands look up the protocol, when it is not already in context, in repo-local `commands/`, then `.claude/commands/`, then `$HOME/.claude/commands/`.
-- What loads when: Claude Code loads `CLAUDE.md` at session start and re-injects it after compaction; `CLAUDE.md` has design.md read then; the protocol and a command load when the command runs (Phase 0); a worker's prompt is its whole context.
+- A command skill runs on `/name`; its frontmatter shows an argument hint and keeps the model from starting it on its own (`disable-model-invocation`). A global install works too: copy `.claude/skills/*` into `$HOME/.claude/skills/` to use the commands in every project. Commands look up the protocol, when it is not already in context, in repo-local `commands/DDL-PROTOCOL-SKILL.md`, then `.claude/skills/ddl-protocol/SKILL.md`, then `$HOME/.claude/skills/ddl-protocol/SKILL.md`.
+- What loads when: Claude Code loads `CLAUDE.md` at session start and re-injects it after compaction; `CLAUDE.md` imports design.md then; the protocol and a command load when the command runs (Phase 0); a worker's prompt is its whole context.
+- The adapter: `settings.json` (the gate hook on PreToolUse, Stop, UserPromptSubmit, and SessionStart; spawn depth 1; an ask rule before `git push`; attribution off), `agents/` (`explorer` for read-only work, `worker` for writers), and `hooks/ddl_gate.py`. `CLAUDE.md` imports design.md with the line `@../design.md`, so the notebook is in context from session start. Claude Code runs project hooks after you trust the folder. The gate is a `python3` script (standard library only); if `python3` is missing, the hook fails open and the rules hold as instructions. The adapter enforces the mechanical part of the rules (a STOP holds until you speak, workers keep their roles); the rules are the same without it, as instructions (protocol §2.5).
 - A project can add an overlay in `commands/<name>.md` to give a command project facts (target paths, protected terms, validation commands) without copying the whole command.
 
 ## Commands
@@ -45,7 +47,7 @@ Design Document ⇄ Code
 
 ## Command Structure
 
-Every command follows the DDL-PROTOCOL defined in `DDL-PROTOCOL-SKILL.md`:
+Every command follows the DDL-PROTOCOL defined in `.claude/skills/ddl-protocol/SKILL.md`:
 
 1. **Phases** — ordered steps (INIT → SURVEY/READ → WORK → REPORT (+++STOP) → EXECUTE → VERIFY). A phase that follows a `+++STOP: always` opens with a **Pre-condition** line: enter only after explicit approval at that STOP
 2. **+++DETECT** — automated checks that run in parallel within their phase (D1, D2, … per command)
@@ -68,7 +70,7 @@ Every command follows the DDL-PROTOCOL defined in `DDL-PROTOCOL-SKILL.md`:
 7. **Acceptance Gates** — mechanical gates and human gates that define done; the work is accepted when `/realize` has marked every gate passed, and `/reflect` then retires the section (lasting checks move to Validation). Written by `/draft`; `/realize` marks gates passed; `/reflect` retires the section
 8. **Validation** — per-scope mechanical checks. Written by the human and `/reflect`
 
-See `DDL-PROTOCOL-SKILL.md` §3.
+See `.claude/skills/ddl-protocol/SKILL.md` §3.
 
 ## Philosophy
 
