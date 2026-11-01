@@ -214,7 +214,7 @@ A harness now executes part of the protocol itself. Claude Code and Codex both o
 | `+++SWARM` `type:` | A read-only worker edits nothing and starts no workers; no worker starts workers | Agent definitions named `explorer` and `worker` in both runtimes; where the runtime allows, the definition removes the editing tools from `explorer` and the agent tools from both, and the spawn depth is one |
 | `+++NEVER` (outward actions, attribution) | A push requires the report's human approval and, where the session policy permits it, confirmation at execution; commits carry no AI attribution | Native permission rules request `git push` confirmation. An independent Codex guard rejects recognized static push forms that miss its native rule, without rewriting commands or granting permission. Explicit no-confirmation modes waive only this form guard; STOP still applies. Claude Code disables attribution through a setting; Codex adds none |
 
-Three rules keep these mechanisms an organic part of DDL. First, the adapter enforces only what it can check mechanically. The STOP gate tracks whether a report was emitted and whether a human has spoken since; deciding whether that reply approves the report stays with the agent. Separate checks classify tool calls and recognized static command forms, including Codex pushes. These static guardrails do not sandbox arbitrary scripts or executable and configuration behavior. Second, the rule does not change with the mechanism. An untrusted project, a session without hooks, or a runtime without an adapter runs the same commands under the same rules, as instructions; the adapter adds enforcement and never adds a rule. Third, the human's actions are the same in every runtime: the same place to stop, the same approval process, the same content recorded in design.md. What differs is how much the harness catches when the agent strays, and that difference is written in the runtime table, dated, not in the commands.
+Three rules keep these mechanisms an organic part of DDL. First, the adapter enforces only what it can check mechanically. The STOP gate tracks whether a report was emitted and whether a human has spoken since; deciding whether that reply approves the report stays with the agent. Separate checks classify tool calls and recognized static command forms, including Codex pushes. These static guardrails do not sandbox arbitrary scripts or executable and configuration behavior. Second, the rule does not change with the mechanism. When an applicable adapter is absent or disabled, the same commands and rules apply as instructions. Project-local Codex configuration requires project trust; user-level hooks are independent of that trust. The adapter adds enforcement and never adds a rule. Third, the human's actions are the same in every runtime: the same place to stop, the same approval process, the same content recorded in design.md. What differs is how much the harness catches when the agent strays, and that difference is written in the runtime table, dated, not in the commands.
 
 Native question UI is a host capability, separate from the gate hook. Its availability and permitted use vary by host and mode; the absence of approval-capable UI stops the command rather than changing approval to typed choices. Report clarity and the interpretation of the submitted answer remain protocol instructions. Configured-hook tests check mechanical behavior and do not establish native UI availability, hook trust, or complete transcript-timing coverage.
 
@@ -359,9 +359,9 @@ Example: `/reflect` defines its own targets (D1 Drift, D2 New Pattern, D3 Outdat
 
 A STOP separates the report from further work. When the next action needs approval, the agent presents the proposed change and waits before changing shared artifacts. A report of completed or read-only work can end without asking for an approval it does not need.
 
-The report recommends a course for the whole review, explains its reason, and shows the compatible actions and their impacts as a short numbered list. Use short prose by default, with a table only when it helps the decision. Keep material risks and unknowns in the report; detailed evidence can be shown separately on request.
+The report recommends a course for the whole review, explains its reason, and shows the compatible actions and their impacts as a short numbered list. Use short prose by default, with a table only when it helps the decision. Keep material risks and unknowns in the report, and make all command-required review detail accessible before asking; additional supporting evidence may be shown separately on request.
 
-One native interaction offers **Approve all**, **Select a subset or revise**, and **Hold**, with optional free text. Approve all covers exactly the displayed, ready recommendations and stated resolutions in the current batch. The agent then applies that scope without another approval for each item, file, section, language, or state. It does not waive a future STOP, authorize an outward action outside the stated scope, or silently change a Binding Decision.
+One native interaction offers **Approve all**, **Select a subset or revise**, and **Hold**, with optional free text. Approve all covers exactly the displayed, ready recommendations and stated resolutions in the current batch. The agent then applies that scope without another approval for each item, file, section, language, or state. It does not waive a future STOP, authorize an outward action not explicitly named in the reviewed choice, or silently change a Binding Decision.
 
 Incompatible alternatives cannot be approved together. Present compatible complete candidate plans or leave the unresolved part pending. When the human requests individual selection, prefer one native checklist or grouped form submission. Do not default to serial questions or force typed ID lists. Independent clarification needs should also be grouped where possible.
 
@@ -383,7 +383,7 @@ Rules:
 - Only the human approves: runtime notifications (for example, a worker finishing) and messages from other agents or sessions are not approvals
 - A conversation summary (compaction) is not a user message and approves nothing. When the report a STOP asked about is no longer in context verbatim, the command rebuilds it from design.md, git, and the files it described and asks again; an approval given after a summary applies only to a report emitted after that summary. A STOP that a restart interrupted is not resumed: the command runs again from the phase that stopped, skipping the stages whose gates are marked `passed`. What the human approves is written down at once, because the conversation is not durable
 - Every command ends its REPORT with a STOP gate
-- Human gates written in design.md (the Gate column of Direction, human gates in Acceptance Gates) run as STOP gates. Compatible gates whose evidence is ready at the same review boundary are named and approved together in one batch; mark each approved gate passed without another question. A prerequisite gate is not delayed to await a later stage's evidence
+- Human gates written in design.md (the Gate column of Direction, human gates in Acceptance Gates) run as STOP gates. Compatible gates whose evidence is ready at the same review boundary are named and approved together in one batch; mark each approved gate passed without another question. A prerequisite human gate is not delayed to await a later stage's evidence
 - An approval that names the design.md human gates listed in the approved report, or says explicitly that they need not stop, lets them pass without stopping; the REPORT lists each with what it would have shown. A general approval ("approve", "OK", "approve all") approves the displayed current batch and waives no future gate. Advance approval never covers a STOP gate written in a command, outward-facing actions (push, publish, send, deploy), destructive actions, or gates that were not in the approved report
 - Batch review is the default. If the user requests individual choices, collect them in one native submission where possible and apply only the selected compatible scope
 
@@ -395,21 +395,21 @@ When a task spans multiple independent scopes, parallel agent execution reduces 
 
 ```mermaid
 flowchart TD
-    Lead --> Workers["Parallel scopes<br/>A · B · C"]
+    Lead --> Workers["Parallel work units<br/>A · B · C"]
     Workers --> Review[Integrated review]
 ```
 
 Rules:
-- Spawn agents only when 2+ independent scopes exist; when the condition holds, the command fans out. In `/realize`, the lanes of the current Direction stage count as scopes
+- Spawn agents when the command's SWARM condition selects 2+ independent work units. Units may be scopes, current Direction lanes, files, document pairs, or approved changes, as the command defines
 - Worker labels: `spawn:` is a label pattern such as `{role}-{scope}` (e.g., `reader-backend`, `scanner-docs`) that identifies each worker in reports. The label is passed as the worker's name only where the runtime adapter says so, because a name can change what a worker may do (a named Claude Code worker gets write tools unless the adapter's definition removes them)
-- Each agent reads only its assigned scope
+- Each agent reads only the paths and context assigned to its work unit
 - The lead does not rely on workers inheriting its conversation: it writes each prompt from design.md (scope paths, the Experience items the scope serves, principles, Binding Decisions, the Direction stage, the scope's validation commands, the rows the human approved for the phase (verbatim), and in `/realize` the approved plan), so the prompt is self-contained and is the worker's whole context: the worker reloads neither the instruction file nor design.md in full. A worker that meets a STOP condition stops and reports, and the lead then stops for the human
 - The prompt also states that the worker starts no workers of its own (only the lead fans out) and, for read-only work, that the work is read-only. The instruction holds in every runtime, and where the adapter can remove tools it also enforces it (in Claude Code, the `explorer` definition drops the editing and agent tools, the `worker` definition the agent tools, and the spawn depth is one, while shell commands remain and stay read-only by instruction; Codex subagents inherit the parent session's sandbox and may spawn agents of their own, so there the instruction is all that keeps them in bounds)
 - Lead integrates results and runs cross-scope analysis
-- Single-scope tasks run without spawning
+- A single work unit runs inline without spawning
 - The protocol maps fan-out onto each runtime (Claude Code subagents, Codex subagents); without a parallel mechanism, the lead runs the assignments itself, read-only work as parallel reads and the rest one by one. Commands never name runtime tools
 
-Scopes are defined in design.md, never hardcoded. This keeps the framework project-agnostic.
+Scopes come from design.md; other work units come from the command's selected targets and findings. These units are never hardcoded, keeping the framework project-agnostic.
 
 
 ## §4 Practical Examples
@@ -586,7 +586,7 @@ written. Sources are listed below it.
 > 1. Keep App Router and streaming, and plan for a Node runtime to resolve the static-hosting conflict.
 > 2. Merge S1 and S2 while keeping both gates at the end of the merged stage.
 >
-> **Consequence:** Update this plan only; an external hosting request and later gates remain separate. App Router is not changed.
+> **Consequence:** Approval authorizes implementing this reviewed plan and recording its durable parts in Direction; external hosting requests and later gates remain separate. App Router remains fixed.
 
 One native interaction offers approval of the whole displayed plan, selection of a compatible subset or revision, or holding it. An alternative that drops streaming needs a separate complete plan and explicit consideration of the affected Binding Decision; it is not approved alongside this plan.
 
@@ -602,7 +602,8 @@ LLM: +++DDL_REPORT
      and Node availability is still unconfirmed.
      1. Resolve D6 by keeping App Router and streaming and planning for a Node runtime.
      2. Merge S1 and S2 while preserving both gates at the merged stage's end.
-     Approval updates this displayed plan, not a Binding Decision or external hosting.
+     Approval authorizes implementing this displayed plan and recording its durable parts in Direction;
+     Binding Decisions stay fixed, and external hosting requests and later gates remain separate.
      [one native interaction] Approve the displayed plan / Select a subset or revise / Hold.
      (wait for a submitted answer; a request receipt alone approves nothing)
 Human: [submits] Approve the displayed plan.
@@ -743,7 +744,7 @@ Commands implement DDL as Phase-based workflows with Detection Targets, STOP gat
 Each command follows the same structure:
 1. **Phases** — ordered steps (INIT → SURVEY/READ → WORK → REPORT (+++STOP) → EXECUTE → VERIFY)
 2. **Detection Targets** — automated checks that run in parallel within their phase (D1, D2, … per command)
-3. **+++SWARM** — parallel workers per scope through the runtime's own mechanism (Claude Code subagents, Codex subagents) when 2+ scopes exist; without a parallel mechanism, the lead runs the assignments itself, read-only work as parallel reads and the rest one by one
+3. **+++SWARM** — parallel workers for 2+ independent work units selected by the command, through the runtime's own mechanism (Claude Code subagents, Codex subagents); without a parallel mechanism, the lead runs the assignments itself, read-only work as parallel reads and the rest one by one
 4. **STOP gates** — mandatory human approval before mutating shared artifacts; the agent presents the current batch in one concise review, requests one supported native batch choice, and waits for an explicit submitted answer (§3.5)
 5. **Constraints** — invariants that must never be violated
 6. **Runtime adapters** — the protocol's runtime table maps the directives onto each harness, so commands never name runtime tools, and a small adapter per runtime (hooks, agent definitions, the design.md import or injection, a push rule) enforces the mechanical part of the rules (§2.5 Instructions and Mechanisms)
@@ -851,6 +852,7 @@ Integration patterns:
 
 | Date | Change |
 |------|--------|
+| 2026-11-01 | Documentation audit: clarify user/project hook trust, review detail before approval, the transition from plan approval to implementation, and SWARM work units; align outward-action scope, emphasis, and terminology. |
 | 2026-11-01 | Batch approval correction: one whole-review recommendation, numbered compatible actions and impacts, and one approve-all/subset-or-revise/hold submission. Limit approval to the displayed ready batch and stated resolutions; retain future STOPs and explicit Binding changes. Group independent clarifications and update Example 4. |
 | 2026-11-01 | Improve GitHub reading flow: render the design example, use native diagrams, and keep source transcripts and copyable templates optional. |
 | 2026-11-01 | Earlier report update: concise prose and visible material risks. The initial one-item-at-a-time interaction was superseded by the batch approval correction above. Record Claude's observed timeout marker and gate check, Codex CLI's unavailable post-turn answer route, and the desktop host's distinct result; keep schema fields separate from tool arguments (§2.5, §3.5, Example 4). |

@@ -26,7 +26,7 @@ Parallel subagents usually start as new sessions, so the discontinuity grows wit
 
 The scarce resources are the human's attention and the context a session can hold. The shared memo keeps the design across sessions while giving each agent the context it needs.
 
-The harness can also hold part of the loop. Where it offers hooks, agent definitions, and imports, DDL's adapters make a STOP hold until the human speaks, keep workers in their roles, and keep the memo in context; the rules themselves do not change, and a session without those mechanisms runs them as instructions.
+The harness can also hold part of the loop. Where it offers hooks, agent definitions, and imports, DDL's adapters support STOPs, worker roles, and keeping the memo in context. Mechanical enforcement is limited to what the runtime exposes; the same rules apply as instructions where those mechanisms cannot enforce them.
 
 ## Core Principle
 
@@ -65,7 +65,7 @@ async with Client(
     users = await c.get("/users")
 ```
 
-Some decisions cannot be separated from the experience. A library's language is its usage; a streaming interface may depend on its framework; an organization may require a platform. Draft records these as **Binding Decisions**, with the reason each binds and its source.
+Some decisions cannot be separated from the experience. A library's language is its usage; a streaming interface may depend on its framework; an organization may require a platform. Draft records these as **Binding Decisions**, with the reason each decision constrains implementation and its source.
 
 For example, a streaming answer interface might have this decision:
 
@@ -128,7 +128,7 @@ When agents run long and in parallel, the human's share becomes concrete: decide
 
 When a decision is needed, the agent recommends a course for the whole review and shows the compatible actions and their impacts as a short numbered list. Material risks and unknowns stay visible; detailed evidence is available separately.
 
-One native interaction offers **Approve all**, **Select a subset or revise**, and **Hold**, with optional free text. Approve all covers exactly the displayed, ready recommendations and stated resolutions in the current batch. The agent applies that approved scope without asking again for each item, file, section, language, or state. Future STOPs, outward actions outside the stated scope, and undisclosed Binding Decision changes remain unapproved.
+One native interaction offers **Approve all**, **Select a subset or revise**, and **Hold**, with optional free text. Approve all covers exactly the displayed, ready recommendations and stated resolutions in the current batch. The agent applies that approved scope without asking again for each item, file, section, language, or state. Future STOPs, outward actions not explicitly named in the reviewed choice, and undisclosed Binding Decision changes remain unapproved.
 
 Incompatible alternatives cannot both be approved. The agent presents compatible complete plans or leaves the unresolved part pending. Individual selection is available when the human requests it, preferably through one native checklist or grouped form submission; serial questions and typed ID lists are not the default.
 
@@ -175,6 +175,7 @@ Ultimately, code becomes the source of truth. Delete DDL documents when no longe
 
 ## Changelog
 
+- **2026-11-01:** Documentation audit: qualify adapter enforcement, clarify approval scope and Binding Decision wording, and align emphasis across languages.
 - **2026-11-01:** **Batch approval correction.** Review compatible numbered recommendations together through one approve-all, subset/revise, or hold interaction. Approval covers only the displayed current batch and stated resolutions, without per-item pauses or waivers of future gates. Group independent clarifications where possible.
 - **2026-11-01:** Earlier report update: decision reports lead with the recommendation, reason, and consequence; unavailable approval UI stops the command. Its initial one-item-at-a-time interaction was superseded by the batch approval correction above. Improve reading flow, render the decision example, keep copyable Markdown optional, and clarify that informational reports need no approval by themselves.
 - **2026-10-20:** Refine Japanese sentence structure while preserving meaning and section organization.

@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """DDL gate: the mechanical half of the protocol's +++STOP rule, as a lifecycle hook.
 
-After the assistant emits a report under the heading `+++DDL_REPORT`, the turn must end and
-nothing may mutate until a human speaks again (CLOSED when not, OPEN when yes). Whether the
-human's reply is an approval is the assistant's business, never the gate's. Independently,
-Codex rejects static push command forms that would miss its native confirmation rule.
+After detecting a report under the heading `+++DDL_REPORT`, the gate denies covered mutating
+calls until submitted human input. The assistant follows protocol section 1.5: a synchronous
+question waits for the actual answer and can resume approved work in the same turn; an
+asynchronous request receipt ends the turn while awaiting the actual answer. Informational
+reports require no approval by themselves. Whether a human reply approves the current report
+and scope is the assistant's business, never the gate's. Independently, Codex rejects static
+push command forms that would miss its native confirmation rule.
 
 Usage (the same command serves Claude Code and Codex CLI; the hook payload JSON is on stdin):
   python3 tools/ddl_gate.py pre-tool-use       --runtime claude|codex
@@ -20,8 +23,9 @@ Decisions (JSON on stdout; the exit status is always 0):
   session-start       compact/resume while CLOSED -> additionalContext with a notice;
                       codex also gets design.md injected (claude imports it through CLAUDE.md)
 
-State: the conversation record (`transcript_path`) is read from the end and decides whenever
-it is readable. An answered AskUserQuestion and an approved plan count as the human speaking
+State: the conversation record (`transcript_path`) is read from the end. A readable record is
+authoritative for Claude; Codex keeps a pending marker authoritative even over an OPEN record
+until the marker is cleared. An answered AskUserQuestion and an approved plan count as human input
 (toolUseResult / permissionDecision from the user). Claude Code writes the transcript
 asynchronously, so a continuation in the same turn can escape the gate; the rule then holds as
 an instruction. A marker file `<state dir>/<session_id>.pending` carries the signal across
