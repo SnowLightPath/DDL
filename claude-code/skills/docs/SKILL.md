@@ -68,11 +68,11 @@ Lead integrates results and checks:
 Do NOT fix without approval.
 
 +++Report:
-Decision: apply, revise, or leave pending one identified documentation fix at a time.
-Recommendation: the fix, why it matters, and any material uncertainty or downside.
-Consequence: change only the explicitly selected fix IDs.
+Decision: apply all current compatible documentation fixes, select or revise the set, or leave it pending.
+Recommendation: a concise overall reason, then numbered fixes with stable IDs and any material uncertainty or downside.
+Consequence: approve-all applies the displayed ready set; subset approval changes only the selected fix IDs.
 Review detail: each stable fix ID, file/line, detection type, finding, and proposed correction.
-Choices: collect per-fix decisions through protocol §1.5 before changing the selected files. With no findings, state that no fix needs approval and stop.
+Choices: request one batch approval through protocol §1.5; open item selection only when requested, with no per-fix or per-file reapproval after approve-all. With no findings, state that no fix needs approval and stop.
 
 ### Phase 4: FIX
 

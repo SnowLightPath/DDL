@@ -77,11 +77,11 @@ Lead integrates results and performs cross-scope analysis:
 Do NOT modify `design.md` without approval. Only the user resolves a Binding Drift (D6): fix the code, or change the Binding Decision.
 
 +++Report:
-Decision: apply, revise, or leave pending one identified recommendation at a time.
-Recommendation: the change and its reason, naming the affected principle, Binding Decision, Direction stage, or section as its `Target`.
-Consequence: apply only the explicitly selected proposal IDs; a Binding Drift still requires the user's choice of code correction or Binding Decision change.
+Decision: apply all current compatible recommendations, select or revise the set, or leave it pending.
+Recommendation: a concise overall reason, then numbered actions with stable IDs, each naming the affected principle, Binding Decision, Direction stage, or section as its `Target` and its material effect.
+Consequence: approve-all applies the displayed ready set; subset approval applies only the selected IDs. A Binding Drift still requires an explicit action naming code correction or Binding Decision change, never a silent resolution.
 Review detail: each stable proposal ID, type, target, finding and supporting file/line evidence; any required quotations of removed Direction or Acceptance Gates.
-Choices: collect per-recommendation decisions through protocol §1.5 before applying the selected set. With no findings, state that no change needs approval and stop.
+Choices: request one batch approval through protocol §1.5; open item selection only when requested, with no per-recommendation reapproval after approve-all. With no findings, state that no change needs approval and stop.
 
 ### Phase 4: APPLY
 

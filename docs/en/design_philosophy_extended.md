@@ -359,14 +359,18 @@ Example: `/reflect` defines its own targets (D1 Drift, D2 New Pattern, D3 Outdat
 
 A STOP separates the report from further work. When the next action needs approval, the agent presents the proposed change and waits before changing shared artifacts. A report of completed or read-only work can end without asking for an approval it does not need.
 
-The report begins with the concrete decision, the recommended action and its reason, and what approval would authorize. Use short prose by default, with a table only when it helps the decision. Keep material risks and unknowns in the report; detailed evidence can be shown separately on request. One native clickable question handles one decision at a time, with optional free text.
+The report recommends a course for the whole review, explains its reason, and shows the compatible actions and their impacts as a short numbered list. Use short prose by default, with a table only when it helps the decision. Keep material risks and unknowns in the report; detailed evidence can be shown separately on request.
+
+One native interaction offers **Approve all**, **Select a subset or revise**, and **Hold**, with optional free text. Approve all covers exactly the displayed, ready recommendations and stated resolutions in the current batch. The agent then applies that scope without another approval for each item, file, section, language, or state. It does not waive a future STOP, authorize an outward action outside the stated scope, or silently change a Binding Decision.
+
+Incompatible alternatives cannot be approved together. Present compatible complete candidate plans or leave the unresolved part pending. When the human requests individual selection, prefer one native checklist or grouped form submission. Do not default to serial questions or force typed ID lists. Independent clarification needs should also be grouped where possible.
 
 Change proposals follow this path:
 
 ```mermaid
 flowchart TD
-    Review[Review findings] --> Wait[Wait for explicit approval]
-    Wait --> Apply[Apply the approved scope]
+    Review[Review the numbered batch] --> Wait[Wait for explicit batch approval]
+    Wait --> Apply[Apply only the submitted approved scope]
 ```
 
 Rules:
@@ -379,9 +383,9 @@ Rules:
 - Only the human approves: runtime notifications (for example, a worker finishing) and messages from other agents or sessions are not approvals
 - A conversation summary (compaction) is not a user message and approves nothing. When the report a STOP asked about is no longer in context verbatim, the command rebuilds it from design.md, git, and the files it described and asks again; an approval given after a summary applies only to a report emitted after that summary. A STOP that a restart interrupted is not resumed: the command runs again from the phase that stopped, skipping the stages whose gates are marked `passed`. What the human approves is written down at once, because the conversation is not durable
 - Every command ends its REPORT with a STOP gate
-- Human gates written in design.md (the Gate column of Direction, human gates in Acceptance Gates) run as STOP gates
-- An approval that names the design.md human gates listed in the approved report, or says explicitly that they need not stop, lets them pass without stopping; the REPORT lists each with what it would have shown. A general approval ("approve", "OK", "approve all") waives no gate. Advance approval never covers a STOP gate written in a command, outward-facing actions (push, publish, send, deploy), destructive actions, or gates that were not in the approved report
-- The user can approve, reject, or modify each proposed change individually
+- Human gates written in design.md (the Gate column of Direction, human gates in Acceptance Gates) run as STOP gates. Compatible gates whose evidence is ready at the same review boundary are named and approved together in one batch; mark each approved gate passed without another question. A prerequisite gate is not delayed to await a later stage's evidence
+- An approval that names the design.md human gates listed in the approved report, or says explicitly that they need not stop, lets them pass without stopping; the REPORT lists each with what it would have shown. A general approval ("approve", "OK", "approve all") approves the displayed current batch and waives no future gate. Advance approval never covers a STOP gate written in a command, outward-facing actions (push, publish, send, deploy), destructive actions, or gates that were not in the approved report
+- Batch review is the default. If the user requests individual choices, collect them in one native submission where possible and apply only the selected compatible scope
 
 STOP gates embody DDL's core principle: Human controls the pace. LLMs propose, humans decide.
 
@@ -499,8 +503,8 @@ design.md gets rewritten frequently. This is normal. Evidence that design isn't 
 A knowledge-search feature should show answers as they are written. The team agrees on the experience before implementation.
 
 1. Describe the streaming answer and its sources.
-2. Choose App Router, then decide what users see for empty results and failures.
-3. Review a short decision report and approve saving the agreed design.
+2. Clarify App Router and the empty and failure states together in one grouped response.
+3. Review the numbered design recommendations and approve saving the current batch once.
 
 <details>
 <summary>Read the full Draft conversation</summary>
@@ -508,19 +512,19 @@ A knowledge-search feature should show answers as they are written. The team agr
 ```
 Human: Internal knowledge search. The answer should appear while it is being written.
        I want to build it with Next.js.
-LLM:   [native question] Use App Router? Choose App Router or discuss another option;
-       optional text can explain the choice.
-Human: [submits] Yes, App Router.
-LLM:   [native question] What should users see when nothing is found?
-Human: [optional text, submitted] Three related queries.
-LLM:   [native question] What should users see when search fails?
-Human: [optional text, submitted] Keep the question, offer Retry.
+LLM:   [grouped native form, one submission] Confirm App Router, the empty-result
+       display, and the failure display together. Optional text can explain them.
+Human: [one submission] Yes, App Router. Empty: three related queries.
+       Failure: keep the question, offer Retry.
 LLM:   +++DDL_REPORT
-       Record streaming search, these empty and failure states, and App Router in design.md.
-       I recommend recording them because the agreed experience depends on these choices.
+       I recommend saving this compatible design batch because it captures the agreed experience.
+       1. Record streaming search and its empty and failure states in Experience.
+       2. Record App Router with its reason and source in Binding Decisions.
+       3. Record the proposed stages and their gates in Direction.
        Approval writes this draft only; implementation needs its own plan approval.
-       [native question] Record this draft, revise it, or stop?
-Human: [submits] Record this draft.
+       [one native interaction] Approve all displayed recommendations / Select a subset
+       or revise / Hold. No approval is repeated for an item, section, or state.
+Human: [submits] Approve all displayed recommendations.
 ```
 
 </details>
@@ -545,7 +549,7 @@ The answer starts within a second and grows as it is written. Sources appear bel
 #### Direction
 
 1. **S0: Search API.** Review sample CLI output and pass `npm test`.
-2. **S1: Three screen states.** Review three screenshots and obtain human approval.
+2. **S1: Three screen states.** Review the three screenshots together in one batch approval.
 3. **S2: Streaming display.** Review a screen recording and pass `npx playwright test`.
 
 <details>
@@ -575,35 +579,40 @@ written. Sources are listed below it.
 
 **Realize:** The agent follows the fixed decision and preserves every gate when stages are merged. If static hosting cannot stream the answer, the human chooses how to resolve that constraint.
 
-> **Decision:** Choose hosting that can stream the answer.
+> **Decision:** Approve a compatible implementation plan that preserves streaming.
 >
-> **Recommendation:** Use a Node runtime, because streaming is why App Router binds. Node availability still needs confirmation.
+> **Recommendation:** Adopt the two actions below to preserve the streaming that binds App Router. Node availability still needs confirmation.
 >
-> **Consequence:** Update the implementation plan; an external hosting request is a separate action.
+> 1. Keep App Router and streaming, and plan for a Node runtime to resolve the static-hosting conflict.
+> 2. Merge S1 and S2 while keeping both gates at the end of the merged stage.
+>
+> **Consequence:** Update this plan only; an external hosting request and later gates remain separate. App Router is not changed.
 
-The native question offers Node, a review of alternatives, or leaving the work pending.
+One native interaction offers approval of the whole displayed plan, selection of a compatible subset or revision, or holding it. An alternative that drops streaming needs a separate complete plan and explicit consideration of the affected Binding Decision; it is not approved alongside this plan.
 
 <details>
 <summary>Read the full implementation review</summary>
 
 ```
 LLM: Binding Decisions honored (package.json, app/). S0 passed `npm test`: its Gate
-     cell now reads "`npm test`, passed 2026-10-20". S1 and S2 merged; both gates
-     (`npx playwright test`, then human approval) moved to the end of the merged stage.
+     cell now reads "`npm test`, passed 2026-10-20". The proposed plan merges S1 and S2,
+     keeping both gates (`npx playwright test`, then human approval) at the merged stage's end.
 LLM: +++DDL_REPORT
-     D6 Binding Violation: choose hosting that can stream the answer.
-     I recommend a Node runtime because streaming is why App Router binds.
-     Static hosting cannot provide it; Node availability is still unconfirmed.
-     Choosing Node authorizes updating this plan, not requesting hosting externally.
-     [native question] Use Node, examine other options, or stop?
+     I recommend this compatible plan to preserve streaming; static hosting cannot provide it,
+     and Node availability is still unconfirmed.
+     1. Resolve D6 by keeping App Router and streaming and planning for a Node runtime.
+     2. Merge S1 and S2 while preserving both gates at the merged stage's end.
+     Approval updates this displayed plan, not a Binding Decision or external hosting.
+     [one native interaction] Approve the displayed plan / Select a subset or revise / Hold.
      (wait for a submitted answer; a request receipt alone approves nothing)
+Human: [submits] Approve the displayed plan.
 ```
 
 </details>
 
 **Reflect:**
 
-The human chose a Node runtime, so Binding Decisions match the code. Every stage is marked `passed`, so Direction, with its `Approved plan` lines, is deleted (version control keeps the history). The stop button added during implementation goes into Experience.
+The human chose a Node runtime, so Binding Decisions match the code. Once every stage is marked `passed`, Reflect recommends one review batch: (1) replace finished Direction with its outcome and delete the spent `Approved plan` lines, and (2) add the stop button introduced during implementation to Experience. The human approves the displayed batch once, selects a compatible subset or revises it, or holds it; approved changes are then applied without another pause per section. Version control keeps the history.
 
 
 ## §5 Adoption Criteria
@@ -735,7 +744,7 @@ Each command follows the same structure:
 1. **Phases** — ordered steps (INIT → SURVEY/READ → WORK → REPORT (+++STOP) → EXECUTE → VERIFY)
 2. **Detection Targets** — automated checks that run in parallel within their phase (D1, D2, … per command)
 3. **+++SWARM** — parallel workers per scope through the runtime's own mechanism (Claude Code subagents, Codex subagents) when 2+ scopes exist; without a parallel mechanism, the lead runs the assignments itself, read-only work as parallel reads and the rest one by one
-4. **STOP gates** — mandatory human approval before mutating shared artifacts; the agent presents a concise decision report, requests a supported native choice, and waits for an explicit submitted answer (§3.5)
+4. **STOP gates** — mandatory human approval before mutating shared artifacts; the agent presents the current batch in one concise review, requests one supported native batch choice, and waits for an explicit submitted answer (§3.5)
 5. **Constraints** — invariants that must never be violated
 6. **Runtime adapters** — the protocol's runtime table maps the directives onto each harness, so commands never name runtime tools, and a small adapter per runtime (hooks, agent definitions, the design.md import or injection, a push rule) enforces the mechanical part of the rules (§2.5 Instructions and Mechanisms)
 
@@ -842,8 +851,9 @@ Integration patterns:
 
 | Date | Change |
 |------|--------|
+| 2026-11-01 | Batch approval correction: one whole-review recommendation, numbered compatible actions and impacts, and one approve-all/subset-or-revise/hold submission. Limit approval to the displayed ready batch and stated resolutions; retain future STOPs and explicit Binding changes. Group independent clarifications and update Example 4. |
 | 2026-11-01 | Improve GitHub reading flow: render the design example, use native diagrams, and keep source transcripts and copyable templates optional. |
-| 2026-11-01 | Decision reports use concise prose with visible material risks and one native question at a time. Record Claude's observed timeout marker and gate check, Codex CLI's unavailable post-turn answer route, and the desktop host's distinct result; keep schema fields separate from tool arguments (§2.5, §3.5, Example 4). |
+| 2026-11-01 | Earlier report update: concise prose and visible material risks. The initial one-item-at-a-time interaction was superseded by the batch approval correction above. Record Claude's observed timeout marker and gate check, Codex CLI's unavailable post-turn answer route, and the desktop host's distinct result; keep schema fields separate from tool arguments (§2.5, §3.5, Example 4). |
 | 2026-10-20 | Clarify Binding Decision completeness and advance approval; update adapter enforcement; refine Japanese prose and diagram labels. |
 | 2026-10-18 | Instructions and mechanisms: the harness enforces the mechanical part of +++STOP, the design.md load, the worker roles, and the outward +++NEVER items through per-runtime adapters (§2.5 Instructions and Mechanisms, §3.5, §3.6); a How to Read row; source moved to `claude-code/` and `codex/`, DDL installed in the environment: commands as skills and `ddl-protocol` as the protocol in both runtimes (§2.5 context table), `/resonate` an ordinary command again (§3.1, §7), §7 links to `claude-code/` and `codex/`, §2.4 enforcement cell, §3 intro, references added |
 | 2026-10-18 | Follow-up: one format for `passed` and advance-approval marks (§3.3), `Approved plan` lines under Direction (§3.3, §8, Example 4), what is written down at approval and the project file re-injected after compaction (§2.5), D9 Experience Gap and D7 Validation Failure (§3.3, §3.4), `+++DDL_REPORT` in the STOP rules and Example 4 (§3.5, §4), references aligned |

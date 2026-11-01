@@ -1,6 +1,6 @@
 # DDL for Codex
 
-Use DDL in the **Codex GUI** to describe what you want, review one decision at a time, and keep the design aligned with the code.
+Use DDL in the **Codex GUI** to describe what you want, review recommendations together, and keep the design aligned with the code.
 
 > [!NOTE]
 > **CLI notice:** The tested Codex CLI 0.166.0 Default cannot accept approval choices after a response ends.
@@ -49,9 +49,11 @@ Review the draft before saving it. Use `$realize` when you are ready to review a
 
 ## Decision points
 
-The report explains what needs deciding, the recommendation and reason, and what approval authorizes. Material risks and unknowns stay visible; detailed evidence is available separately.
+At a required STOP, the report gives one overall recommendation and a visible numbered set of compatible actions with stable IDs. Material impacts, risks, and unknowns stay visible; detailed evidence is available separately. The whole displayed ready set is one review, even when it contains several proposals.
 
-Choose one decision at a time in the host's native UI, with optional free text. Only an explicit submitted answer approving the current report and scope permits work. A request receipt, cancellation, dismissal, unanswered question, or timeout approves nothing. Details and revision requests lead back to the report and question. If a permitted native interface is unavailable or cannot collect the answer, DDL explains the limitation and stops without a typed-choice fallback.
+One native interaction offers **approve all current recommendations**, **choose a subset or request changes**, or **hold**, with optional free text. An explicit approve-all covers exactly the displayed ready set and its recommended resolutions, without another approval per file, item, or section. It covers no undisplayed or future work, later STOP, unconfirmed outward action, or silent change to a Binding Decision.
+
+Subset editing starts only when requested and uses the host's actual native capabilities, such as a supported checklist or grouped form. DDL does not invent interface fields, force typed ID lists, or automatically turn the set into separate item-by-item questions. A request receipt, cancellation, dismissal, unanswered question, or timeout approves nothing. If a permitted native interface is unavailable or cannot collect the answer, DDL explains the limitation and stops without a typed-choice fallback.
 
 ## Host limits
 

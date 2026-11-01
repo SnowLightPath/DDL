@@ -45,9 +45,11 @@ Review the draft before saving it. Use `/realize` when you are ready to review a
 
 ## Decision points
 
-The report explains what needs deciding, the recommendation and reason, and what approval authorizes. Material risks and unknowns stay visible; detailed evidence is available separately.
+At a required STOP, the report gives one overall recommendation and a visible numbered set of compatible actions with stable IDs. Material impacts, risks, and unknowns stay visible; detailed evidence is available separately. The whole displayed ready set is one review, even when it contains several proposals.
 
-Claude Code presents one native question at a time, with optional free text. Only an explicit submitted answer approving the current report and scope permits work. A cancelled, dismissed, unanswered, or timed-out question approves nothing. Asking for details or revisions leads back to the report and question. If the native interface is unavailable or not permitted, DDL explains the limitation and stops without a typed-choice fallback.
+Claude Code asks once: **approve all current recommendations**, **choose a subset or request changes**, or **hold**. An explicit approve-all covers exactly that displayed ready set and its recommended resolutions, without another approval per file, item, or section. It covers no undisplayed or future work, later STOP, unconfirmed outward action, or silent change to a Binding Decision.
+
+Only a requested subset or revision opens editing, using a supported native checklist or grouped form with optional free text. DDL does not force typed ID lists or automatically ask about every item in separate turns. A synchronous question waits for the actual answer; a cancelled, dismissed, unanswered, or timed-out question approves nothing. If the native interface is unavailable or not permitted for this purpose, DDL explains the limitation and stops without a typed-choice fallback.
 
 For tested versions, timeout behavior, and technical verification limits, see the [native question notes](../docs/maintainers/README.md#native-question-observations).
 

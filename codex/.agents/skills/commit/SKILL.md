@@ -53,7 +53,7 @@ Decision: create the proposed commit, revise it, or leave it uncommitted.
 Recommendation: the commit's purpose and why the proposed files belong together; keep material detections visible.
 Consequence: commit exactly `Files` with the exact `Message`; state whether `Push` is no or names the remote and branch, and include any requested push in the selected action explicitly.
 Review detail: the complete `Files` list, affected `Scope`, exact `Message`, every material `Detection`, and `Push`. All must be accessible before approval; a brief summary does not replace review of the full proposed set.
-Choices: request the concrete commit action through protocol §1.5. Approval of a different file set, message, or push target is not approval of this proposal.
+Choices: request one approval for the complete commit proposal through protocol §1.5; do not ask again per file. Approval of a different file set, message, or push target is not approval of this proposal.
 
 ### Phase 3: COMMIT
 

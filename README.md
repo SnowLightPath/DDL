@@ -47,11 +47,13 @@ Open your project in the **Codex GUI** or Claude Code and describe the experienc
 
 `/commit remote` and `$commit remote` also propose a push. Approval names the files, message, and any remote action it covers.
 
-## Review the decision, then choose
+## Review the recommendations together
 
-A decision report starts with what needs deciding, the recommended action and reason, and what your choice authorizes. It uses short prose, keeps material risks and unknowns visible, and makes detailed evidence available separately.
+At a required STOP, one concise report gives the overall recommendation and lists the compatible actions ready for approval with stable numbered IDs. Material impacts, risks, and unknowns stay visible; detailed evidence is available separately. Multiple proposals form one current review set.
 
-Choose one decision at a time through the host's native question UI, with optional free text. Only an explicit submitted answer about the current report and scope approves work. A request receipt, cancellation, dismissal, unanswered question, or timeout approves nothing. If a permitted, answerable native interface is unavailable, DDL explains the limitation and stops instead of silently substituting typed choices.
+One native approval interaction covers that set, with optional free text: **approve all current recommendations**, **choose a subset or request changes**, or **hold**. Approve-all authorizes exactly the displayed ready actions and recommended resolutions, without another approval per file, item, or section. It does not cover undisplayed or future work, later STOPs, unconfirmed outward actions, or silent changes to Binding Decisions.
+
+Subset editing is optional and starts only when requested, using a supported native checklist or grouped form rather than an automatic item-by-item question loop or a forced typed ID list. A request receipt, cancellation, dismissal, unanswered question, or timeout approves nothing. If a permitted, answerable native interface is unavailable, DDL explains the limitation and stops instead of silently substituting typed choices.
 
 The protocol defines the workflow. Runtime hooks provide guardrails for the calls they receive; they do not establish complete STOP enforcement. See the [runtime limits and verification notes](./docs/maintainers/README.md#runtime-boundaries) for the distinction.
 

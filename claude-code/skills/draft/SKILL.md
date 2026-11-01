@@ -84,7 +84,7 @@ Decision: save this draft to `design.md`, revise it, or leave it unsaved.
 Recommendation: the proposed experience and why it answers the user's request; keep unresolved conflicts visible.
 Consequence: saving records the approved design; it does not authorize implementation.
 Review detail: the concrete Experience examples and states; each Binding Decision with reason and source; any Direction, Acceptance Gates, Unbound items, and detections. Include only the sections the draft uses.
-Choices: present the save, revise, and leave-unsaved actions one decision at a time per protocol §1.5.
+Choices: request one approval for the complete displayed draft through protocol §1.5: save all recommended sections, select or revise the draft, or leave it unsaved. Do not request approval again per section or state.
 
 ### Phase 4: EXECUTE
 

@@ -58,11 +58,11 @@ A command run from a user-level install follows the project's own copy when one 
 Do NOT refactor without approval.
 
 +++Report:
-Decision: apply, revise, or leave pending one identified refactor at a time.
-Recommendation: the fix, why it improves the code, and any material uncertainty or downside.
-Consequence: change only the explicitly selected fix IDs; behavior or Binding Decision changes remain outside this approval.
+Decision: apply all current compatible refactors, select or revise the set, or leave it pending.
+Recommendation: a concise overall reason, then numbered fixes with stable IDs and any material uncertainty or downside.
+Consequence: approve-all applies the displayed ready set; subset approval changes only the selected fix IDs. Behavior or Binding Decision changes remain outside this approval.
 Review detail: each stable fix ID, file/line, detection type, finding, and proposed correction.
-Choices: collect per-fix decisions through protocol §1.5 before executing the selected set. With no findings, state that no refactor needs approval and stop.
+Choices: request one batch approval through protocol §1.5; open item selection only when requested, with no per-fix reapproval after approve-all. With no findings, state that no refactor needs approval and stop.
 
 ### Phase 3: EXECUTE
 

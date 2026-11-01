@@ -126,9 +126,13 @@ Human controls the pace and corrects LLM's short-term bias.
 
 When agents run long and in parallel, the human's share becomes concrete: decide what binds, decide where to look, and approve at those gates. Agents work between the gates.
 
-When a decision is needed, the agent first explains what to decide, its recommendation and reason, and what approval would authorize. The report uses short prose, keeps material risks and unknowns visible, and offers detailed evidence separately.
+When a decision is needed, the agent recommends a course for the whole review and shows the compatible actions and their impacts as a short numbered list. Material risks and unknowns stay visible; detailed evidence is available separately.
 
-The human answers one native clickable question at a time, with optional free text. Only an explicit submitted answer approving the current report and scope permits work. Details, revisions, cancellation, dismissal, no answer, and timeout are not approval.
+One native interaction offers **Approve all**, **Select a subset or revise**, and **Hold**, with optional free text. Approve all covers exactly the displayed, ready recommendations and stated resolutions in the current batch. The agent applies that approved scope without asking again for each item, file, section, language, or state. Future STOPs, outward actions outside the stated scope, and undisclosed Binding Decision changes remain unapproved.
+
+Incompatible alternatives cannot both be approved. The agent presents compatible complete plans or leaves the unresolved part pending. Individual selection is available when the human requests it, preferably through one native checklist or grouped form submission; serial questions and typed ID lists are not the default.
+
+Only an actual submitted answer approving the current report and scope permits work. Details, revisions, cancellation, dismissal, no answer, and timeout are not approval.
 
 A report of completed or read-only work needs no approval by itself. If a next step needs direction, the agent asks about that specific action; choosing it does not waive its own approval gates.
 
@@ -171,7 +175,8 @@ Ultimately, code becomes the source of truth. Delete DDL documents when no longe
 
 ## Changelog
 
-- **2026-11-01:** Decision reports lead with the recommendation, reason, and consequence; native questions handle one decision at a time, and unavailable approval UI stops the command. Improve reading flow, render the decision example, and keep copyable Markdown optional. Clarify that informational reports do not require approval by themselves.
+- **2026-11-01:** **Batch approval correction.** Review compatible numbered recommendations together through one approve-all, subset/revise, or hold interaction. Approval covers only the displayed current batch and stated resolutions, without per-item pauses or waivers of future gates. Group independent clarifications where possible.
+- **2026-11-01:** Earlier report update: decision reports lead with the recommendation, reason, and consequence; unavailable approval UI stops the command. Its initial one-item-at-a-time interaction was superseded by the batch approval correction above. Improve reading flow, render the decision example, keep copyable Markdown optional, and clarify that informational reports need no approval by themselves.
 - **2026-10-20:** Refine Japanese sentence structure while preserving meaning and section organization.
 - **2026-10-18:** Instructions and mechanisms (In the Harness Era); Tool-Assisted Option links to `claude-code/` and `codex/`.
 - **2026-10-17:** Harness-era background; Binding Decisions, Direction, and Acceptance Gates in Draft, with Acceptance Gates retired once the work is accepted; the human's role at gates; three anti-patterns; removed the Scribe Plugin option. Add report approval as a Binding Decision source and treat technology already in code as an existing premise. Add context-engineering background and one anti-pattern.

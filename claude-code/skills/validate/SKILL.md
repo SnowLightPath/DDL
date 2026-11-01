@@ -65,7 +65,7 @@ Outcome: the overall PASS/FAIL result and every unresolved failure or blocker, w
 Recommendation: the next command selected below, with a short reason.
 Consequence: choosing that command starts its workflow, not an automatic fix or a waiver of its approval gates.
 Review detail: each scope or gate's Validation Command, Status, exit code and Output Excerpt, with the corresponding detection code where applicable.
-Choices: request next direction one decision at a time per protocol §1.5 when needed; otherwise state that no approval is required and end the turn.
+Choices: when next direction is needed, request it for the complete proposed next action through protocol §1.5, without per-check approval; otherwise state that no approval is required and end the turn.
 
 If any FAIL or detection target fired, list it explicitly with the corresponding D-code.
 Choose the suggested next command before emitting the STOP report — `/validate` itself never edits:

@@ -45,6 +45,16 @@ Claude Code loads the instruction file and its `design.md` import at session sta
 
 `design.md` contains the human-agreed Experience and any Binding Decisions, Direction, Acceptance Gates, principles, scopes, and validation the project needs. Automatic memory is a recall layer, not a source of binding agreement. Protocol §3 defines section ownership, passed marks, approved plans, and retirement rules.
 
+## Batch approval
+
+At a required STOP, present one concise overall recommendation and the complete current review set: visible numbered compatible actions with stable IDs, recommended resolutions, and their material impacts. Keep important risks and unknowns in that report and make detailed evidence separately accessible. A set containing several proposals still receives one native approval interaction by default.
+
+Offer **Approve all current recommendations**, **Choose a subset or request changes**, and **Hold**. Explicit approve-all authorizes exactly the displayed ready set and recommended resolutions. It does not authorize undisplayed or future items, later STOPs, unconfirmed outward actions, or silent changes to Binding Decisions. Apply the approved set without follow-up approvals per file, item, or section.
+
+Subset editing is optional and starts only when requested. Use native multi-select/checklist controls or one grouped form when the host supports them; never impose a typed ID list or an automatic N-item, N-turn approval loop. Use Claude Code's native `multiSelect` only when the exposed schema supports it. The observed Codex asynchronous function accepts only `questions`, `title`, and `options`; do not invent a `multiSelect` property for it. Offer compatible subsets as native choices when a grouped selector is unavailable.
+
+The native question is the final interaction while waiting at that STOP. A synchronous question waits for the actual submitted answer. On an asynchronous host that keeps the question answerable after turn completion, end the turn after the request receipt and wait for that answer. Respect the tool's permitted purpose and mode; do not switch modes to bypass a restriction. A receipt, cancellation, dismissal, no selection, or timeout is not approval. An answer must authorize the current displayed set or an explicitly selected subset.
+
 ## Runtime boundaries
 
 The catch-all matchers inspect tool calls dispatched through the runtime's hooks. While a report awaits human input, the gate permits exact known read tools, human-question tools, input-free polling where supported, and bounded literal shell reads. Unknown tools, worker follow-ups, general scripts, and unsupported shell forms are denied on covered paths. Use display forms such as `cat`, `head`, `tail`, `rg`, or `sed -n '1,10p' file` to clarify a report.

@@ -64,11 +64,11 @@ Section-by-section comparison across language pairs:
 Do NOT apply changes without approval.
 
 +++Report:
-Decision: apply, revise, or leave pending one language-pair proposal at a time.
-Recommendation: the proposed change, the nuance it restores, and its effect on both languages.
-Consequence: approval covers only the named proposal IDs in both versions.
+Decision: apply all current compatible language-pair proposals, select or revise the set, or leave it pending.
+Recommendation: a concise overall reason, then numbered proposals with stable IDs, the nuance each restores, and its effect on both languages.
+Consequence: approve-all covers the displayed ready set in both versions; subset approval covers only the selected proposal IDs.
 Review detail: each stable proposal ID, section, detection type, relevant EN/JA text and proposed edits.
-Choices: collect per-proposal decisions through protocol §1.5 before applying the selected set. With no dissonance, state that no change needs approval and stop.
+Choices: request one batch approval through protocol §1.5; open item selection only when requested, with no per-proposal or per-language reapproval after approve-all. With no dissonance, state that no change needs approval and stop.
 
 ### Phase 4: APPLY
 
@@ -109,11 +109,13 @@ Assistant: Comparing en/ and ja/...
 
 +++DDL_REPORT
 
-Decision: apply proposal 1 to the Intent paragraph?
-Recommendation: add 「セッション、エージェント、ハーネスをまたいで」 to JA so the three contexts already named in EN are explicit.
-Consequence: update that JA paragraph; EN remains unchanged.
-Review detail: proposal 1, D1 Missing Nuance; EN says "share design principles across sessions, agents, and harnesses", while JA says "設計方針を共有し続ける".
+Decision: apply the two displayed language-pair fixes together?
+Recommendation: restore the intended context and matching instructions.
+1. R1: add 「セッション、エージェント、ハーネスをまたいで」 to JA so the three contexts already named in EN are explicit.
+2. R2: update the stale validation command in both versions to the command declared by design.md.
+Consequence: approve-all applies R1 and R2; no further approval is requested per proposal or language.
+Review detail: R1, D1 Missing Nuance, includes the current EN/JA paragraphs and exact edit; R2, D5 Stale Pair, includes both current commands, the declared command, and the exact replacements. Show this detail before asking.
 
-The native choice interface presents: Apply proposal 1 / Revise proposal 1 / Leave pending.
-The assistant waits for the actual selection before applying anything.
+The native choice interface presents: Apply both fixes / Select fixes or revise / Leave pending.
+The assistant waits for one actual submission before applying anything. Selecting both applies R1 and R2 without a second approval. Item selection opens only if requested.
 ```
