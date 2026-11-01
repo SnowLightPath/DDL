@@ -1,32 +1,30 @@
-# Design-Doc Loop (DDL) - Extended
+# Design-Doc Loop: Detailed guide
 
-> This document supplements [design_philosophy.md](./design_philosophy.md).
-> Reference as needed after understanding the core DDL design.
+The reasoning, trade-offs, and longer examples behind DDL. For everyday use, start with the [core guide](./design_philosophy.md) or the [Claude Code](../../claude-code/README.md) and [Codex](../../codex/README.md) setup guides.
 
------
+**English** · [日本語](../ja/design_philosophy_extended.md)
 
-## 🗺️ How to Read
+## How to Read
 
 This document is intended for dictionary-style lookup.
 
 | Goal | Section |
 |------|---------|
-| Understand theoretical background | [§1 Cognitive Foundations](#-1-cognitive-foundations) |
-| Compare with existing methodologies | [§2 Related Methodologies](#-2-related-methodologies) |
+| Understand theoretical background | [§1 Cognitive Foundations](#1-cognitive-foundations) |
+| Compare with existing methodologies | [§2 Related Methodologies](#2-related-methodologies) |
 | See what the model loads and when | [§2.5 Context Engineering](#context-engineering) |
 | See which rules the harness enforces | [§2.5 Instructions and Mechanisms](#instructions-and-mechanisms) |
-| Systematize operations | [§3 Systematization Framework](#-3-systematization-framework) |
-| Get concrete examples | [§4 Practical Examples](#-4-practical-examples) |
-| Make adoption decisions | [§5 Adoption Criteria](#-5-adoption-criteria) |
-| Measure effectiveness | [§6 Metrics](#-6-metrics) |
-| Choose how to implement DDL | [§7 Implementation Options](#️-7-implementation-options) |
-| Manage artifacts and their lifecycle | [§8 Artifacts and Lifecycle](#-8-artifacts-and-lifecycle) |
+| Systematize operations | [§3 Systematization Framework](#3-systematization-framework) |
+| Get concrete examples | [§4 Practical Examples](#4-practical-examples) |
+| Make adoption decisions | [§5 Adoption Criteria](#5-adoption-criteria) |
+| Measure effectiveness | [§6 Metrics](#6-metrics) |
+| Choose how to implement DDL | [§7 Implementation Options](#7-implementation-options) |
+| Manage artifacts and their lifecycle | [§8 Artifacts and Lifecycle](#8-artifacts-and-lifecycle) |
 
 No need to read cover-to-cover. Pick what you need.
 
------
 
-## 🧩 §1 Cognitive Foundations
+## §1 Cognitive Foundations
 
 DDL intersects with several cognitive science and philosophy theories. These are not post-hoc rationalizations but frameworks referenced during design.
 
@@ -116,9 +114,8 @@ Research on LLM collaboration has surged in 2024-2025.
 
 LLMs don't replace humans—they complement. DDL structures this complementary relationship.
 
------
 
-## 🔗 §2 Related Methodologies
+## §2 Related Methodologies
 
 DDL overlaps with existing methodologies. To avoid reinventing wheels, we clarify differences.
 
@@ -268,9 +265,8 @@ The "waterfall criticism" (Marmelab, 2025) applies to SDD's one-way flow. AI-DLC
 
 DDL's role fluidity works in small-team exploratory contexts. In enterprise contexts requiring audit trails and clear accountability, AI-DLC's fixed roles (AI proposes, human approves) may be more appropriate. This is not a weakness—it reflects different operating constraints.
 
------
 
-## 🔧 §3 Systematization Framework
+## §3 Systematization Framework
 
 A framework for more systematic DDL operation. Use it as an aid for understanding and operation; the harness adapters (§2.5) enforce the mechanical part of it, and the rest is discipline.
 
@@ -278,22 +274,11 @@ A framework for more systematic DDL operation. Use it as an aid for understandin
 
 DDL operates in two layers: the **Core Loop** and **Support Commands**.
 
-```
-Core Loop:
-        +-----------------------------------+
-        |                                   |
-        v                                   |
-    +-------+     +-------+     +-------+   |
-    | DRAFT | --> |REALIZE| <-> |REFLECT|   |
-    +-------+     +-------+     +-------+   |
-        |                           ^       |
-        +---------------------------+-------+
-                  (Skip OK)
-
-Support Commands (invokable at any point):
-    +--------+  +---------+  +------+  +------------+  +---------+
-    |VALIDATE|  |RESONATE |  |COMMIT|  |REFACTORING |  |  DOCS   |
-    +--------+  +---------+  +------+  +------------+  +---------+
+```mermaid
+flowchart LR
+    Draft <--> Realize
+    Realize <--> Reflect
+    Reflect <--> Draft
 ```
 
 The Core Loop drives design evolution. Support Commands maintain quality around it.
@@ -376,12 +361,10 @@ A STOP gate is a mandatory human approval point. The system halts and presents i
 
 The report begins with the concrete decision, the recommended action and its reason, and what approval would authorize. Use short prose by default, with a table only when it helps the decision. Keep material risks and unknowns in the report; detailed evidence can be shown separately on request. One native clickable question handles one decision at a time, with optional free text.
 
-```
-Phase N: Analysis complete
-    ↓
-[STOP gate] — Present report, wait for approval
-    ↓
-Phase N+1: Apply approved changes only
+```mermaid
+flowchart TD
+    Review[Review findings] --> Wait[Wait for explicit approval]
+    Wait --> Apply[Apply the approved scope]
 ```
 
 Rules:
@@ -404,15 +387,14 @@ STOP gates embody DDL's core principle: Human controls the pace. LLMs propose, h
 
 When a task spans multiple independent scopes, parallel agent execution reduces time and improves coverage.
 
-```
-Lead agent
-    ├── survey-{scope-1}  ──┐
-    ├── survey-{scope-2}  ──┤── Parallel execution
-    └── survey-{scope-3}  ──┘
-            ↓
-    Lead integrates results
-            ↓
-    Cross-scope analysis
+```mermaid
+flowchart TD
+    Lead --> A[Scope A]
+    Lead --> B[Scope B]
+    Lead --> C[Scope C]
+    A --> Review[Integrated review]
+    B --> Review
+    C --> Review
 ```
 
 Rules:
@@ -427,9 +409,8 @@ Rules:
 
 Scopes are defined in design.md, never hardcoded. This keeps the framework project-agnostic.
 
------
 
-## 💻 §4 Practical Examples
+## §4 Practical Examples
 
 ### Example 1: Complete Loop
 
@@ -517,9 +498,15 @@ design.md gets rewritten frequently. This is normal. Evidence that design isn't 
 
 ### Example 4: Draft with Binding Decisions and Direction
 
-A web feature whose experience depends on its framework.
+A knowledge-search feature should show answers as they are written. The team agrees on the experience before implementation.
 
-**Draft:**
+1. Describe the streaming answer and its sources.
+2. Choose App Router, then decide what users see for empty results and failures.
+3. Review a short decision report and approve saving the agreed design.
+
+<details>
+<summary>Read the full Draft conversation</summary>
+
 ```
 Human: Internal knowledge search. The answer should appear while it is being written.
        I want to build it with Next.js.
@@ -538,7 +525,34 @@ LLM:   +++DDL_REPORT
 Human: [submits] Record this draft.
 ```
 
-Record in design.md:
+</details>
+
+The approved design can be read without the Markdown source:
+
+#### Experience
+
+The answer starts within a second and grows as it is written. Sources appear below it.
+
+- **Nothing found:** show “No results” and three related queries.
+- **Failure:** keep the question and offer “Retry”.
+
+#### Binding Decisions
+
+> **Decision:** Next.js App Router.
+>
+> **Why it binds:** Answers stream as they are written; loading and error states are central to the experience.
+>
+> **Source:** "I want to build it with Next.js", "Yes, App Router" (2026-10-17).
+
+#### Direction
+
+1. **S0: Search API.** Review sample CLI output and pass `npm test`.
+2. **S1: Three screen states.** Review three screenshots and obtain human approval.
+3. **S2: Streaming display.** Review a screen recording and pass `npx playwright test`.
+
+<details>
+<summary>Copy the design.md example</summary>
+
 ```markdown
 ## Experience
 Within a second of sending a question, the answer starts to appear and grows as it is
@@ -559,7 +573,21 @@ written. Sources are listed below it.
 | S2 | Streaming display | a screen recording | `npx playwright test` |
 ```
 
-**Realize:**
+</details>
+
+**Realize:** The agent follows the fixed decision and preserves every gate when stages are merged. If static hosting cannot stream the answer, the human chooses how to resolve that constraint.
+
+> **Decision:** Choose hosting that can stream the answer.
+>
+> **Recommendation:** Use a Node runtime, because streaming is why App Router binds. Node availability still needs confirmation.
+>
+> **Consequence:** Update the implementation plan; an external hosting request is a separate action.
+
+The native question offers Node, a review of alternatives, or leaving the work pending.
+
+<details>
+<summary>Read the full implementation review</summary>
+
 ```
 LLM: Binding Decisions honored (package.json, app/). S0 passed `npm test`: its Gate
      cell now reads "`npm test`, passed 2026-10-20". S1 and S2 merged; both gates
@@ -573,13 +601,14 @@ LLM: +++DDL_REPORT
      (wait for a submitted answer; a request receipt alone approves nothing)
 ```
 
+</details>
+
 **Reflect:**
 
 The human chose a Node runtime, so Binding Decisions match the code. Every stage is marked `passed`, so Direction, with its `Approved plan` lines, is deleted (version control keeps the history). The stop button added during implementation goes into Experience.
 
------
 
-## 🎯 §5 Adoption Criteria
+## §5 Adoption Criteria
 
 ### Effective Situations
 
@@ -636,9 +665,8 @@ Rules of thumb:
 
 This is the AgenticFlow pattern: a public Python library whose `CLAUDE.md` and `AGENTS.md` name `README.md` + `docs/en/` as the design documents. The README documents the contract, and the development guide (`docs/en/guides/development-workflow.md`, in the AgenticFlow repository) holds the scope matrix and the validation commands, so a separate design.md would be redundant. The four functional-equivalence conditions (always available, directly accessible, automatically trusted, consciously recorded) are satisfied by these files themselves.
 
------
 
-## 📊 §6 Metrics
+## §6 Metrics
 
 Metrics for understanding DDL effectiveness. Numbers are guidelines—adjust per project.
 
@@ -651,14 +679,16 @@ Metrics for understanding DDL effectiveness. Numbers are guidelines—adjust per
 
 Note on "Session Continuity": No need for rigorous measurement. If "I can't remember what we were doing" or "I'm re-explaining everything to the LLM" happens frequently, there's a problem with design.md granularity or update frequency.
 
------
 
-## 🛠️ §7 Implementation Options
+## §7 Implementation Options
 
 ### Option 1: Pure Discipline
 No tools, discipline only. Most lightweight. Recommended as starting point.
 
 ### Option 2: Template-Based
+
+<details>
+<summary>Copy the minimal design.md outline</summary>
 
 ```markdown
 # design.md Template
@@ -673,6 +703,8 @@ No tools, discipline only. Most lightweight. Recommended as starting point.
 ## Open Questions
 ## Changelog
 ```
+
+</details>
 
 > Just a starting point. Discard if it doesn't fit. Experience comes first; Binding Decisions, Direction, and Acceptance Gates are optional. Scopes and Validation are what the commands read for fan-out and checks.
 
@@ -739,9 +771,8 @@ session:
 
 Enables automated verification and session continuity tracking. However, if tools become the goal, you've missed the point.
 
------
 
-## 📦 §8 Artifacts and Lifecycle
+## §8 Artifacts and Lifecycle
 
 | Name | Purpose | Persistence |
 |------|---------|-------------|
@@ -764,9 +795,8 @@ Integration patterns:
 - Move Binding Decisions into README requirements or an ADR once the code embodies them (the code shows what was chosen, not why), only with the human's approval in `/reflect`; the commands then stop checking them
 - Delete (became obvious from code)
 
------
 
-## 📚 References
+## References
 
 ### Extended Mind
 - Clark, A., & Chalmers, D. (1998). [The Extended Mind](https://academic.oup.com/analysis/article-abstract/58/1/7/153111). *Analysis*, 58(1), 7-19.
@@ -806,12 +836,15 @@ Integration patterns:
 - Beck, K. (1999). [*Extreme Programming Explained*](https://www.oreilly.com/library/view/extreme-programming-explained/0201616416/). Addison-Wesley.
 - Meyer, B. (1992). [Applying Design by Contract](https://ieeexplore.ieee.org/document/161279/). *IEEE Computer*, 25(10), 40-51.
 
------
 
-## 📝 Changelog
+## Changelog
+
+<details>
+<summary>Read the revision history</summary>
 
 | Date | Change |
 |------|--------|
+| 2026-11-01 | Improve GitHub reading flow: render the design example, use native diagrams, and keep source transcripts and copyable templates optional. |
 | 2026-11-01 | Decision reports use concise prose with visible material risks and one native question at a time. Record Claude's observed timeout marker and gate check, Codex CLI's unavailable post-turn answer route, and the desktop host's distinct result; keep schema fields separate from tool arguments (§2.5, §3.5, Example 4). |
 | 2026-10-20 | Clarify Binding Decision completeness and advance approval; update adapter enforcement; refine Japanese prose and diagram labels. |
 | 2026-10-18 | Instructions and mechanisms: the harness enforces the mechanical part of +++STOP, the design.md load, the worker roles, and the outward +++NEVER items through per-runtime adapters (§2.5 Instructions and Mechanisms, §3.5, §3.6); a How to Read row; source moved to `claude-code/` and `codex/`, DDL installed in the environment: commands as skills and `ddl-protocol` as the protocol in both runtimes (§2.5 context table), `/resonate` an ordinary command again (§3.1, §7), §7 links to `claude-code/` and `codex/`, §2.4 enforcement cell, §3 intro, references added |
@@ -820,3 +853,5 @@ Integration patterns:
 | 2026-04-25 | VALIDATE support command (§3.1, §7); README-as-design Alternative (§5) |
 | 2026-02-14 | Expand §2.5 to three-way comparison (SDD / AI-DLC / DDL) |
 | 2026-01-04 | Initial version |
+
+</details>

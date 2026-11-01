@@ -1,19 +1,14 @@
 # Design-Doc Loop (DDL)
 
-## ✨ Intent
+## Intent
 
 Human and LLM continue to share design principles across sessions, agents, and harnesses.
 
-DDL is not a rigid process—it's a collection of desired designs.
+DDL collects desired designs in a flexible process. Its documents are temporary notes until the design is reflected in code.
 
-DDL documents are not final artifacts—they're temporary notes until the design is reflected in code.
+For more background, examples, and guidelines, see the [extended guide](./design_philosophy_extended.md). Read only what you need, when you need it.
 
-> For detailed background theory, examples, and guidelines, see [design_philosophy_extended.md](./design_philosophy_extended.md).
-> You don't need to read everything. Reference only what you need, when you need it.
-
------
-
-## 🎯 Background: The Session Discontinuity Problem
+## Background: The Session Discontinuity Problem
 
 Collaborative development with LLMs has a session discontinuity problem:
 
@@ -25,15 +20,15 @@ So we share code design as memos with LLMs.
 
 ### In the Harness Era
 
-Agent harnesses such as Claude Code and Codex now carry memory of their own: instruction files, automatic memory, summaries of long conversations. That memory helps the agent recall, but what the agent writes there is not a record the human has agreed to. And when an agent hands work to parallel subagents, each subagent usually starts as a new session, so the discontinuity grows with every worker.
+Agent harnesses such as Claude Code and Codex now carry memory of their own: instruction files, automatic memory, summaries of long conversations. That memory helps the agent recall, but what the agent writes there is not a record the human has agreed to.
 
-The scarce resource is no longer the model's memory but the human's attention and the context a session can hold. The shared memo now does two jobs: it keeps the design across sessions, and it tells agents, before they run, what the human has fixed and where the human wants to look.
+Parallel subagents usually start as new sessions, so the discontinuity grows with every worker. The shared memo tells each agent what the human has fixed and where the human wants to look before work begins.
+
+The scarce resources are the human's attention and the context a session can hold. The shared memo keeps the design across sessions while giving each agent the context it needs.
 
 The harness can also hold part of the loop. Where it offers hooks, agent definitions, and imports, DDL's adapters make a STOP hold until the human speaks, keep workers in their roles, and keep the memo in context; the rules themselves do not change, and a session without those mechanisms runs them as instructions.
 
------
-
-## 💡 Core Principle
+## Core Principle
 
 ```
 Human ←→ Document ←→ LLM
@@ -47,9 +42,7 @@ However, design issues may be discovered during implementation. When that happen
 
 Ultimately, code becomes the source of truth. DDL documents get integrated into code or docs, and are deleted when no longer needed. No need to be formal about it.
 
------
-
-## 🔄 The Loop
+## The Loop
 
 ```
       Draft
@@ -66,11 +59,26 @@ Write how the code will be used before implementing it. Verify the API is usable
 
 ```python
 # Draft: Write usage before implementation
-async with Client("https://api.example.com") as c:
-    users = await c.get("/users")  # Is this usage good?
+async with Client(
+    "https://api.example.com"
+) as c:
+    users = await c.get("/users")
 ```
 
-Some decisions cannot be separated from the experience. A library's language is its usage; a streaming interface may depend on its framework; an organization may require a platform. Draft records these as **Binding Decisions**, each with the reason it binds and its source (the human's words and the date, or the human's approval of a report that listed it):
+Some decisions cannot be separated from the experience. A library's language is its usage; a streaming interface may depend on its framework; an organization may require a platform. Draft records these as **Binding Decisions**, with the reason each binds and its source.
+
+For example, a streaming answer interface might have this decision:
+
+> **Decision:** Next.js App Router.
+>
+> **Why it binds:** Answers stream in while they are written, and per-route loading and error states are the core of the experience.
+>
+> **Source:** "I want to build it with Next.js", "Yes, App Router" (2026-10-17).
+
+The source is the human's words and date, or the human's approval of a report that listed the decision.
+
+<details>
+<summary>Copy this example into design.md</summary>
 
 ```markdown
 ## Binding Decisions
@@ -79,9 +87,15 @@ Some decisions cannot be separated from the experience. A library's language is 
 | Next.js App Router | Answers stream in while they are written, and per-route loading and error states are the core of the experience | "I want to build it with Next.js", "Yes, App Router" (2026-10-17) |
 ```
 
-When you already see the path to implementation, Draft records it as **Direction**: stages, parallel lanes, and the points where the human wants to look. Direction is an outlook, not a contract. **Acceptance Gates** say what must hold when the work is done: commands that must pass, and approvals the human will give. They are retired once the work is accepted.
+</details>
 
-Only the human binds. The LLM may propose a technology; it stays unbound until the human chooses it. Technology already present in the code is an existing premise: commands show it in their reports, and design.md does not record it; it becomes a Binding Decision only when the human gives a reason.
+When you already see the path to implementation, Draft records it as **Direction**: stages, parallel lanes, and the points where the human wants to look. Direction is an outlook, not a contract.
+
+**Acceptance Gates** say what must hold when the work is done: commands that must pass, and approvals the human will give. They are retired once the work is accepted.
+
+Only the human binds. The LLM may propose a technology; it stays unbound until the human chooses it.
+
+Technology already present in the code is an existing premise: commands show it in their reports, and design.md does not record it. It becomes a Binding Decision only when the human gives a reason.
 
 ### Realize
 
@@ -97,13 +111,9 @@ If you learn something from implementation, update the documents. Check the code
 
 Sometimes your fingers fly across the keyboard so fast that code outpaces design. In the harness era, they are often the agent's fingers.
 
----
-
 Realize and Reflect are roughly inverse functions.
 
------
-
-## 🤝 Roles: Human and LLM
+## Roles: Human and LLM
 
 In DDL, Human and LLM are equal partners.
 
@@ -116,13 +126,15 @@ Human controls the pace and corrects LLM's short-term bias.
 
 When agents run long and in parallel, the human's share becomes concrete: decide what binds, decide where to look, and approve at those gates. Agents work between the gates.
 
-At each gate, the agent leads with the concrete decision, its recommendation and reason, and what approval would authorize. Short prose is the default; detailed evidence is available separately, while material risks and unknowns stay visible. The human answers one native clickable question at a time, with optional free text. Only an explicit submitted answer about the current report and scope approves work; requesting details or revisions does not. Cancelling, dismissing, leaving the question unanswered, and timing out approve nothing.
+When a decision is needed, the agent first explains what to decide, its recommendation and reason, and what approval would authorize. The report uses short prose, keeps material risks and unknowns visible, and offers detailed evidence separately.
+
+The human answers one native clickable question at a time, with optional free text. Only an explicit submitted answer approving the current report and scope permits work. Details, revisions, cancellation, dismissal, no answer, and timeout are not approval.
+
+A report of completed or read-only work needs no approval by itself. If a next step needs direction, the agent asks about that specific action; choosing it does not waive its own approval gates.
 
 Native approval UI depends on the host and mode. When it is unavailable or not permitted, the agent states the limitation and stops instead of automatically substituting typed choices. A request receipt is not the human's answer.
 
------
-
-## 🌊 Stay Flexible
+## Stay Flexible
 
 DDL is not a strict procedure.
 
@@ -133,9 +145,7 @@ When work flows, let it flow.
 
 What matters is updating documents after the work (Reflect).
 
------
-
-## ⚠️ Anti-Patterns
+## Anti-Patterns
 
 | Pattern                      | Problem                          |
 |------------------------------|----------------------------------|
@@ -151,26 +161,18 @@ What matters is updating documents after the work (Reflect).
 | Treating Direction as a contract | The outlook hardens into a plan nobody revisits |
 | Approving from a summary | A compacted conversation is not the report; the human approves what is in front of them |
 
------
+## Summary
 
-## 📋 Summary
-
-DDL is not a strict methodology—it's a collection of purposes and designs.
-
-It's temporary notes for Human and LLM to continue sharing design across sessions, agents, and harnesses.
+DDL uses temporary notes to help Human and LLM share purposes and designs across sessions, agents, and harnesses. The loop stays flexible as implementation teaches you more.
 
 Ultimately, code becomes the source of truth. Delete DDL documents when no longer needed.
 
-> **Tool-Assisted Option**: [Claude Code](../../claude-code/) (`/draft`, `/realize`, `/reflect` + support commands) | [OpenAI Codex](../../codex/) (`$draft`, `$realize`, `$reflect` + support skills)
+**Tool-Assisted Option:** [Claude Code](../../claude-code/) (`/draft`, `/realize`, `/reflect` + support commands) | [OpenAI Codex](../../codex/) (`$draft`, `$realize`, `$reflect` + support skills)
 
------
+## Changelog
 
-## 📝 Changelog
-
-| Date       | Change                    |
-|------------|---------------------------|
-| 2026-11-01 | Decision reports lead with the recommendation, reason, and consequence; native questions handle one decision at a time, and unavailable approval UI stops the command. |
-| 2026-10-20 | Refine Japanese sentence structure while preserving meaning and section organization. |
-| 2026-10-18 | Instructions and mechanisms (In the Harness Era); Tool-Assisted Option links to `claude-code/` and `codex/` |
-| 2026-10-17 | Harness-era revision: harness-era background; Binding Decisions, Direction, and Acceptance Gates in Draft, with Acceptance Gates retired once the work is accepted; the human's role at gates; three anti-patterns; removed the Scribe Plugin option; approval of a report as a Binding Decision source, and technology already in the code as an existing premise; context-engineering background and one anti-pattern |
-| 2026-01-04 | Initial version |
+- **2026-11-01:** Decision reports lead with the recommendation, reason, and consequence; native questions handle one decision at a time, and unavailable approval UI stops the command. Improve reading flow, render the decision example, and keep copyable Markdown optional. Clarify that informational reports do not require approval by themselves.
+- **2026-10-20:** Refine Japanese sentence structure while preserving meaning and section organization.
+- **2026-10-18:** Instructions and mechanisms (In the Harness Era); Tool-Assisted Option links to `claude-code/` and `codex/`.
+- **2026-10-17:** Harness-era background; Binding Decisions, Direction, and Acceptance Gates in Draft, with Acceptance Gates retired once the work is accepted; the human's role at gates; three anti-patterns; removed the Scribe Plugin option. Add report approval as a Binding Decision source and treat technology already in code as an existing premise. Add context-engineering background and one anti-pattern.
+- **2026-01-04:** Initial version.

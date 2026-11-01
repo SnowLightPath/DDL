@@ -1,12 +1,24 @@
-# DDL Documentation
+# Read about Design-Doc Loop
 
-Design-Doc Loop (DDL) documentation.
+Start with the short explanation of DDL. Read the extended version for the reasoning, examples, and related ideas.
 
-## Languages
+| Read | English | 日本語 |
+|---|---|---|
+| **The core idea** | [Start here](./en/design_philosophy.md) | [ここから読む](./ja/design_philosophy.md) |
+| **The deeper explanation** | [Rationale and examples](./en/design_philosophy_extended.md) | [背景と実践例](./ja/design_philosophy_extended.md) |
 
-| Language | Core | Extended |
-|----------|------|----------|
-| English | [design_philosophy.md](./en/design_philosophy.md) | [design_philosophy_extended.md](./en/design_philosophy_extended.md) |
-| 日本語 | [design_philosophy.md](./ja/design_philosophy.md) | [design_philosophy_extended.md](./ja/design_philosophy_extended.md) |
+## Put it to work
 
-日本語の訳語は [GLOSSARY.md](./ja/GLOSSARY.md) に従います。
+Choose the setup guide for your tool:
+
+- [Codex](../codex/README.md): use the GUI with native choices; the guide explains the known CLI limit.
+- [Claude Code](../claude-code/README.md): install DDL and start with `/draft`.
+
+For a quick overview and command mapping, return to the [project README](../README.md).
+
+<details>
+<summary>Maintaining DDL?</summary>
+
+The [maintainer reference](./maintainers/README.md) covers adapters, generation, validation, and translation references.
+
+</details>

@@ -1,8 +1,10 @@
-# 用語集（日本語版の訳語）
+# 用語集（翻訳・編集用の内部資料）
 
-この用語集は英語版（`docs/en/`）を正本として日本語版（`docs/ja/`）を訳すときの対応表である。訳し直すときはこの表に従い、表に無い語を新しく訳したら表に足す。機械検査（design.md の V50）では、「使わない訳」の列の語が日本語版に残っていないか、主要な訳語が日本語版に現れているかを確かめる。
+> このページは翻訳者、編集者、エージェントが日本語版を保守するための内部資料です。DDL を使う方は[基本ガイド](./design_philosophy.md)や[詳説版](./design_philosophy_extended.md)をご覧ください。
 
-## 方針
+この用語集は英語版（`docs/en/`）を正本として日本語版（`docs/ja/`）を訳すときの対応表である。保守者は訳し直すときにこの表に従い、表に無い語を新しく訳したら表に足す。機械検査（design.md の V50）は「使わない訳」の列の語が日本語版に残っていないか、主要な訳語が日本語版に現れているかを確かめる。
+
+## 翻訳・編集の方針
 
 - 節の名前とディレクティブは英語のまま書く。Experience、Binding Decisions、Direction、Acceptance Gates、Validation、Scopes、Principles、Intent、Detection Targets、`+++STOP`、`+++SWARM`、`+++NEVER`、`+++DDL_REPORT`、D1 や G7 の名前、`passed` や `Unbound:` のような印は訳さない。
 - 固有名詞と文献は原文のまま書く。人名（Clark & Chalmers、Nonaka & Takeuchi など）、組織と製品（Anthropic、OpenAI、Claude Code、Codex、Spec Kit、Kiro、Tessl、Next.js）、方法論の略語（SECI、DocDD、ADR、TDD、DbC、SDD、AI-DLC、MCP）、ファイル名と識別子（design.md、CLAUDE.md、AGENTS.md、`.claude/settings.json`、`explorer`、`worker`）はそのまま。参考文献の節は英語のままにする。

@@ -1,117 +1,86 @@
 # DDL for Claude Code
 
-The Claude Code side of [Design-Doc Loop (DDL)](../docs/en/design_philosophy.md): the command skills, the protocol skill `ddl-protocol`, and the adapter. This directory has the layout of a project's `.claude/`: `CLAUDE.md` (the template for a project's `.claude/CLAUDE.md`), `skills/<name>/SKILL.md` for the eight commands and `ddl-protocol`, and the adapter (`settings.json`, `agents/`, `hooks/`).
+Describe the experience you want, review the plan, and keep the design aligned with the code. DDL adds `/draft`, `/realize`, `/reflect`, and five supporting commands to Claude Code.
 
-## Installation
+## Quick start
 
-**In the environment** (recommended). One clone serves every project:
+Install once; Python 3 is required.
 
 ```bash
 git clone https://github.com/SnowLightPath/DDL.git
 bash DDL/bin/install.sh --claude
 ```
 
-The script symlinks `~/.claude/skills/<name>` for the nine skills, `~/.claude/agents/explorer.md` and `worker.md`, and `~/.claude/hooks/ddl_gate.py`, and merges the DDL fragment into `~/.claude/settings.json`: the gate hooks, `env` `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=1`, `permissions.ask` for `Bash(git push *)`, and `attribution` off. Existing settings are kept, and the first time `settings.json` is changed a copy is kept next to it as `settings.json.ddl-backup`. Without `--claude`, it installs for each runtime whose home directory exists (`~/.claude`, `~/.codex`); when neither exists, the script stops and asks for `--claude` or `--codex`. `--dry-run` prints what install, doctor, and uninstall would do without writing. `bash DDL/bin/doctor.sh` checks the install: it lists every link and merged entry as OK or not OK, runs the gate's tests, ends with `N OK, M not OK`, and exits 1 when anything is not OK. `bash DDL/bin/uninstall.sh` removes the links and the merged fragment. To update, `git pull` in the clone (the links follow) and run `bash DDL/bin/install.sh` again; it is idempotent.
-
-A project then needs only `design.md` and a short instruction file:
+For a project without a Claude Code instruction file, add the template:
 
 ```bash
 mkdir -p your-project/.claude
 cp DDL/claude-code/CLAUDE.md your-project/.claude/CLAUDE.md
 ```
 
-**In the project.** Copy this directory into the project's `.claude/` (`bash DDL/bin/install.sh --project your-project --claude` makes the same copy, skipping the README and keeping an existing `CLAUDE.md`):
+Change `# Project Name` in the copied file. If the project already has instructions, merge the DDL guidance rather than overwriting them. The template imports `design.md`; start with `/draft` to create the design instead of adding an empty file.
 
-```bash
-cp -R DDL/claude-code/{CLAUDE.md,settings.json,agents,hooks,skills} your-project/.claude/
+Open Claude Code in the project, complete its folder-trust prompt when shown, and describe what you want:
+
+```text
+/draft Search with a Retry button
 ```
 
-Claude Code runs project hooks after you trust the folder.
-
-- Edit the `# Project Name` title in the copied `CLAUDE.md`.
-- A command skill runs on `/name`; its frontmatter shows an argument hint and keeps the model from starting it on its own (`disable-model-invocation`). Commands look up the protocol, when it is not already in context, in the project's copy `.claude/skills/ddl-protocol/SKILL.md`, then the user-level copy `$HOME/.claude/skills/ddl-protocol/SKILL.md`.
-- What loads when: Claude Code loads `CLAUDE.md` at session start and re-injects it after compaction; `CLAUDE.md` imports design.md then; the protocol and a command load when the command runs (Phase 0); a worker's prompt is its whole context.
-- The adapter: `settings.json` (the gate hook on PreToolUse, Stop, UserPromptSubmit, and SessionStart; spawn depth 1; an ask rule before `git push`; attribution off), `agents/` (`explorer` for read-only work, `worker` for writers), and `hooks/ddl_gate.py`. `CLAUDE.md` imports design.md with the line `@../design.md`, so the notebook is in context from session start. The gate is a `python3` script (standard library only); if `python3` is missing, the hook fails open and the rules hold as instructions. The adapter enforces the mechanical part of the rules (a STOP holds until you speak, workers keep their roles); the rules are the same without it, as instructions (protocol §2.5).
-- A project can add an overlay in `commands/<name>.md` at the project root to give a command project facts (target paths, protected terms, validation commands) without copying the whole command, and a project's own copy of a command (`.claude/skills/<name>/SKILL.md`) takes precedence over the user-level one.
-
-### Decision reports and approval
-
-At a STOP, the report leads with the concrete decision, the recommended action and its reason, and the consequence of approval. Short prose is the default; a table is optional. Material risks and unknowns stay in the report, while detailed evidence is available separately.
-
-Claude Code uses its native question UI for one decision at a time, with optional free text. The question is the final STOP interaction; a synchronous question waits for the actual answer. Only an explicit submitted answer approving the current report and scope permits work. Requesting the UI, cancelling, dismissing, making no selection, and timing out are not approval. Asking for details or a revision clarifies or updates the report and leads to another question. If the native question UI is unavailable or not permitted, the agent states the limitation and stops; it does not automatically replace it with typed choices. Protocol §2.5 defines the runtime mapping.
-
-Observed 2026-11-01 in Claude Code 2.1.316: idle timeout settings are `60s`, `5m`, `10m`, and `never` (the default); Remote Control disables the idle timer. A 60-second timeout returned host-only `afkTimeoutMs: 60000`, even with selected but unsubmitted answers and source `user_temporary`. An explicit human submission under the same settings omitted that field. The gate excludes results with non-null `afkTimeoutMs` from human-input boundaries, keeping STOP pending after that automatic result. The agent still decides whether a genuine submission approves the current report and scope.
-
-### Gate coverage
-
-The catch-all matcher covers every tool name dispatched through PreToolUse. While STOP is pending, the gate permits exact known reads, human questions, and bounded literal shell reads; unknown tools and worker follow-ups are denied. A question tool alone does not reopen it. Use `cat`, `head`, `tail`, `rg`, or `sed -n '1,10p' file` for report clarification; general sed/awk scripts, environment overrides, expansions and unsupported utility-profile options do not pass. Static classification does not sandbox ambient configuration or executable behavior.
-
-The gate checks pending state and tool calls; the agent still judges whether a submitted answer explicitly approves the current report and scope. Report clarity and the native question interaction are protocol instructions, not properties certified by the hook.
-
-Rerun install after this update because the universal matcher is merged into settings, while only the gate script is linked. Reinstall copied project adapters too. Doctor executes configured hook commands in isolation and runs the adapter-dispatch tests; trust and native interactive UI behavior remain separate checks. Claude Code's native push permission rule is unchanged.
-
-Do not create an empty `design.md`: `/realize`, `/reflect`, and `/validate` refuse to run without one, and an empty file defeats that guard. Run `/draft` instead; it writes `design.md` from the experience you describe.
+Review the draft before saving it. Use `/realize` when you are ready to review an implementation plan, then `/reflect` to compare the result with the design.
 
 ## Commands
 
-### Core Loop
+| Command | Use it to… |
+|---|---|
+| `/draft` | Describe the experience and review the design before saving |
+| `/realize` | Implement an approved plan |
+| `/reflect` | Propose updates that align the design and implementation |
+| `/validate` | Run project checks and mechanical acceptance gates |
+| `/resonate` | Reconcile multilingual documents |
+| `/docs` | Review documentation and propose corrections |
+| `/refactoring` | Review code quality and propose refactors |
+| `/commit` | Commit verified changes; `/commit remote` also proposes a push |
 
-| Command | Usage | Intent |
-|---------|-------|--------|
-| `/draft` | `/draft`, `/draft <feature>`, `/draft <feature> <technology or outlook>` | Capture ideal experience, and the decisions and outlook it depends on, before implementation |
-| `/realize` | `/realize`, `/realize <feature>` | Manifest philosophy as working code |
-| `/reflect` | `/reflect`, `/reflect <path>` | Update documents based on implementation |
+`draft` and `realize` accept a feature; `reflect`, `resonate`, `docs`, and `refactoring` accept a path; `validate` accepts a scope. You do not invoke `ddl-protocol` yourself.
 
-### Support Commands
+## Decision points
 
-| Command | Usage | Intent |
-|---------|-------|--------|
-| `/validate` | `/validate`, `/validate <scope>` | Run mechanical validation per scope: the Validation commands (lint/test/build) and the mechanical gates in Acceptance Gates |
-| `/resonate` | `/resonate`, `/resonate <path>` | Synchronize multilingual document versions |
-| `/commit` | `/commit` (local only), `/commit remote` (commit and push) | Record verified changes to repository |
-| `/docs` | `/docs`, `/docs <path>` | Audit and fix documentation quality |
-| `/refactoring` | `/refactoring`, `/refactoring <path>` | Audit and fix code quality |
+The report explains what needs deciding, the recommendation and reason, and what approval authorizes. Material risks and unknowns stay visible; detailed evidence is available separately.
 
-## The Loop
+Claude Code presents one native question at a time, with optional free text. Only an explicit submitted answer approving the current report and scope permits work. A cancelled, dismissed, unanswered, or timed-out question approves nothing. Asking for details or revisions leads back to the report and question. If the native interface is unavailable or not permitted, DDL explains the limitation and stops without a typed-choice fallback.
 
+For tested versions, timeout behavior, and technical verification limits, see the [native question notes](../docs/maintainers/README.md#native-question-observations).
+
+## Updates and other installation options
+
+After pulling updates in the DDL clone, rerun the installer when the settings fragment changes. Reinstalling is idempotent and keeps unrelated settings.
+
+```bash
+bash DDL/bin/install.sh --claude
+bash DDL/bin/doctor.sh --claude
 ```
-      Draft
-        ↓
-Design Document ⇄ Code
-   (Realize ↓  ↑ Reflect)
+
+For a project-contained installation, use the existing installer:
+
+```bash
+bash DDL/bin/install.sh --project your-project --claude
 ```
 
-## Command Structure
+It copies the adapter and skills, skips the README, and keeps an existing instruction file. Claude Code runs project hooks after you trust the folder. Rerun the project install when updating copied files.
 
-Every command follows the DDL-PROTOCOL defined in the protocol skill `ddl-protocol` (`skills/ddl-protocol/SKILL.md`):
+Preview with `--dry-run`, or remove DDL's links and settings fragment with `bash DDL/bin/uninstall.sh --claude`. Details and backup behavior are in the [maintainer reference](../docs/maintainers/README.md#installation-reference).
 
-1. **Phases** — ordered steps (INIT → SURVEY/READ → WORK → REPORT (+++STOP) → EXECUTE → VERIFY). A phase that follows a `+++STOP: always` opens with a **Pre-condition** line: enter only after explicit approval at that STOP
-2. **+++DETECT** — automated checks that run in parallel within their phase (D1, D2, … per command)
-3. **+++SWARM** — parallel workers that fan out over scopes, Direction lanes, or files when 2 or more exist, one per unit or batch (`team:`, `spawn:`, `type:`, `max:`, `batch:`, `each:`, `collect:`), run with the runtime's own mechanism (protocol §2.5); without a parallel primitive, the lead executes the assignments itself; each worker's prompt is its whole context: the scope's paths, the Experience items the scope serves, the principles, the Binding Decisions, the Direction stage, the scope's validation commands, the rows the user approved for the phase (verbatim), and in `/realize` the approved plan (protocol §2.4 Step 3)
-4. **+++STOP** — mandatory human approval before mutating shared artifacts; the agent presents the current report under `+++DDL_REPORT`, requests a native choice as its final STOP interaction, and waits for an explicit submitted approval, starting or continuing no worker until then (protocol §1.5). `+++STOP: always` halts at REPORT, and `+++STOP: on D{n}` halts when that DETECT fires. Human gates written in design.md (Direction and Acceptance Gates) run as STOPs too. Advance approval applies only to design.md human gates the user names or explicitly waives, and is written after that gate at once as `approved in advance (<date>)`; it never skips a STOP written in a command file. A conversation summary (compaction) is not a user message and approves nothing: when the report a STOP asked about is no longer in context verbatim, the command rebuilds it from design.md, git, and the files it described and asks again, and what the user approves is written to design.md at once (protocol §1.5)
-5. **+++Report** — the decision content the agent presents at a STOP; concise prose is the default and tables are optional
-6. **+++DDL_PHASE** / **+++DDL_REPORT** — output markers: `+++DDL_PHASE: <PhaseName>` on the first line of a phase that mutates state, and `+++DDL_REPORT` as the heading above the decision report at every STOP
-7. **+++NEVER** — invariants that must never be violated
+<details>
+<summary>Maintainer details: phases and runtime files</summary>
 
-## design.md Sections
+The command structure is defined by the shared [DDL protocol](./skills/ddl-protocol/SKILL.md):
 
-`design.md` holds these sections; each item names who writes it. A project uses only the sections it needs. Retiring a section (a spent Direction, accepted Acceptance Gates) also shrinks what every later session loads. Experience is always needed and comes first; Binding Decisions, Direction, and Acceptance Gates are optional, and `/draft` asks about them only when the user's words point to them:
+`INIT → SURVEY/READ → WORK → REPORT (+++STOP) → EXECUTE → VERIFY`
 
-1. **Intent** — why the project exists. Written by the human
-2. **Scopes** — the scope table that drives SWARM. Written by the human and `/reflect`
-3. **Principles** — design principles, under `## Principles` or `## Core Principles`. Written by `/draft` (D5) and `/reflect`
-4. **Experience** — consumer-side usage with inputs, outputs, and error / empty / boundary states. Written by `/draft` and `/reflect`
-5. **Binding Decisions** — technology fixed before implementation because the Experience depends on it, an external constraint requires it, or the human prefers it and says so (Decision, Why it binds, Source); only the human binds. Written by the human through `/draft`; `/realize` records a delegated choice once the human approves it
-6. **Direction** — non-binding outlook: stages, parallel lanes, what the human sees, and each stage's gates; `/realize` appends `passed <date>` to each gate that passes (after `approved in advance (<date>)` when the gate was waived) and writes the approved plan under the table as `Approved plan (<date>)`. Written by `/draft`; `/realize` marks gates passed and writes the Approved plan lines; `/reflect` retires passed stages with their Approved plan lines
-7. **Acceptance Gates** — mechanical gates and human gates that define done; the work is accepted when `/realize` has marked every gate passed, and `/reflect` then retires the section (lasting checks move to Validation). Written by `/draft`; `/realize` marks gates passed; `/reflect` retires the section
-8. **Validation** — per-scope mechanical checks. Written by the human and `/reflect`
+`+++DDL_PHASE` marks a mutating phase and `+++DDL_REPORT` heads the report at a STOP. The protocol defines approval, resume, compaction, and worker rules; the adapter supplies mechanical guardrails on dispatched calls rather than complete STOP enforcement.
 
-See protocol §3 (`skills/ddl-protocol/SKILL.md`).
+This directory mirrors a project's `.claude/`: [CLAUDE.md](./CLAUDE.md), [settings.json](./settings.json), command skills, agent definitions, and the gate hook. For source ownership, project overlays, session loading, and verification, use the [maintainer reference](../docs/maintainers/README.md).
 
-## Philosophy
+</details>
 
-These commands are **optional tools**, not required process.
-
-From design_philosophy.md:
-> DDL is not a rigid process—it's a collection of desired designs.
-> DDL documents are not final artifacts—they're temporary notes until the design is reflected in code.
+[Read the philosophy](../docs/README.md) · [Back to DDL](../README.md)
