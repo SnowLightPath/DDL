@@ -1,5 +1,5 @@
 {
-  "$comment": "DDL adapter for Claude Code (protocol §2.5). The gate hook enforces the mechanical half of +++STOP: after a +++DDL_REPORT and until the next human message, mutating tools are denied. The spawn depth of 1 keeps fan-out with the lead (only the lead starts workers). A push is confirmed at the moment it runs, on top of the approval in the /commit report, and commits carry no AI attribution. The rules themselves live in the commands and the protocol and stay the same without this file; the adapter only enforces their mechanical part.",
+  "$comment": "DDL adapter for Claude Code (protocol §2.5). The gate hook enforces the mechanical half of +++STOP: after a +++DDL_REPORT and until the next human message, mutating tools are denied. The spawn depth of 1 keeps fan-out with the lead (only the lead starts workers). A push is confirmed at the moment it runs, on top of the approval in the /commit report, and commits carry no AI attribution. The rules themselves live in the commands and the protocol and stay the same without this file; the adapter only enforces their mechanical part. The catch-all matcher checks tool calls dispatched through PreToolUse; only verified read operations and bounded literal shell forms pass while STOP is pending. Unknown tools and worker follow-ups are denied.",
   "env": {
     "CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH": "1"
   },
@@ -16,7 +16,7 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "^(Edit|Write|NotebookEdit|Bash|Agent|SendMessage|TaskCreate|TaskUpdate|mcp__.*)$",
+        "matcher": "*",
         "hooks": [
           {
             "type": "command",

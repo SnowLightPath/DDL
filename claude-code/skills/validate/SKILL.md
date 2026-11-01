@@ -45,7 +45,7 @@ A command run from a user-level install follows the project's own copy when one 
   collect: lead aggregates per-scope results into a PASS/FAIL matrix
 ```
 
-Mechanical gates from Acceptance Gates that name no scope are run by the lead and reported as their own rows.
+Mechanical gates from Acceptance Gates that name no scope are run by the lead and reported as named results.
 
 +++DETECT:
   D1: Silenced Failure — Non-zero exit code, or output other than the expected value declared with the command, reported as PASS
@@ -58,11 +58,14 @@ Mechanical gates from Acceptance Gates that name no scope are run by the lead an
 
 +++STOP: always
 
-Report per §1.5 of the protocol with the table below. Do not auto-fix.
+Report per §1.5 of the protocol. Do not auto-fix.
 
 +++Report:
-| # | Scope | Validation Command | Status | Output Excerpt | Suggested Next Command |
-|---|-------|--------------------|--------|----------------|------------------------|
+Outcome: the overall PASS/FAIL result and every unresolved failure or blocker, without a full command inventory in the main report.
+Recommendation: the next command selected below, with a short reason.
+Consequence: choosing that command starts its workflow, not an automatic fix or a waiver of its approval gates.
+Review detail: each scope or gate's Validation Command, Status, exit code and Output Excerpt, with the corresponding detection code where applicable.
+Choices: request next direction one decision at a time per protocol §1.5 when needed; otherwise state that no approval is required and end the turn.
 
 If any FAIL or detection target fired, list it explicitly with the corresponding D-code.
 Choose the suggested next command before emitting the STOP report — `/validate` itself never edits:

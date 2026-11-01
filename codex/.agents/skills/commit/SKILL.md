@@ -49,19 +49,15 @@ Run validation checks in parallel:
 +++STOP: always
 
 +++Report:
-| Field | Value |
-|-------|-------|
-| Files | {list of changed files} |
-| Scope | {affected design.md scopes} |
-| Message | {commit message} |
-| Detection | {any targets that fired} |
-| Push | {no, or the remote and branch} |
-
-Wait for user approval before proceeding.
+Decision: create the proposed commit, revise it, or leave it uncommitted.
+Recommendation: the commit's purpose and why the proposed files belong together; keep material detections visible.
+Consequence: commit exactly `Files` with the exact `Message`; state whether `Push` is no or names the remote and branch, and include any requested push in the selected action explicitly.
+Review detail: the complete `Files` list, affected `Scope`, exact `Message`, every material `Detection`, and `Push`. All must be accessible before approval; a brief summary does not replace review of the full proposed set.
+Choices: request the concrete commit action through protocol §1.5. Approval of a different file set, message, or push target is not approval of this proposal.
 
 ### Phase 3: COMMIT
 
-**Pre-condition.** Enter this phase only after explicit user approval at the Phase 2 STOP gate (per §1.5 of the protocol). If the most recent user message is not an approval token, return to Phase 2 and re-emit the report.
+**Pre-condition.** Enter this phase only after explicit user approval of its scope at the Phase 2 STOP gate (per §1.5 of the protocol). If the actual answer does not authorize this work, return to Phase 2 and re-present the current decision.
 
 1. Stage approved files
 2. Verify that `git diff --staged --name-only` matches the approved `Files` set exactly. If it does not, do not commit; return to Phase 2 with the mismatch.

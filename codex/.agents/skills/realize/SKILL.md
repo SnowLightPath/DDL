@@ -44,11 +44,11 @@ A command run from a user-level install follows the project's own copy when one 
 
 +++STOP: always
 
-Present the implementation plan: files to touch, principles applied, how each Binding Decision is honored, the Direction stage to start from and any planned deviation, and the gates to pass. For each `Unbound:` line marked delegated, state the choice and its reason; for a line marked awaiting choice, list its options and ask the user to pick one. An argument that names a technology different from a Binding Decision on the same topic is shown as a Binding Decision change with the D6 options; approving the plan does not approve that change unless the user says so explicitly. Wait for user approval before entering Phase 2. Per §1.5 of the protocol, this STOP ends the turn — no mutating tool until approval.
+Lead with the decision to implement the proposed plan, the recommended approach and reason, and what approval authorizes (protocol §1.5). Make the files to touch, principles applied, how each Binding Decision is honored, the Direction stage to start from and any planned deviation, and the gates to pass available as review detail before approval. For each `Unbound:` line marked delegated, state the choice and its reason; for a line marked awaiting choice, present its options one decision at a time. An argument that names a technology different from a Binding Decision on the same topic is shown as a separate Binding Decision change with the D6 options; approving the plan does not approve that change unless the user says so explicitly. Wait for user approval before entering Phase 2. Execute this STOP through the native choice and waiting procedure of protocol §1.5; request receipt never authorizes implementation.
 
 ### Phase 2: IMPLEMENT
 
-**Pre-condition.** Enter this phase only after explicit user approval at the STOP that preceded it: the Phase 1 plan on first entry, later a stage's human gate, a D1 or D6 STOP, or a D7 STOP from Phase 3 (per §1.5 of the protocol). If the most recent user message is not an approval token, return to the phase whose STOP is pending and re-emit its report.
+**Pre-condition.** Enter this phase only after explicit user approval at the STOP that preceded it: the Phase 1 plan on first entry, later a stage's human gate, a D1 or D6 STOP, or a D7 STOP from Phase 3 (per §1.5 of the protocol). If the actual answer does not authorize the proposed scope, return to the phase whose STOP is pending and re-present its current decision.
 
 On first entry, move into `## Binding Decisions` only the delegated `Unbound:` lines whose choice the approved plan stated and the lines the user picked, with Source `approved in $realize plan (<date>)`; write the plan's durable parts under `## Direction` as `Approved plan (<date>)` (protocol §3). Whenever the user approves gates in advance, at the plan or at a later STOP, write `approved in advance (<date>)` after each such gate at once (protocol §3).
 
@@ -101,15 +101,11 @@ After a stage, run that stage's mechanical gate and the validation commands of t
 +++STOP: always
 
 +++Report:
-| Item | Content |
-|------|---------|
-| Implemented | {files, scopes, key decisions} |
-| Binding Decisions | {honored, or changed with the user's approval} |
-| Direction | {stages done; deviations and why} |
-| Gates | {mechanical results; human gates passed; advance-approved gates and what each would have shown} |
-| Detection | {targets that fired and their resolution} |
-
-Suggest: "Run `$reflect` to verify alignment"
+Outcome: what now works, what remains unresolved, and whether any user decision is needed.
+Recommendation: `$reflect` to verify alignment, with a short reason when asking for that next direction.
+Consequence: selecting the next command starts its workflow; it does not approve unreviewed changes or waive its STOPs.
+Review detail: implemented files/scopes and key decisions; Binding Decisions honored or explicitly changed; Direction stages and deviations; mechanical results and actual human gates passed; advance-approved gates and what each would have shown; detections and their resolution. Distinguish native checks from simulated checks and unverified behavior.
+Choices: ask for next direction only if a decision is needed, following protocol §1.5. Do not ask the user to approve work already completed.
 
 ## Constraints
 

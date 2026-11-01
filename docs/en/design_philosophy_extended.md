@@ -212,12 +212,18 @@ A harness now executes part of the protocol itself. Claude Code and Codex both o
 
 | Directive | Rule | Mechanism |
 |-----------|------|-----------|
-| `+++STOP` | After the report, the turn ends and nothing mutates until the human speaks | A gate hook reads the conversation record and refuses edits, writing shell commands, worker starts, and MCP tool calls after a `+++DDL_REPORT` until the next human message |
+| `+++STOP` | Present the decision report and wait for explicit approval of its current scope; nothing mutates and no worker starts or continues before approval | The PreToolUse matcher checks every tool name on paths that reach the hook. Until the next human message, the gate permits only exact known read tools, polling without input or termination, human-question tools, and bounded literal read-only shell forms; edits, worker starts, messages and resumes, and unknown calls are denied |
 | Phase 0 | design.md is in context before any work | An import in the instruction file (Claude Code) or an injection at session start (Codex), both repeated after a compaction |
 | `+++SWARM` `type:` | A read-only worker edits nothing and starts no workers; no worker starts workers | Agent definitions named `explorer` and `worker` in both runtimes; where the runtime allows, the definition removes the editing tools from `explorer` and the agent tools from both, and the spawn depth is one |
-| `+++NEVER` (outward actions, attribution) | A push is confirmed when it runs; commits carry no AI attribution | A permission rule that asks before `git push`, and a setting that turns the attribution off |
+| `+++NEVER` (outward actions, attribution) | A push requires the report's human approval and, where the session policy permits it, confirmation at execution; commits carry no AI attribution | Native permission rules request `git push` confirmation. An independent Codex guard rejects recognized static push forms that miss its native rule, without rewriting commands or granting permission. Explicit no-confirmation modes waive only this form guard; STOP still applies. Claude Code disables attribution through a setting; Codex adds none |
 
-Three rules keep this organic rather than bolted on. First, the mechanism enforces only what the harness can decide mechanically: the gate knows that a report was emitted and that no human has spoken since, and nothing more. Whether a reply is an approval is a matter of language, and stays with the agent. Second, the rule does not change with the mechanism. An untrusted project, a session without hooks, or a runtime without an adapter runs the same commands under the same rules, as instructions; the adapter adds enforcement and never adds a rule. Third, the human's actions are the same in every runtime: the same place to stop, the same word to continue, the same lines written to design.md. What differs is how much the harness catches when the agent strays, and that difference is written in the runtime table, dated, not in the commands.
+Three rules keep these mechanisms an organic part of DDL. First, the adapter enforces only what it can check mechanically. The STOP gate tracks whether a report was emitted and whether a human has spoken since; deciding whether that reply approves the report stays with the agent. Separate checks classify tool calls and recognized static command forms, including Codex pushes. These static guardrails do not sandbox arbitrary scripts or executable and configuration behavior. Second, the rule does not change with the mechanism. An untrusted project, a session without hooks, or a runtime without an adapter runs the same commands under the same rules, as instructions; the adapter adds enforcement and never adds a rule. Third, the human's actions are the same in every runtime: the same place to stop, the same approval process, the same content recorded in design.md. What differs is how much the harness catches when the agent strays, and that difference is written in the runtime table, dated, not in the commands.
+
+Native question UI is a host capability, separate from the gate hook. Its availability and permitted use vary by host and mode; the absence of approval-capable UI stops the command rather than changing approval to typed choices. Report clarity and the interpretation of the submitted answer remain protocol instructions. Configured-hook tests check mechanical behavior and do not establish native UI availability, hook trust, or complete transcript-timing coverage.
+
+Native checks on 2026-11-01 found two important boundaries. Claude Code 2.1.316 offers idle timeout settings `60s`, `5m`, `10m`, and `never` (the default), with the idle timer disabled under Remote Control. A 60-second timeout returned host-only `afkTimeoutMs: 60000`, including selected but unsubmitted answers with source `user_temporary`; explicit human submission under the same settings omitted that field. The gate excludes non-null `afkTimeoutMs` results from human-input boundaries. This narrow check preserves the pending STOP after an automatic result; interpreting a genuine submission as approval remains the agent's responsibility.
+
+Codex CLI 0.166.0 Default accepted an asynchronous request and displayed its selector, but terminal control sequences removed the selector and restored the composer at turn completion; no answer arrived afterward. That route is not approval-capable, so the agent explains the limitation and stops without a typed-choice fallback. The Codex desktop host used for these checks accepted actual click replies after final messages; this is a result for that host, not every Codex surface. The observed asynchronous function exposed `questions`, `title`, and `options` with no timeout argument. The app-server schema's deprecated `autoResolutionMs` and required `isBlocking` fields are not those function arguments and do not establish a universal no-timeout guarantee.
 
 #### Structural Comparison
 
@@ -368,6 +374,8 @@ Example: `/reflect` defines its own targets (D1 Drift, D2 New Pattern, D3 Outdat
 
 A STOP gate is a mandatory human approval point. The system halts and presents its findings before making changes to shared artifacts.
 
+The report begins with the concrete decision, the recommended action and its reason, and what approval would authorize. Use short prose by default, with a table only when it helps the decision. Keep material risks and unknowns in the report; detailed evidence can be shown separately on request. One native clickable question handles one decision at a time, with optional free text.
+
 ```
 Phase N: Analysis complete
     ↓
@@ -378,7 +386,10 @@ Phase N+1: Apply approved changes only
 
 Rules:
 - STOP gates are **blocking** — never auto-proceed
-- A STOP ends the agent's turn: report under a `+++DDL_REPORT` heading, ask, stop. Work resumes only on an explicit approval, with no mutation in between
+- Present the report under a `+++DDL_REPORT` heading and use the supported native question as the final STOP interaction. A synchronous question waits for the actual answer. An asynchronous interface must keep the question answerable after turn completion; only on such a host does the agent end its turn after the request receipt and wait for the human's submitted answer. No other work follows the request before that answer
+- Work resumes only when an explicit submitted answer approves the current report and scope. Requesting the UI or receiving an acknowledgement such as `accepted: true` approves nothing. Cancellation, dismissal, no selection, and timeout are not approval
+- A request for details or revision clarifies or updates the report and leads to another question; it does not approve work
+- If approval-capable native UI is unavailable or its use is not permitted in the current mode, state the limitation and stop. Do not automatically substitute typed choices or use a tool whose contract forbids approval requests
 - No worker starts or continues between a STOP and its approval: a worker is read-only only where the runtime adapter removes its writing tools, and nowhere by guarantee. Where the adapter has a gate hook (§2.5), the harness refuses the call; elsewhere the rule holds as an instruction
 - Only the human approves: runtime notifications (for example, a worker finishing) and messages from other agents or sessions are not approvals
 - A conversation summary (compaction) is not a user message and approves nothing. When the report a STOP asked about is no longer in context verbatim, the command rebuilds it from design.md, git, and the files it described and asks again; an approval given after a summary applies only to a report emitted after that summary. A STOP that a restart interrupted is not resumed: the command runs again from the phase that stopped, skipping the stages whose gates are marked `passed`. What the human approves is written down at once, because the conversation is not durable
@@ -512,10 +523,19 @@ A web feature whose experience depends on its framework.
 ```
 Human: Internal knowledge search. The answer should appear while it is being written.
        I want to build it with Next.js.
-LLM:   I split this into experience and binding. Two questions: should it be limited
-       to the App Router? And what should the user see when nothing is found,
-       or when the search fails?
-Human: Yes, App Router. Nothing found: three related queries. Failure: keep the question, offer Retry.
+LLM:   [native question] Use App Router? Choose App Router or discuss another option;
+       optional text can explain the choice.
+Human: [submits] Yes, App Router.
+LLM:   [native question] What should users see when nothing is found?
+Human: [optional text, submitted] Three related queries.
+LLM:   [native question] What should users see when search fails?
+Human: [optional text, submitted] Keep the question, offer Retry.
+LLM:   +++DDL_REPORT
+       Record streaming search, these empty and failure states, and App Router in design.md.
+       I recommend recording them because the agreed experience depends on these choices.
+       Approval writes this draft only; implementation needs its own plan approval.
+       [native question] Record this draft, revise it, or stop?
+Human: [submits] Record this draft.
 ```
 
 Record in design.md:
@@ -545,11 +565,12 @@ LLM: Binding Decisions honored (package.json, app/). S0 passed `npm test`: its G
      cell now reads "`npm test`, passed 2026-10-20". S1 and S2 merged; both gates
      (`npx playwright test`, then human approval) moved to the end of the merged stage.
 LLM: +++DDL_REPORT
-     D6 Binding Violation: hosting serves static files only, so the server cannot
-     stream the answer, and streaming is why Next.js App Router binds. Options:
-     request a Node runtime, stream from a separate API server, show the answer
-     only when it is complete, or change the Binding Decision. You choose.
-     (turn ends; nothing runs until the human answers)
+     D6 Binding Violation: choose hosting that can stream the answer.
+     I recommend a Node runtime because streaming is why App Router binds.
+     Static hosting cannot provide it; Node availability is still unconfirmed.
+     Choosing Node authorizes updating this plan, not requesting hosting externally.
+     [native question] Use Node, examine other options, or stop?
+     (wait for a submitted answer; a request receipt alone approves nothing)
 ```
 
 **Reflect:**
@@ -684,7 +705,7 @@ Each command follows the same structure:
 1. **Phases** — ordered steps (INIT → SURVEY/READ → WORK → REPORT (+++STOP) → EXECUTE → VERIFY)
 2. **Detection Targets** — automated checks that run in parallel within their phase (D1, D2, … per command)
 3. **+++SWARM** — parallel workers per scope through the runtime's own mechanism (Claude Code subagents, Codex subagents) when 2+ scopes exist; without a parallel mechanism, the lead runs the assignments itself, read-only work as parallel reads and the rest one by one
-4. **STOP gates** — mandatory human approval before mutating shared artifacts; the agent ends its turn and waits
+4. **STOP gates** — mandatory human approval before mutating shared artifacts; the agent presents a concise decision report, requests a supported native choice, and waits for an explicit submitted answer (§3.5)
 5. **Constraints** — invariants that must never be violated
 6. **Runtime adapters** — the protocol's runtime table maps the directives onto each harness, so commands never name runtime tools, and a small adapter per runtime (hooks, agent definitions, the design.md import or injection, a push rule) enforces the mechanical part of the rules (§2.5 Instructions and Mechanisms)
 
@@ -791,6 +812,8 @@ Integration patterns:
 
 | Date | Change |
 |------|--------|
+| 2026-11-01 | Decision reports use concise prose with visible material risks and one native question at a time. Record Claude's observed timeout marker and gate check, Codex CLI's unavailable post-turn answer route, and the desktop host's distinct result; keep schema fields separate from tool arguments (§2.5, §3.5, Example 4). |
+| 2026-10-20 | Clarify Binding Decision completeness and advance approval; update adapter enforcement; refine Japanese prose and diagram labels. |
 | 2026-10-18 | Instructions and mechanisms: the harness enforces the mechanical part of +++STOP, the design.md load, the worker roles, and the outward +++NEVER items through per-runtime adapters (§2.5 Instructions and Mechanisms, §3.5, §3.6); a How to Read row; source moved to `claude-code/` and `codex/`, DDL installed in the environment: commands as skills and `ddl-protocol` as the protocol in both runtimes (§2.5 context table), `/resonate` an ordinary command again (§3.1, §7), §7 links to `claude-code/` and `codex/`, §2.4 enforcement cell, §3 intro, references added |
 | 2026-10-18 | Follow-up: one format for `passed` and advance-approval marks (§3.3), `Approved plan` lines under Direction (§3.3, §8, Example 4), what is written down at approval and the project file re-injected after compaction (§2.5), D9 Experience Gap and D7 Validation Failure (§3.3, §3.4), `+++DDL_REPORT` in the STOP rules and Example 4 (§3.5, §4), references aligned |
 | 2026-10-17 | Harness-era revision: harness memory and design.md (§1.1, §1.4), harness engineering and technology choice (§2.5), VALIDATE in the state model (§3.1), harness session state (§3.2), Binding and Direction checks (§3.3, §3.4), G1–G7 IDs (§3.4), STOP semantics and parallel workers (§3.5, §3.6), Example 4, Binding Decisions in §5, §6, §8, template sections (§7), three references; follow-up: `passed` marks and retired Acceptance Gates (§3.3, §3.4, Example 4, §8), no worker started or continued during a STOP and no approval from notifications or other agents (§3.5), worker labels, self-contained prompts, and the read-only and no-nesting instructions in each prompt (§1.4, §3.6), terminology alignment (Codex subagents in §3.6 and §7; D1, D2, … in §7), a notebook named by runtime guidance (§5), Phases in the protocol's role order (§7); notebook named design.md throughout; `Unbound:` lines, approved picks, arguments that would change a Binding Decision, and existing premises (§2.5); gates never dropped (§3.3); every REPORT ending with a STOP gate and gates outside the approved report never approved in advance (§3.5); the lead's fallback without a parallel mechanism (§3.6, §7); `/resonate` marked repository-only (§3.1, §7); approval of a report as a Binding Decision source (§5); How to Read rows for §6–§8; the `/draft` intent (§7); context engineering (§1.4, §2.5, §3.5, §3.6) and its references |

@@ -54,7 +54,7 @@ A command run from a user-level install follows the project's own copy when one 
    - **Direction** — the user's outlook on the path to implementation: stage order, parallel lanes, what to show the user when, and human gates. Non-binding
    - **Acceptance Gates** — what must hold when done: mechanical gates (commands, each with its expected result when exit code alone cannot show failure) and human gates (approvals)
 3. Write consumer-side code / usage examples together, in the language and on the platform the Binding Decisions name. For a library or SDK, the consumer-side language is part of the Experience: ask for it if the user did not name it, and record it as a Binding Decision
-4. Show the technology found in Phase 1, and any decision found only in the harness's automatic memory, as existing premises; either becomes a Binding Decision only when the user gives a reason
+4. Show the technology found in Phase 1, and any decision found only in the harness's automatic memory, as existing premises; either becomes a Binding Decision only when the user gives a reason. When no technology was fixed or delegated, do not invent a technology comparison or an Unbound item merely because implementation will eventually need a choice
 5. When the user delegates a choice, present 2–3 options with trade-offs and list them as Unbound (protocol §3) until the user picks one, or until the user approves the choice in the `/realize` plan
 6. Do NOT implement yet — experience, decisions, and outlook only
 7. Iterate until it feels right
@@ -77,22 +77,18 @@ For D7, present options: change the Binding Decision, change the Experience, or 
 
 +++STOP: always
 
-Present the draft to user for approval.
+Present the draft for the decision to save it, following protocol §1.5.
 
 +++Report:
-| Section | Draft | Open |
-|---------|-------|------|
-| Experience | {usage examples and states} | {questions} |
-| Binding Decisions | {Decision, Why it binds, Source} | {Unbound items} |
-| Direction | {stages, lanes, human gates} | {questions} |
-| Acceptance Gates | {mechanical and human gates} | {questions} |
-| Detection | {targets that fired} | {resolution needed} |
-
-Omit the rows of sections the draft does not use.
+Decision: save this draft to `design.md`, revise it, or leave it unsaved.
+Recommendation: the proposed experience and why it answers the user's request; keep unresolved conflicts visible.
+Consequence: saving records the approved design; it does not authorize implementation.
+Review detail: the concrete Experience examples and states; each Binding Decision with reason and source; any Direction, Acceptance Gates, Unbound items, and detections. Include only the sections the draft uses.
+Choices: present the save, revise, and leave-unsaved actions one decision at a time per protocol §1.5.
 
 ### Phase 4: EXECUTE
 
-**Pre-condition.** Enter this phase only after explicit user approval at the Phase 3 STOP gate (per §1.5 of the protocol). If the most recent user message is not an approval token, return to Phase 3 and re-emit the report.
+**Pre-condition.** Enter this phase only after explicit user approval of its scope at the Phase 3 STOP gate (per §1.5 of the protocol). If the actual answer does not authorize this work, return to Phase 3 and re-present the current decision.
 
 1. Save the approved draft to `design.md`: Experience, Binding Decisions, Direction, and Acceptance Gates under their own headings (omit the sections the draft does not use); principles from D5 go to the principles section. A Binding Decision row without quoted words takes Source `approved /draft report (<date>)`
 2. Suggest: "Run `/realize` to implement this experience"

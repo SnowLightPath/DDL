@@ -1,0 +1,6 @@
+{"type":"event_msg","payload":{"type":"task_started","turn_id":"turn-fixture"}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"+++DDL_REPORT\n\nApprove the current report?"}]}}
+{"type":"response_item","payload":{"type":"function_call","name":"request_user_input_async","call_id":"call-fixture","arguments":"{\"questions\": [{\"title\": \"Approve the current report?\", \"options\": [\"Proceed\", \"Revise\"]}]}"}}
+{"type":"response_item","payload":{"type":"function_call_output","call_id":"call-fixture","output":"{\"accepted\":true}"}}
+{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<send_user_message_question_reply>\n[{\"questionItemId\":\"[\\\"request_user_input_async\\\",\\\"call-fixture\\\",0]\",\"question\":\"Approve the current report?\",\"answer\":\"Proceed\"}]\n</send_user_message_question_reply>\n"}]}}
+{"type":"event_msg","payload":{"type":"item_completed","turn_id":"turn-fixture","item":{"type":"UserMessage","id":"answer-fixture","content":[{"type":"text","text":"<send_user_message_question_reply>\n[{\"questionItemId\":\"[\\\"request_user_input_async\\\",\\\"call-fixture\\\",0]\",\"question\":\"Approve the current report?\",\"answer\":\"Proceed\"}]\n</send_user_message_question_reply>\n","text_elements":[]}]}}}

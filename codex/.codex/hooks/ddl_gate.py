@@ -2,9 +2,9 @@
 """DDL gate: the mechanical half of the protocol's +++STOP rule, as a lifecycle hook.
 
 After the assistant emits a report under the heading `+++DDL_REPORT`, the turn must end and
-nothing may mutate until a human speaks again. This hook decides exactly one thing: "has a
-human spoken since the last +++DDL_REPORT?" (CLOSED when not, OPEN when yes). Whether the
-human's reply is an approval is the assistant's business, never the gate's.
+nothing may mutate until a human speaks again (CLOSED when not, OPEN when yes). Whether the
+human's reply is an approval is the assistant's business, never the gate's. Independently,
+Codex rejects static push command forms that would miss its native confirmation rule.
 
 Usage (the same command serves Claude Code and Codex CLI; the hook payload JSON is on stdin):
   python3 tools/ddl_gate.py pre-tool-use       --runtime claude|codex
@@ -13,7 +13,8 @@ Usage (the same command serves Claude Code and Codex CLI; the hook payload JSON 
   python3 tools/ddl_gate.py session-start      --runtime claude|codex
 
 Decisions (JSON on stdout; the exit status is always 0):
-  pre-tool-use        CLOSED and the tool mutates -> permissionDecision "deny"; otherwise nothing
+  pre-tool-use        CLOSED and the tool may mutate -> permissionDecision "deny";
+                      codex also denies unsupported push forms in confirmation-enabled modes
   stop                writes the marker file when the turn ended with a report; prints nothing
   user-prompt-submit  removes the marker (a human spoke); prints nothing
   session-start       compact/resume while CLOSED -> additionalContext with a notice;
@@ -29,7 +30,12 @@ the unreadable-record warning appear once per session; the state dir is $DDL_GAT
 else $TMPDIR/ddl-gate, else /tmp/ddl-gate. Wire all four events, or the marker is never cleared.
 
 Fail-open: any internal error prints a `systemMessage` warning and allows the call. The shell
-allowlist guards against accidental continuation; it is not a sandbox.
+allowlist guards against accidental continuation; it is not a sandbox. Both adapters use catch-all
+matchers, but only calls reaching the runtime's tool hooks are checked. Only exact known read tools
+and a bounded, literal shell subset pass while CLOSED; unknown tools, general scripts and code
+wrappers do not. Ambient executable/config
+behavior is outside this static check. Push form checks do not inspect arbitrary scripts or aliases,
+never rewrite a command, and never emit an affirmative permission grant.
 """
 import json
 import os
@@ -56,14 +62,18 @@ INTERNAL = "DDL gate: internal error ({}: {}); the call was allowed (fail-open).
 
 READ_ONLY_TOOLS = {"Read", "Grep", "Glob", "WebFetch", "WebSearch", "ToolSearch", "ListAgents", "ReadNotifications",
                    "LS", "NotebookRead"}
-SHELL_TOOLS = {"claude": {"Bash"}, "codex": {"Bash", "shell", "exec_command", "local_shell", "shell_command", "exec"}}
-READ_ONLY_PROGRAMS = {"cat", "head", "tail", "sed", "awk", "grep", "rg", "egrep", "fgrep", "wc", "ls", "find", "stat",
+SAFE_TOOLS = {"claude": READ_ONLY_TOOLS | {"TaskGet", "TaskList", "AskUserQuestion"},
+              "codex": {"view_image", "list_agents", "request_user_input", "request_user_input_async"}}
+SHELL_TOOLS = {"claude": {"Bash"}, "codex": {"Bash", "shell", "exec_command", "local_shell", "shell_command"}}
+READ_ONLY_PROGRAMS = {"cat", "head", "tail", "sed", "grep", "rg", "egrep", "fgrep", "wc", "ls", "find", "stat",
                       "file", "which", "type", "echo", "printf", "pwd", "env", "diff", "cmp", "sort", "uniq", "cut",
                       "tr", "jq", "test", "[", "true", "date", "cd", "git", "codex", "claude"}
-FIND_WRITE = {"-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls"}
 GIT_READ_ONLY = {"status", "diff", "log", "show", "ls-files", "rev-parse", "branch", "check-ignore", "blame", "grep"}
-GIT_BRANCH_WRITE = {"-d", "-D", "-m", "-M", "-c", "-C", "-u", "-f", "--delete", "--move", "--copy",
-                    "--set-upstream-to", "--unset-upstream", "--edit-description", "--force"}
+SAFE_GIT_CONFIG = {"core.pager=cat", "core.fsmonitor=false", "color.ui=never"}
+PUSH_FORM_REASON = ("DDL gate: this Git push form does not reliably reach Codex's native git push confirmation. "
+                    "Run a separate literal `git push ...` with the tool's working directory set to the intended "
+                    "repository, only if that preserves the original options and configuration. Do not silently "
+                    "discard required options; explain the limitation instead. No command was rewritten.")
 NOT_HUMAN_PREFIXES = ("Another Claude session sent a message", "<task-notification>", "<system-reminder>",
                       "<local-command", "<command-name>", "[Request interrupted")
 ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
@@ -136,14 +146,21 @@ def tool_result_text(entry) -> str:
 
 def is_dialog_answer_claude(entry) -> bool:
     """An answered AskUserQuestion or an approved ExitPlanMode plan: a human decision recorded as a tool
-    result. Both carry `permissionDecision.source` starting with `user`; a rejected plan is not human."""
+    result. Both carry `permissionDecision.source` starting with `user`; a rejected plan or
+    auto-resolved question is not a submitted human answer."""
     result, decision = entry.get("toolUseResult"), entry.get("permissionDecision")
     if not isinstance(result, dict) or not isinstance(decision, dict):
         return False
     if not str(decision.get("source") or "").startswith("user"):
         return False
+    # Native host-only timeout provenance is present even when selected options were auto-submitted.
+    # A user-sourced permission decision alone therefore cannot establish a human submission.
+    if result.get("afkTimeoutMs") is not None:
+        return False
     if "answers" in result:
-        return True
+        answers = result["answers"]
+        return isinstance(answers, dict) and any(isinstance(answer, str) and answer.strip()
+                                                 for answer in answers.values())
     return "plan" in result and "approved your plan" in tool_result_text(entry)
 
 
@@ -322,60 +339,200 @@ def strip_redirect_tokens(args):
     return out
 
 
-def git_is_read_only(args) -> bool:
-    i = 0
-    while i < len(args):
-        if args[i] in ("-C", "-c"):
+def literal_shell(text) -> bool:
+    """Recognize the small shell subset we inspect, never evaluate expansions.
+
+    Single-quoted patterns may contain shell metacharacters. Double quotes still expand `$`,
+    so they do not turn a dynamic command into a statically checkable one.
+    """
+    quote, i = None, 0
+    while i < len(text):
+        ch = text[i]
+        if ch == "\\" and quote != "'":
             i += 2
-        elif args[i].startswith("--git-dir=") or args[i] in ("--no-pager", "-P"):
-            i += 1
+            continue
+        if quote:
+            if ch == quote:
+                quote = None
+            elif quote == '"' and ch in "$`":
+                return False
+        elif ch in "'\"":
+            quote = ch
+        elif ch in "$`*?(){}~" or text[i:i + 2] in ("<<", "<(", ">("):
+            return False
+        elif ch == "[" and (not (i == 0 or text[i - 1].isspace()) or
+                            text[i + 1:i + 2] not in (" ", "\t")):
+            return False
+        i += 1
+    return quote is None
+
+
+def option_operands(args, flags=(), values=(), shorts="", short_values="", numbers=False):
+    """Return operands for an explicit option vocabulary; None means unsupported syntax.
+
+    This is intentionally not a utility's full grammar. Unknown options cannot acquire new
+    execution/write behavior unnoticed when a utility is upgraded.
+    """
+    operands, i = [], 0
+    flags, values = set(flags), set(values)
+    while i < len(args):
+        arg = args[i]
+        if arg == "--":
+            return operands + args[i + 1:]
+        if arg.startswith("--"):
+            key, equal, value = arg.partition("=")
+            if key in flags and not equal:
+                pass
+            elif key in values:
+                if not equal:
+                    i += 1
+                    if i >= len(args) or args[i].startswith("-"):
+                        return None
+                elif not value:
+                    return None
+            else:
+                return None
+        elif arg.startswith("-") and arg != "-":
+            if numbers and re.fullmatch(r"-\d+", arg):
+                i += 1
+                continue
+            for pos, flag in enumerate(arg[1:], 1):
+                if flag in short_values:
+                    if pos == len(arg) - 1:
+                        i += 1
+                        if i >= len(args) or args[i].startswith("-"):
+                            return None
+                    break
+                if flag not in shorts:
+                    return None
         else:
-            break
-    if i >= len(args) or args[i] not in GIT_READ_ONLY:
+            operands.append(arg)
+        i += 1
+    return operands
+
+
+def git_command(args):
+    """(subcommand index, harmless globals). None index means opaque/missing subcommand."""
+    i, harmless = 0, True
+    while i < len(args):
+        arg = args[i]
+        if arg in ("--version", "--help", "--exec-path", "--html-path", "--man-path", "--info-path"):
+            return i, harmless
+        if arg in ("--no-pager", "-P", "--no-optional-locks", "--literal-pathspecs", "--no-replace-objects"):
+            i += 1
+        elif arg in ("-C", "-c", "--git-dir", "--work-tree", "--namespace"):
+            if i + 1 >= len(args):
+                return None, False
+            if arg == "-c" and args[i + 1] not in SAFE_GIT_CONFIG:
+                harmless = False
+            i += 2
+        elif arg.startswith(("-C", "-c")) and len(arg) > 2:
+            if arg.startswith("-c") and arg[2:] not in SAFE_GIT_CONFIG:
+                harmless = False
+            i += 1
+        elif arg.startswith(("--git-dir=", "--work-tree=", "--namespace=", "--config-env=", "--exec-path=")):
+            harmless = harmless and not arg.startswith(("--config-env=", "--exec-path="))
+            i += 1
+        elif arg.startswith("-"):
+            return None, False
+        else:
+            return i, harmless
+    return None, harmless
+
+
+def git_is_read_only(args) -> bool:
+    index, harmless = git_command(args)
+    if index is None or not harmless or args[index] not in GIT_READ_ONLY:
         return False
-    rest = args[i + 1:]
-    if any(a.startswith("--output") for a in rest):
-        return False
-    if args[i] == "branch":
-        return not any(not a.startswith("-") or a.split("=", 1)[0] in GIT_BRANCH_WRITE for a in rest)
-    return True
+    sub, rest = args[index], args[index + 1:]
+    if sub == "branch":
+        operands = option_operands(rest, flags={"--all", "--remotes", "--show-current", "--list", "--verbose",
+                                               "--no-color"}, values={"--format", "--sort", "--contains", "--merged",
+                                                                     "--no-merged"}, shorts="arv")
+        return operands is not None and (not operands or "--list" in rest)
+    flags = {"--short", "--branch", "--porcelain", "--oneline", "--stat", "--numstat", "--name-only",
+             "--name-status", "--summary", "--patch", "--raw", "--no-patch", "--no-color", "--no-renames",
+             "--cached", "--staged", "--exit-code", "--quiet", "--no-ext-diff", "--no-textconv", "--relative",
+             "--all", "--reverse", "--topo-order", "--date-order", "--first-parent", "--merges", "--no-merges",
+             "--graph", "--decorate", "--follow", "--abbrev-commit", "--show-toplevel", "--show-prefix",
+             "--show-cdup", "--is-inside-work-tree", "--verify", "--symbolic-full-name", "--abbrev-ref",
+             "--others", "--exclude-standard", "--deleted", "--modified", "--full-name", "--error-unmatch",
+             "--line-porcelain", "--ignore-space-change", "--ignore-all-space", "--ignore-case", "--fixed-strings",
+             "--extended-regexp", "--files-with-matches", "--line-number", "--invert-match"}
+    values = {"--format", "--pretty", "--date", "--since", "--until", "--after", "--before", "--author",
+              "--committer", "--grep", "--max-count", "--skip", "--max-depth", "--unified", "--diff-filter",
+              "--color", "--porcelain", "--decorate", "--abbrev", "--find-renames", "--find-copies", "--exclude"}
+    return option_operands(rest, flags, values, shorts="psbuwaAzfinlvEFrq", short_values="nLSGCe", numbers=True) is not None
+
+
+# Only mixed-capability utilities need option profiles. Pure readers still receive literal
+# arguments, so a quoted pattern stays a pattern rather than becoming shell source.
+PROFILES = {
+    "ls": ("all almost-all long human-readable directory recursive inode size classify color", "color sort time", "aAlhdtRrSsiF1", ""),
+    "rg": ("files hidden no-ignore no-ignore-vcs count count-matches files-with-matches files-without-match line-number no-line-number ignore-case smart-case case-sensitive fixed-strings word-regexp line-regexp invert-match only-matching quiet pretty no-heading heading with-filename no-filename multiline multiline-dotall dotall text null null-data follow stats sort-files", "glob iglob type type-not type-add max-count max-depth context before-context after-context encoding color colors sort sortr threads regexp file", "nNilicHhFwevqosUuatzPL", "gTtmABCjef"),
+    "grep": ("recursive dereference-recursive line-number ignore-case invert-match count files-with-matches files-without-match fixed-strings extended-regexp only-matching quiet no-messages with-filename no-filename word-regexp line-regexp text null", "regexp file max-count after-context before-context context include exclude exclude-dir binary-files", "rRnNiclvLEFoqsHhwxaz", "efmABC"),
+    "sort": ("numeric-sort general-numeric-sort human-numeric-sort reverse unique stable check ignore-case dictionary-order ignore-leading-blanks zero-terminated version-sort", "key field-separator buffer-size parallel batch-size", "nghruscbdfzV", "ktS"),
+    "uniq": ("count repeated unique ignore-case zero-terminated", "skip-fields skip-chars check-chars", "cduiz", "fsw"),
+    "file": ("brief mime mime-type mime-encoding dereference no-dereference separator keep-going", "magic-file separator", "bihkLNz", "mF"),
+    "jq": ("raw-output compact-output null-input slurp exit-status monochrome-output color-output sort-keys raw-input join-output tab stream ascii-output", "arg argjson slurpfile rawfile indent", "rcnseMCSRja", ""),
+}
 
 
 def program_is_read_only(prog, args) -> bool:
-    """Rules for the allowlisted programs whose options or scripts can still write."""
+    """Accept bounded display forms instead of looking for known-dangerous fragments."""
     if prog == "sed":
-        for a in args:  # -i edits in place, -f hides the script, and a `w` command writes from inside it
-            if a.startswith(("--in-place", "--file")) or (a.startswith("-") and not a.startswith("--")
-                                                           and re.match(r"-[a-zA-Z]*[if]", a)):
-                return False
-            if not a.startswith("-") and re.search(r"(?:^|[\s;{}\d$/])[wW]\s", a):
-                return False
-        return True
+        return (len(args) >= 2 and args[0] == "-n" and
+                re.fullmatch(r"(?:\d+|\$)(?:,(?:\d+|\$))?p", args[1]) is not None and
+                all(not arg.startswith("-") or arg == "-" for arg in args[2:]))
     if prog == "find":
-        return not any(a in FIND_WRITE for a in args)
-    if prog == "awk":  # `>` and `|` inside the program write or spawn; -F/-v values may hold a literal `|`
-        return not any(">" in a or "system(" in a or ("|" in a and not a.startswith(("-F", "-v"))) for a in args)
-    if prog == "sort":
-        return not any(a.startswith("--output") or re.match(r"-[a-zA-Z]*o", a) for a in args)
-    if prog == "uniq":
-        return len([a for a in args if not a.startswith("-")]) < 2
+        values = {"-name", "-iname", "-path", "-ipath", "-type", "-size", "-mtime", "-mmin", "-newer",
+                  "-maxdepth", "-mindepth", "-regex"}
+        flags = {"-print", "-print0", "-empty", "-type", "-o", "-a", "-not", "!"}
+        i = 0
+        while i < len(args):
+            if args[i] in values:
+                i += 1
+                if i >= len(args):
+                    return False
+            elif args[i].startswith("-") and args[i] not in flags:
+                return False
+            i += 1
+        return True
+    if prog == "date":
+        return not args or len(args) == 1 and (args[0].startswith("+") or args[0] in ("-u", "--utc", "--iso-8601"))
     if prog in ("codex", "claude"):
         return args == ["--version"]
-    if prog == "date":
-        return not any(a == "-s" or a.startswith("--set") for a in args)
-    if prog == "rg":
-        return not any(re.match(r"--pre(-glob)?(=|$)", a) for a in args)
+    if prog == "printf":
+        form = args[1:] if args[:1] == ["--"] else args
+        # zsh's numeric conversions can evaluate array subscripts, even in quoted operands.
+        return bool(form) and not form[0].startswith("-") and re.fullmatch(
+            r"(?:[^%]|%%|%s)*", form[0]) is not None
+    if prog in ("test", "["):
+        if prog == "[":
+            if not args or args[-1] != "]":
+                return False
+            args = args[:-1]
+        # File/string predicates do not invoke shell arithmetic (unlike zsh test -v/-eq).
+        return (len(args) <= 1 or
+                len(args) == 2 and args[0] in ("-f", "-d", "-e", "-r", "-w", "-x", "-s", "-L", "-h", "-n", "-z") or
+                len(args) == 3 and args[1] in ("=", "!=", "=="))
     if prog == "git":
         return git_is_read_only(args)
-    return True
+    profile = PROFILES.get("grep" if prog in ("egrep", "fgrep") else prog)
+    if profile:
+        flags, values, shorts, short_values = profile
+        operands = option_operands(args, {"--" + x for x in flags.split()}, {"--" + x for x in values.split()},
+                                   shorts, short_values)
+        return operands is not None and (prog != "uniq" or len(operands) <= 1)
+    return prog in READ_ONLY_PROGRAMS
 
 
 def shell_is_read_only(cmd) -> Tuple[bool, str]:
     """(True, "") when every segment of the command only reads; else (False, the offending segment)."""
     if not isinstance(cmd, str):
         return False, repr(cmd)
-    if any(tok in cmd for tok in ("$(", "`", "<(", ">(")):
-        return False, cmd.strip()  # substitutions run arbitrary programs; not worth parsing
+    if not literal_shell(cmd):
+        return False, cmd.strip()
     parts = split_segments(cmd)
     if parts is None:
         return False, cmd.strip()
@@ -388,8 +545,10 @@ def shell_is_read_only(cmd) -> Tuple[bool, str]:
             tokens = shlex.split(raw)
         except ValueError:
             return False, raw.strip()
-        while tokens and (ASSIGNMENT.match(tokens[0]) or os.path.basename(tokens[0]) == "env"):
-            tokens.pop(0)  # leading NAME=value and `env` do not change what runs
+        while tokens and os.path.basename(tokens[0]) == "env":
+            tokens.pop(0)
+        if tokens and (ASSIGNMENT.match(tokens[0]) or tokens[0].startswith("-")):
+            return False, raw.strip()  # environment overrides can install execution helpers
         if not tokens:
             continue
         prog = os.path.basename(tokens[0])
@@ -421,8 +580,16 @@ def shell_command(tool_input) -> Optional[str]:
 
 def is_mutating(runtime, tool_name, tool_input) -> Tuple[bool, str]:
     """(True, offending shell segment or "") when the call may change state; unknown tools count as mutating."""
-    if tool_name in READ_ONLY_TOOLS:
+    if tool_name in SAFE_TOOLS.get(runtime, set()):
         return False, ""
+    if runtime == "codex" and isinstance(tool_input, dict):
+        fields = {"write_stdin": {"session_id", "chars", "max_output_tokens", "yield_time_ms"},
+                  "wait": {"ids", "timeout_ms", "cell_id", "max_tokens", "yield_time_ms", "terminate"},
+                  "wait_agent": {"timeout_ms"}}
+        if tool_name in fields and set(tool_input) <= fields[tool_name]:
+            if tool_name == "write_stdin":
+                return (tool_input.get("chars", "") != ""), ""
+            return (tool_input.get("terminate", False) is not False), ""
     if tool_name in SHELL_TOOLS.get(runtime, set()):
         cmd = shell_command(tool_input)
         if cmd is None:
@@ -430,6 +597,107 @@ def is_mutating(runtime, tool_name, tool_input) -> Tuple[bool, str]:
         ok, segment = shell_is_read_only(cmd)
         return (not ok), segment
     return True, ""
+
+
+def native_linear_shell(command, parts) -> bool:
+    """The conservative subset the native policy can inspect as individual argv lists."""
+    if not literal_shell(command):
+        return False
+    quote, i = None, 0
+    while i < len(command):
+        ch = command[i]
+        if ch == "\\" and quote != "'":
+            i += 2
+            continue
+        if quote:
+            if ch == quote:
+                quote = None
+        elif ch in "'\"":
+            quote = ch
+        elif ch in "<>":
+            return False
+        elif ch == "&":
+            if command[i:i + 2] != "&&":
+                return False
+            i += 1
+        i += 1
+    for raw in parts[0]:
+        try:
+            tokens = shlex.split(raw)
+        except ValueError:
+            return False
+        if tokens and ASSIGNMENT.match(tokens[0]):
+            return False
+    return True
+
+
+def push_form_problem(command, nested=False, depth=0) -> bool:
+    """Reject static Git pushes that cannot reliably reach the native exact-prefix rule.
+
+    This is a command-form guard, not a shell interpreter. Opaque programs, aliases and scripts
+    are outside its coverage. An absolute host Git path keeps native executable resolution.
+    """
+    if not isinstance(command, str) or depth > 2:
+        return False
+    parts = split_segments(command)
+    if parts is None:
+        return False
+    # The native shell splitter does not split expansions, redirections or background jobs.
+    native_linear = native_linear_shell(command, parts)
+    for raw in parts[0]:
+        try:
+            tokens = shlex.split(raw)
+        except ValueError:
+            continue
+        if not tokens:
+            continue
+        wrapped = nested
+        while tokens and ASSIGNMENT.match(tokens[0]):
+            wrapped = True
+            tokens.pop(0)
+        if not tokens:
+            continue
+        while tokens and os.path.basename(tokens[0]) in ("env", "command", "builtin", "exec"):
+            wrapped = True
+            tokens.pop(0)
+            while tokens and (ASSIGNMENT.match(tokens[0]) or tokens[0] in ("--", "-i", "-p")):
+                tokens.pop(0)
+        if not tokens:
+            continue
+        prog = os.path.basename(tokens[0])
+        if prog in ("bash", "sh", "zsh", "dash") and len(tokens) == 3 and re.fullmatch(r"-[a-z]*c[a-z]*", tokens[1]):
+            if push_form_problem(tokens[2], nested=True, depth=depth + 1):
+                return True
+            continue
+        if prog != "git":
+            continue
+        index, _ = git_command(tokens[1:])
+        if index is None:
+            # A dynamic or unknown Git subcommand cannot be certified by the prefix rule.
+            return True
+        sub = tokens[index + 1]
+        if any(ch in sub for ch in "$`*?[{"):
+            return True
+        host_git = tokens[0] == "git" or os.path.isabs(tokens[0])
+        if sub == "push" and (wrapped or not host_git or index != 0 or not native_linear):
+            return True
+    return False
+
+
+def push_guard(runtime, payload):
+    # These explicit harness modes waive immediate confirmation, never the STOP contract.
+    if runtime != "codex" or payload.get("permission_mode") in ("bypassPermissions", "dontAsk"):
+        return None
+    if payload.get("tool_name") not in SHELL_TOOLS["codex"]:
+        return None
+    if push_form_problem(shell_command(payload.get("tool_input"))):
+        return deny(PUSH_FORM_REASON)
+    return None
+
+
+def deny(reason):
+    return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                   "permissionDecisionReason": reason}}
 
 
 # --- events -----------------------------------------------------------------------------------
@@ -455,20 +723,20 @@ def pending_state(runtime, payload) -> Optional[bool]:
 
 def handle_pre_tool_use(runtime, payload):
     state = pending_state(runtime, payload)
+    if state is True:
+        mutating, segment = is_mutating(runtime, payload.get("tool_name"), payload.get("tool_input"))
+        if mutating:
+            return deny(DENY_REASON + (" Shell segment is not read-only: `{}`.".format(segment) if segment else ""))
+    outward = push_guard(runtime, payload)
+    if outward is not None:
+        return outward
     if state is None:
         warned = session_file(payload.get("session_id"), ".warned")
         if warned.exists():
             return None  # warn once per session; the rule still holds by instruction
         warned.write_text(str(time.time()))
         return {"systemMessage": UNREADABLE}
-    if state is False:
-        return None
-    mutating, segment = is_mutating(runtime, payload.get("tool_name"), payload.get("tool_input"))
-    if not mutating:
-        return None
-    reason = DENY_REASON + (" Shell segment is not read-only: `{}`.".format(segment) if segment else "")
-    return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
-                                   "permissionDecisionReason": reason}}
+    return None  # never emit an affirmative allow that could replace the harness's decision
 
 
 def handle_stop(runtime, payload):

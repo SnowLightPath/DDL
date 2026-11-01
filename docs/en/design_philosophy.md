@@ -116,6 +116,10 @@ Human controls the pace and corrects LLM's short-term bias.
 
 When agents run long and in parallel, the human's share becomes concrete: decide what binds, decide where to look, and approve at those gates. Agents work between the gates.
 
+At each gate, the agent leads with the concrete decision, its recommendation and reason, and what approval would authorize. Short prose is the default; detailed evidence is available separately, while material risks and unknowns stay visible. The human answers one native clickable question at a time, with optional free text. Only an explicit submitted answer about the current report and scope approves work; requesting details or revisions does not. Cancelling, dismissing, leaving the question unanswered, and timing out approve nothing.
+
+Native approval UI depends on the host and mode. When it is unavailable or not permitted, the agent states the limitation and stops instead of automatically substituting typed choices. A request receipt is not the human's answer.
+
 -----
 
 ## 🌊 Stay Flexible
@@ -165,6 +169,8 @@ Ultimately, code becomes the source of truth. Delete DDL documents when no longe
 
 | Date       | Change                    |
 |------------|---------------------------|
+| 2026-11-01 | Decision reports lead with the recommendation, reason, and consequence; native questions handle one decision at a time, and unavailable approval UI stops the command. |
+| 2026-10-20 | Refine Japanese sentence structure while preserving meaning and section organization. |
 | 2026-10-18 | Instructions and mechanisms (In the Harness Era); Tool-Assisted Option links to `claude-code/` and `codex/` |
 | 2026-10-17 | Harness-era revision: harness-era background; Binding Decisions, Direction, and Acceptance Gates in Draft, with Acceptance Gates retired once the work is accepted; the human's role at gates; three anti-patterns; removed the Scribe Plugin option; approval of a report as a Binding Decision source, and technology already in the code as an existing premise; context-engineering background and one anti-pattern |
 | 2026-01-04 | Initial version |

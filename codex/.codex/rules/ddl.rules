@@ -2,8 +2,12 @@
 # A push leaves the machine, so it is confirmed at the moment it runs, on top of the approval
 # given in the $commit report. Sessions whose approval policy never prompts show nothing;
 # the report's approval still applies (protocol §1.5).
+# Exact prefixes cannot skip Git global options. The independent PreToolUse form guard
+# rejects recognized noncanonical pushes; it never asks, rewrites, or grants permission.
 prefix_rule(
     pattern = ["git", "push"],
     decision = "prompt",
     justification = "DDL: a push needs the user's approval at the moment it runs",
+    match = ["git push", "git push origin main", "git push --tags"],
+    not_match = ["git status", "git -C /tmp push", "git -c push.default=current push"],
 )

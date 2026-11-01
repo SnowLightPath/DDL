@@ -58,14 +58,15 @@ A command run from a user-level install follows the project's own copy when one 
 Do NOT refactor without approval.
 
 +++Report:
-| # | File:Line | Type | Finding | Suggested Fix |
-|---|-----------|------|---------|---------------|
-
-Wait for user to approve, reject, or modify each fix.
+Decision: apply, revise, or leave pending one identified refactor at a time.
+Recommendation: the fix, why it improves the code, and any material uncertainty or downside.
+Consequence: change only the explicitly selected fix IDs; behavior or Binding Decision changes remain outside this approval.
+Review detail: each stable fix ID, file/line, detection type, finding, and proposed correction.
+Choices: collect per-fix decisions through protocol §1.5 before executing the selected set. With no findings, state that no refactor needs approval and stop.
 
 ### Phase 3: EXECUTE
 
-**Pre-condition.** Enter this phase only after explicit user approval at the Phase 2 STOP gate (per §1.5 of the protocol). If the most recent user message is not an approval token, return to Phase 2 and re-emit the report.
+**Pre-condition.** Enter this phase only after explicit user approval of its scope at the Phase 2 STOP gate (per §1.5 of the protocol). If the actual answer does not authorize this work, return to Phase 2 and re-present the current decision.
 
 +++SWARM: 2+ approved fixes across independent scopes
 

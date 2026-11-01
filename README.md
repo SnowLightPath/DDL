@@ -50,6 +50,10 @@ Realize and Reflect are inverse functions.
 
 DDL ships as skills for Claude Code and OpenAI Codex, with an adapter that lets the runtime itself hold a STOP until you speak, keep workers in their roles, load design.md at session start, and ask before a push.
 
+At a STOP, DDL first explains the decision, its recommended action and reason, and what approval would authorize. Reports use short prose by default, keep material risks and unknowns visible, and offer detailed evidence separately. Each decision has one native clickable question at a time, with optional free text; a report table is not required.
+
+Only an explicit submitted answer about the current report and scope approves work. Asking for the UI, receiving a request receipt, cancelling, dismissing, leaving it unanswered, or timing out does not approve anything. Details or revisions lead to a new question. Native approval UI depends on the host and mode: when it is unavailable or not permitted, DDL explains the limitation and stops instead of silently substituting typed choices. See [protocol §1.5 and §2.5](./claude-code/skills/ddl-protocol/SKILL.md).
+
 ### 📦 Install
 
 **In the environment** (recommended). One clone serves every project:
@@ -60,6 +64,8 @@ bash DDL/bin/install.sh
 ```
 
 `install.sh` installs for each runtime whose home directory exists (`~/.claude`, `~/.codex`; `--claude` or `--codex` selects one): it symlinks the nine skills (the eight commands and `ddl-protocol`), the `explorer` and `worker` agents, the gate hook, and for Codex the `git push` rule file (`rules/ddl.rules`) into the runtime's home, and merges the DDL fragment into its settings (`~/.claude/settings.json`, `~/.codex/hooks.json`), keeping what is already there. The Codex `[agents]` cap is not installed: set `max_concurrent_threads_per_session = 5` in `~/.codex/config.toml` yourself. `--dry-run` prints the actions without performing them. The scripts require `python3` (standard library only), which the gate hook also needs; without it the hook fails open and the rules hold as instructions. `bash DDL/bin/doctor.sh` checks the install; `bash DDL/bin/uninstall.sh` removes it. To update, `git pull` in the clone (the links follow) and run `install.sh` again when the settings fragment changed; it is idempotent, so running it every time is harmless. If Codex asks, run `/hooks` once to trust the DDL hooks.
+
+For this gate update, rerun `install.sh` even when the existing gate symlink already points at the clone: hook matchers are merged settings, not links. Review changed Codex hooks in `/hooks` before relying on enforcement. Projects using copied adapters rerun `install.sh --project your-project` instead. Doctor executes configured hook commands in isolation and checks native Codex rules separately; it does not certify hook trust or the interactive approval UI.
 
 A project then needs only `design.md` and a short instruction file:
 

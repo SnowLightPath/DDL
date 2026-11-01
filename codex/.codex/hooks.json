@@ -1,9 +1,9 @@
 {
-  "description": "DDL adapter for Codex (protocol §2.5). The gate hook enforces the mechanical half of +++STOP: after a +++DDL_REPORT and until the next user prompt, apply_patch, writing shell commands, spawn_agent, and MCP tool calls are denied. SessionStart injects design.md so it stays in context. Codex loads this file only for a trusted project and runs these hooks only after you trust them in /hooks. The rules themselves live in the skills and the protocol and stay the same without this file; the adapter only enforces their mechanical part.",
+  "description": "DDL adapter for Codex (protocol §2.5). The gate hook enforces the mechanical half of +++STOP: after a +++DDL_REPORT and until the next user prompt, apply_patch, writing shell commands, spawn_agent, and MCP tool calls are denied. SessionStart injects design.md so it stays in context. Codex loads this file only for a trusted project and runs these hooks only after you trust them in /hooks. The rules themselves live in the skills and the protocol and stay the same without this file; the adapter only enforces their mechanical part. The catch-all matcher checks tool calls dispatched through PreToolUse; only verified read operations and bounded literal shell forms pass while STOP is pending. Unknown tools and worker follow-ups are denied. Independently of STOP, static noncanonical Git pushes are denied in confirmation-enabled modes so a separate canonical invocation reaches the native push rule; commands are never rewritten or granted permission. This does not inspect arbitrary scripts or aliases.",
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "^(apply_patch|Bash|shell|exec_command|local_shell|shell_command|spawn_agent|mcp__.*)$",
+        "matcher": "*",
         "hooks": [
           {
             "type": "command",

@@ -64,14 +64,15 @@ Section-by-section comparison across language pairs:
 Do NOT apply changes without approval.
 
 +++Report:
-| # | Section | Type | EN | JA | Proposal |
-|---|---------|------|----|----|----------|
-
-Wait for user to approve, reject, or modify each proposal.
+Decision: apply, revise, or leave pending one language-pair proposal at a time.
+Recommendation: the proposed change, the nuance it restores, and its effect on both languages.
+Consequence: approval covers only the named proposal IDs in both versions.
+Review detail: each stable proposal ID, section, detection type, relevant EN/JA text and proposed edits.
+Choices: collect per-proposal decisions through protocol §1.5 before applying the selected set. With no dissonance, state that no change needs approval and stop.
 
 ### Phase 4: APPLY
 
-**Pre-condition.** Enter this phase only after explicit user approval at the Phase 3 STOP gate (per §1.5 of the protocol). If the most recent user message is not an approval token, return to Phase 3 and re-emit the report.
+**Pre-condition.** Enter this phase only after explicit user approval of its scope at the Phase 3 STOP gate (per §1.5 of the protocol). If the actual answer does not authorize this work, return to Phase 3 and re-present the current decision.
 
 Apply approved changes to BOTH language versions.
 
@@ -108,9 +109,11 @@ Assistant: Comparing en/ and ja/...
 
 +++DDL_REPORT
 
-| # | Section | Type | EN | JA | Proposal |
-|---|---------|------|----|----|----------|
-| 1 | Intent | D1 Missing Nuance | "share design principles across sessions, agents, and harnesses" | "設計方針を共有し続ける" | JA: add 「セッション、エージェント、ハーネスをまたいで」; EN: keep |
+Decision: apply proposal 1 to the Intent paragraph?
+Recommendation: add 「セッション、エージェント、ハーネスをまたいで」 to JA so the three contexts already named in EN are explicit.
+Consequence: update that JA paragraph; EN remains unchanged.
+Review detail: proposal 1, D1 Missing Nuance; EN says "share design principles across sessions, agents, and harnesses", while JA says "設計方針を共有し続ける".
 
-Approve, reject, or modify proposal 1.
+The native choice interface presents: Apply proposal 1 / Revise proposal 1 / Leave pending.
+The assistant waits for the actual selection before applying anything.
 ```

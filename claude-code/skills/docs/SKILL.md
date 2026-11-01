@@ -68,14 +68,15 @@ Lead integrates results and checks:
 Do NOT fix without approval.
 
 +++Report:
-| # | File:Line | Type | Finding | Suggested Fix |
-|---|-----------|------|---------|---------------|
-
-Wait for user to approve, reject, or modify each fix.
+Decision: apply, revise, or leave pending one identified documentation fix at a time.
+Recommendation: the fix, why it matters, and any material uncertainty or downside.
+Consequence: change only the explicitly selected fix IDs.
+Review detail: each stable fix ID, file/line, detection type, finding, and proposed correction.
+Choices: collect per-fix decisions through protocol §1.5 before changing the selected files. With no findings, state that no fix needs approval and stop.
 
 ### Phase 4: FIX
 
-**Pre-condition.** Enter this phase only after explicit user approval at the Phase 3 STOP gate (per §1.5 of the protocol). If the most recent user message is not an approval token, return to Phase 3 and re-emit the report.
+**Pre-condition.** Enter this phase only after explicit user approval of its scope at the Phase 3 STOP gate (per §1.5 of the protocol). If the actual answer does not authorize this work, return to Phase 3 and re-present the current decision.
 
 +++SWARM: 2+ approved fixes across different files
 

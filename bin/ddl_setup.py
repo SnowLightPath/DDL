@@ -9,7 +9,8 @@ and `$HOME/.codex/hooks.json`. A project then needs only `design.md` and a short
 
   install    create or repoint the symlinks and merge the fragment (idempotent; existing settings
              are kept, DDL's own entries are replaced so a path change takes effect)
-  doctor     check every link and merged entry, run the gate's tests, and check the Codex rule;
+  doctor     check every link and merged entry, probe configured push hooks in a temporary home,
+             run the gate's tests, and check the Codex native push rule separately;
              prints `N OK, M not OK` and exits 1 when M > 0
   uninstall  remove the links that point at DDL and the merged entries (an entry is removed only
              when its value is the one DDL wrote); a settings file left empty is removed; no backup
@@ -36,9 +37,11 @@ import argparse
 import json
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
+import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SKILLS = ["ddl-protocol", "draft", "realize", "reflect", "validate", "commit", "docs", "refactoring", "resonate"]
@@ -321,6 +324,104 @@ def install_project(args, report):
     return 0
 
 
+def configured_hook_outputs(settings, event, payload, env, cwd):
+    """Run only matching DDL hooks from the saved configuration; never run the payload's tool.
+
+    An empty output is a normal continuation, not an explicit permission grant. Keeping dispatch
+    here means doctor checks the installed matcher and command as well as the gate itself.
+    """
+    outputs, count = [], 0
+    match_value = payload.get("tool_name", "") if event == "PreToolUse" else payload.get("source", "")
+    for group in settings.get("hooks", {}).get(event, []):
+        if not is_ddl_group(group):
+            continue
+        matcher = group.get("matcher")
+        if matcher not in (None, "", "*") and not re.search(matcher, match_value):
+            continue
+        for hook in group.get("hooks", []):
+            command = hook.get("command", "")
+            if GATE_MARK not in command:
+                continue
+            count += 1
+            proc = subprocess.run(command, shell=True, input=json.dumps(payload), capture_output=True,
+                                  text=True, cwd=cwd, env=env, timeout=10)
+            if proc.returncode != 0 or proc.stderr:
+                raise ValueError(f"configured {event} hook failed: {proc.stderr.strip() or proc.returncode}")
+            if proc.stdout.strip():
+                output = json.loads(proc.stdout)
+                if not isinstance(output, dict):
+                    raise ValueError(f"configured {event} hook returned a non-object")
+                outputs.append(output)
+    if not count:
+        raise ValueError(f"no configured DDL {event} hook matched {match_value!r}")
+    return outputs
+
+
+def doctor_push_hooks(key, base, settings, report):
+    """Probe the installed command in a disposable home/state; all push text stays in JSON."""
+    with tempfile.TemporaryDirectory(prefix="ddl-doctor-hooks-") as tmp:
+        isolated = pathlib.Path(tmp)
+        gate = isolated / RUNTIMES[key]["home"] / "hooks/ddl_gate.py"
+        gate.parent.mkdir(parents=True)
+        gate.symlink_to(base / "hooks/ddl_gate.py")
+        env = dict(os.environ, HOME=str(isolated), CODEX_HOME=str(isolated / ".codex"),
+                   CLAUDE_PROJECT_DIR=str(isolated), DDL_GATE_STATE_DIR=str(isolated / "state"))
+        transcript = isolated / "open.jsonl"
+        if key == "claude":
+            records = [{"type": "user", "message": {"role": "user", "content": "Continue."},
+                        "origin": {"kind": "human"}, "turnOrigin": "human", "promptSource": "typed"}]
+        else:
+            records = [{"type": "event_msg", "payload": {"type": "task_started", "turn_id": "doctor"}},
+                       {"type": "response_item", "payload": {"type": "message", "role": "user",
+                         "content": [{"type": "input_text", "text": "Continue."}]}}]
+        transcript.write_text("".join(json.dumps(record) + "\n" for record in records))
+        probes = [("git push", str(transcript), False)]
+        if key == "codex":
+            probes += [("git -C /tmp push", str(transcript), True), ("git -C /tmp push", None, True)]
+        for index, (command, record, deny) in enumerate(probes):
+            payload = {"session_id": f"doctor-{index}", "turn_id": "doctor", "transcript_path": record,
+                       "cwd": str(isolated), "hook_event_name": "PreToolUse", "permission_mode": "default",
+                       "tool_name": "Bash", "tool_input": {"command": command}}
+            name = (f"{RUNTIMES[key]['label']} installed PreToolUse: {command} "
+                    f"({'OPEN' if record else 'null'} transcript)")
+            try:
+                outputs = configured_hook_outputs(settings, "PreToolUse", payload, env, isolated)
+                decisions = [specific.get("permissionDecision") if isinstance(specific, dict) else None
+                             for specific in (out.get("hookSpecificOutput") for out in outputs)]
+                valid = decisions == ["deny"] if deny else not outputs
+                outcome = "deny (independent push guard)" if deny else "continue (no explicit allow)"
+                (report.good if valid else report.fail)(f"{name} -> {outcome if valid else repr(outputs)}")
+            except (OSError, ValueError, TypeError, re.error, subprocess.TimeoutExpired) as exc:
+                report.fail(f"{name} -> {exc}")
+
+
+def doctor_codex_rules(rules, report):
+    if not rules.exists():
+        report.fail(f"{pretty(rules)} missing; native push rule was not checked")
+        return
+    if not shutil.which("codex"):
+        report.info("codex not on PATH; native push rule was not checked (hook guard is checked separately)")
+        return
+    for command in (["git", "push"], ["git", "-C", "/tmp", "push"]):
+        try:
+            out = subprocess.run(["codex", "execpolicy", "check", "--rules", str(rules)] + command,
+                                 capture_output=True, text=True, timeout=10)
+            result = json.loads(out.stdout or "{}") if out.returncode == 0 else {}
+            if not isinstance(result, dict):
+                raise ValueError("native policy result is not an object")
+            decision = result.get("decision")
+        except (OSError, subprocess.TimeoutExpired, ValueError):
+            out, decision = None, None
+        name = "codex native execpolicy check: " + " ".join(command)
+        if command == ["git", "push"]:
+            (report.good if decision == "prompt" else report.fail)(
+                f"{name} -> {decision or 'no decision'} (expected prompt)")
+        elif out is None or out.returncode != 0:
+            report.fail(f"{name} -> check failed (independent hook guard is checked separately)")
+        else:
+            report.info(f"{name} -> {decision or 'no matching rule'}; independent hook guard is checked separately")
+
+
 def cmd_doctor(args, report):
     for key in selected_runtimes(args):
         rt = RUNTIMES[key]
@@ -350,19 +451,10 @@ def cmd_doctor(args, report):
             report.fail(f"{pretty(settings_path)}: {m} missing (run install)")
         for d in differing:
             report.info(f"{pretty(settings_path)}: {d} has another value (kept; DDL's is not applied)")
+        doctor_push_hooks(key, base, settings, report)
         if key == "codex":
             rules = base / "rules/ddl.rules"
-            if shutil.which("codex") and rules.exists():
-                try:
-                    out = subprocess.run(["codex", "execpolicy", "check", "--rules", str(rules), "git", "push"],
-                                         capture_output=True, text=True, timeout=30)
-                    decision = json.loads(out.stdout or "{}").get("decision") if out.returncode == 0 else None
-                except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError):
-                    decision = None
-                (report.good if decision == "prompt" else report.fail)(
-                    f"codex execpolicy check: git push -> {decision or 'no decision'} (expected prompt)")
-            else:
-                report.info("codex not on PATH; the rule file was not checked")
+            doctor_codex_rules(rules, report)
             config = base / "config.toml"
             if not (config.exists() and "max_concurrent_threads_per_session" in config.read_text()):
                 report.info(f"{pretty(config)} does not set [agents] max_concurrent_threads_per_session (optional; SWARM uses max: 5)")

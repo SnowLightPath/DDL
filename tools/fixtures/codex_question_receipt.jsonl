@@ -1,0 +1,4 @@
+{"type":"event_msg","payload":{"type":"task_started","turn_id":"turn-fixture"}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"+++DDL_REPORT\n\nApprove the current report?"}]}}
+{"type":"response_item","payload":{"type":"function_call","name":"request_user_input_async","call_id":"call-fixture","arguments":"{\"questions\": [{\"title\": \"Approve the current report?\", \"options\": [\"Proceed\", \"Revise\"]}]}"}}
+{"type":"response_item","payload":{"type":"function_call_output","call_id":"call-fixture","output":"{\"accepted\":true}"}}
