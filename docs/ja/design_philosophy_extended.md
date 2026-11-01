@@ -275,7 +275,7 @@ DDL の役割の流動性は少人数チームの探索的な文脈で機能し�
 DDL は**コアループ**と**サポートコマンド**の二つの層で動きます。
 
 ```mermaid
-flowchart LR
+flowchart TD
     Draft <--> Realize
     Realize <--> Reflect
     Reflect <--> Draft
@@ -357,9 +357,11 @@ Detection Targets はコマンドの各フェーズの中で並列に走る自�
 
 ### 3.5 STOP ゲート
 
-STOP ゲートは人間の承認を必須とする地点です。システムは共有の成果物を変更する前に停止し、見つけたことを提示します。
+STOP ゲートは、報告と次の作業の境界です。共有の成果物を変更する場合は、変更内容を示して承認を待ちます。完了済みの作業や読み取り専用の確認結果を報告するだけなら、不要な承認は求めません。
 
 報告の冒頭には決めることを示し、推奨する行動と理由、承認によって許可される作業を説明します。報告は短い文章を基本とし、判断に役立つ場合だけ表を使います。重要なリスクや未確認事項は報告に残し、詳しい根拠は求められたときに別に示します。人間は実行環境が備える質問の選択肢を一問ずつクリックして答え、必要なら自由記述を添えます。
+
+変更の提案は、次の流れで確認します。
 
 ```mermaid
 flowchart TD
@@ -389,12 +391,8 @@ STOP ゲートは DDL の中核の原則である「人間がペースを制御�
 
 ```mermaid
 flowchart TD
-    Lead --> A[Scope A]
-    Lead --> B[Scope B]
-    Lead --> C[Scope C]
-    A --> Review[Integrated review]
-    B --> Review
-    C --> Review
+    Lead --> Workers["Parallel scopes<br/>A · B · C"]
+    Workers --> Review[Integrated review]
 ```
 
 規則は次のとおりです。

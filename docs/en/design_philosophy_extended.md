@@ -275,7 +275,7 @@ A framework for more systematic DDL operation. Use it as an aid for understandin
 DDL operates in two layers: the **Core Loop** and **Support Commands**.
 
 ```mermaid
-flowchart LR
+flowchart TD
     Draft <--> Realize
     Realize <--> Reflect
     Reflect <--> Draft
@@ -357,9 +357,11 @@ Example: `/reflect` defines its own targets (D1 Drift, D2 New Pattern, D3 Outdat
 
 ### 3.5 STOP Gates
 
-A STOP gate is a mandatory human approval point. The system halts and presents its findings before making changes to shared artifacts.
+A STOP separates the report from further work. When the next action needs approval, the agent presents the proposed change and waits before changing shared artifacts. A report of completed or read-only work can end without asking for an approval it does not need.
 
 The report begins with the concrete decision, the recommended action and its reason, and what approval would authorize. Use short prose by default, with a table only when it helps the decision. Keep material risks and unknowns in the report; detailed evidence can be shown separately on request. One native clickable question handles one decision at a time, with optional free text.
+
+Change proposals follow this path:
 
 ```mermaid
 flowchart TD
@@ -389,12 +391,8 @@ When a task spans multiple independent scopes, parallel agent execution reduces 
 
 ```mermaid
 flowchart TD
-    Lead --> A[Scope A]
-    Lead --> B[Scope B]
-    Lead --> C[Scope C]
-    A --> Review[Integrated review]
-    B --> Review
-    C --> Review
+    Lead --> Workers["Parallel scopes<br/>A · B · C"]
+    Workers --> Review[Integrated review]
 ```
 
 Rules:
