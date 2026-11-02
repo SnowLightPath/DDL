@@ -10,16 +10,16 @@ Design-Doc Loop (DDL) gives people and coding agents a shared `design.md`: the e
 
 ## Quick start
 
-Install once for the Claude Code or Codex environment already on your machine. Python 3 is required.
+Install once for the Claude or Codex environment already on your machine. Python 3 is required.
 
 ```bash
 git clone https://github.com/SnowLightPath/DDL.git
 bash DDL/bin/install.sh
 ```
 
-Then follow the short project setup for [Codex](./codex/README.md#quick-start) or [Claude Code](./claude-code/README.md#quick-start). The installer keeps existing settings and installs for each runtime whose home directory exists; `--codex` or `--claude` selects one explicitly.
+Then follow the short project setup for [Codex](./hosts/codex/README.md#quick-start) or [Claude](./hosts/claude/README.md#quick-start). The installer builds the host layouts first, keeps existing settings, and installs for each host whose home directory exists; `--codex` or `--claude` selects one explicitly.
 
-Open your project in the **Codex GUI** or Claude Code and describe the experience you want with `$draft` or `/draft`. A typical loop is:
+Open your project in the **Codex GUI** or Claude and describe the experience you want with `$draft` or `/draft`. A typical loop is:
 
 | Step | What you do | What you get |
 |---|---|---|
@@ -31,11 +31,35 @@ Open your project in the **Codex GUI** or Claude Code and describe the experienc
 > [!NOTE]
 > **Codex GUI is the primary experience.** Codex CLI 0.166.0 Default cannot collect approval through its asynchronous selector after the turn ends.
 >
-> DDL stops unapproved on that route; see the [CLI notice and host limits](./codex/README.md#host-limits).
+> DDL stops unapproved on that route; see the [CLI notice and host limits](./hosts/codex/README.md#host-limits).
+
+## Two ways to use DDL
+
+The environment install above is the usual way: the installer builds the host layouts under `dist/`, symlinks the skills, the agent definitions, and the gate hook under `$HOME/.claude/` and `$HOME/.codex/`, and merges the settings fragment into the host's settings file. A project then needs only `design.md` and a short instruction file. The other way keeps everything inside one project: `bash DDL/bin/install.sh --project your-project --claude` or `--codex` builds the same layouts and copies the host's one into the project, `.claude/` for Claude, and `AGENTS.md`, `.codex/`, and `.agents/skills/` for Codex. Both start from the same build; `bash DDL/bin/doctor.sh` checks an environment install, including whether the generated layout is current.
+
+The repository is one host-neutral source tree with one place where the hosts differ:
+
+```
+DDL/
+├── README.md        this overview
+├── LICENSE
+├── assets/          images
+├── docs/            the philosophy in English and Japanese, the glossary, the maintainer reference
+├── skills/          the eight command skills, one source each: <name>/SKILL.md with the /name notation
+├── protocol/        the instruction-set reference: SKILL.md (the entry) and six operations
+├── hosts/           the only place where hosts differ
+│   ├── claude/      start.md, approval.md, parallel-work.md, git-review.md (the four implementations),
+│   │                guidance.md (becomes .claude/CLAUDE.md), settings.json, agents/, README.md
+│   └── codex/       the same four implementations, guidance.md (becomes AGENTS.md),
+│                    hooks.json, config.toml, agents/, rules/, README.md
+├── bin/             install.sh, uninstall.sh, doctor.sh, ddl_setup.py (build, then install)
+├── tools/           build.py (the generator), check_ddl.py, the test suites, ddl_gate.py (the gate's source), fixtures/
+└── dist/            generated and untracked: claude/.claude/… and codex/… as a project receives them
+```
 
 ## Choose a command
 
-| Use it to… | Claude Code | Codex |
+| Use it to… | Claude | Codex |
 |---|---|---|
 | Draft the desired experience | `/draft` | `$draft` |
 | Implement an approved plan | `/realize` | `$realize` |
@@ -56,13 +80,13 @@ One native approval interaction covers that set, with optional free text: **appr
 
 Subset editing is optional and starts only when requested, using a supported native checklist or grouped form rather than an automatic item-by-item question loop or a forced typed ID list. A request receipt, cancellation, dismissal, unanswered question, or timeout approves nothing. If a permitted, answerable native interface is unavailable, DDL explains the limitation and stops instead of silently substituting typed choices.
 
-The [protocol](./claude-code/skills/ddl-protocol/SKILL.md) is an instruction-set reference. Its entry holds the instruction set (the ten directives a command uses, each with syntax, count, placement, and rule) and a reading map that names the operation to read before the action it defines, Approval, Parallel work, Notebook, Close, Git review, or Command authoring, together with the implementation read beside it. Each operation has the same fixed sections, with one short example next to its rules; the implementations under `hosts/claude-code/` and `hosts/codex/` are named after the operations and hold the mappings and dated observations. These are files within the selected protocol, not additional commands. Runtime hooks provide guardrails for the calls they receive; they do not establish complete STOP enforcement. See the [runtime limits and verification notes](./docs/maintainers/README.md#runtime-boundaries) for the distinction.
+The [protocol](./protocol/SKILL.md) is an instruction-set reference. Its entry holds the instruction set (the ten directives a command uses, each with syntax, count, placement, and rule) and a reading map that names the operation to read before the action it defines, Approval, Parallel work, Notebook, Close, Git review, or Command authoring, together with the implementation read beside it. Each operation has the same fixed sections, with one short example next to its rules; the implementations under `hosts/claude/` and `hosts/codex/` are named after the operations and hold the mappings and dated observations, and an installed protocol carries only its own host's four. These are files within the selected protocol, not additional commands. Runtime hooks provide guardrails for the calls they receive; they do not establish complete STOP enforcement. See the [runtime limits and verification notes](./docs/maintainers/README.md#runtime-boundaries) for the distinction.
 
 ## Learn more
 
 - [The idea behind DDL](./docs/README.md): short and extended explanations in English and Japanese.
-- [Codex setup and use](./codex/README.md): GUI first, with host limits explained.
-- [Claude Code setup and use](./claude-code/README.md): install, start a project, and review decisions.
+- [Codex setup and use](./hosts/codex/README.md): GUI first, with host limits explained.
+- [Claude setup and use](./hosts/claude/README.md): install, start a project, and review decisions.
 - [Maintainer reference](./docs/maintainers/README.md): installation details, adapters, source files, and validation.
 
 ## License

@@ -4,8 +4,11 @@
 Run separately from doctor: python3 -I tools/test_ddl_setup.py. Doctor runs the gate suite,
 never this suite, so its install/doctor/uninstall rehearsal cannot recurse. Hook dispatch
 uses the saved runtime matchers and commands; payload tool commands are never executed.
+The installer links and copies the generated dist/ of this checkout, so the suite builds it
+from the source (tools/build.py) before the first test.
 """
 import contextlib
+import importlib.util
 import io
 import json
 import os
@@ -22,6 +25,19 @@ sys.path.insert(0, str(ROOT / "bin"))
 import ddl_setup  # noqa: E402
 
 SETUP = ROOT / "bin/ddl_setup.py"
+BUILD = ROOT / "tools/build.py"
+
+
+def setUpModule():
+    """RUNTIMES point into dist/: generate it from the source before installing from this checkout."""
+    if not BUILD.is_file():
+        raise unittest.SkipTest("tools/build.py missing: dist/ cannot be built for the installer")
+    spec = importlib.util.spec_from_file_location("ddl_build", BUILD)
+    build = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(build)
+    if not hasattr(build, "write"):
+        raise unittest.SkipTest("tools/build.py lacks write() yet: dist/ cannot be built for the installer")
+    build.write(ROOT)
 FIXTURES = ROOT / "tools/fixtures"
 REPORT = "+++DDL_REPORT\n\n## Realize report\n\nAwaiting approval."
 RUNTIMES = {

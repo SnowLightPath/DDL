@@ -92,7 +92,7 @@
 | instruction（ISA のたとえ。`+++` ディレクティブ一つ一つ） | 命令 |  | ISA。directive は「ディレクティブ」のまま。規則としての instruction は「指示」の行に従う |
 | specification（protocol の） | 仕様 |  | 命令セット仕様 |
 | instruction-set reference | 命令セット仕様 |  | protocol の形式（P16）。「命令セットの参照資料」とは訳さない |
-| protocol tree | プロトコルの木 |  | 入口、操作、`hosts/` の実装の三段。「Codex のプロトコルの木」 |
+| protocol tree | プロトコルの木 |  | 入口、操作、`hosts/` の実装の三段。「各ホストが受け取るプロトコルの木」 |
 | tier（protocol の木の三段） | 段 |  | 「三段からなる」。Direction の stage は「段階」 |
 | entry（protocol の入口。`SKILL.md`） | 入口 | エントリ | 命令セット（十の命令の表）と読み込み地図を持つ。読み込み地図は操作、読む場面、実装の 3 列 |
 | reading map | 読み込み地図 | 読み込みマップ |  |
@@ -110,8 +110,13 @@
 | boundary（一般の境界） | 境界 | 境界線 | 入力の境界など。操作の節は Exceptions（例外） |
 | Implementation（操作の節） | 実装 |  | 操作の 8 番目の節。`hosts/` の実装（ファイル）とは文脈で区別する |
 | `hosts/`（protocol の実装を置くディレクトリ） | `hosts/` |  | ディレクトリ名は英字のまま。中の 8 本は次の行の「実装」 |
-| implementation（`hosts/` の 8 本） | 実装 | 実行環境の資料、ホスト資料 | `hosts/claude-code/` と `hosts/codex/` の八つ。ホストごとに 4 本。`start.md` は Start で読み、`approval.md`、`parallel-work.md`、`git-review.md` は同じ名前の操作とともに読む。Read when、Mapping、Observed、Coverage を持つ。節の名前の近くでは「`hosts/` の実装」と書く。`hosts/` は英字のまま。旧称 host file、runtime file は使わない |
+| implementation（`hosts/` の 8 本） | 実装 | 実行環境の資料、ホスト資料 | `hosts/claude/` と `hosts/codex/` の八つ。ホストごとに 4 本であり、導入されたプロトコルは自分のホストの 4 本だけを持つ。`start.md` は Start で読み、`approval.md`、`parallel-work.md`、`git-review.md` は同じ名前の操作とともに読む。Read when、Mapping、Observed、Coverage を持つ。節の名前の近くでは「`hosts/` の実装」と書く。`hosts/` は英字のまま。旧称 host file、runtime file は使わない |
 | the host's `start.md` | ホストの `start.md` |  | Phase 0 で入口とともに読む実装。「起動資料」とは訳さない |
+| host（`claude`、`codex`） | ホスト |  | `hosts/` の下の名前で実行環境を指すときの語。ディレクトリ名 `hosts/claude/`、`hosts/codex/` は英字のまま。表示名は Claude と Codex であり、製品名 Claude Code は版を引くときに限って書く |
+| source tree | 正本の木 |  | `skills/`、`protocol/`、`hosts/<host>/` の実装、`tools/ddl_gate.py` からなるホストに中立な一本の木。両ホストの生成物はここから作る |
+| build（`tools/build.py`） | 生成（build） |  | 正本の木から両ホストの生成物を `dist/` に書き出すこと。初出に英語を添える |
+| generated layout / dist | 生成物（`dist/`） |  | `dist/claude/.claude/` と `dist/codex/`。Git では追跡されず、`bin/install.sh` は生成してから導入する |
+| guidance.md | 指示ファイルのテンプレート（`guidance.md`） |  | `hosts/claude/guidance.md` は `.claude/CLAUDE.md` に、`hosts/codex/guidance.md` は `AGENTS.md` になる。プロトコルの隣に `claude.md` という名のファイルを置かないための名前 |
 | observed（dated fact） | 観測 | 観察 | 日付と版つきの事実。「日付つきの観測の行」 |
 | coverage | 保証範囲 |  | アダプタが執行することとその限界 |
 | phase（固有名: Phase 0 など） | Phase |  |  |

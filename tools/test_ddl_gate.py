@@ -28,8 +28,8 @@ import ddl_gate  # noqa: E402
 GATE = str(TOOLS / "ddl_gate.py")
 REPO = TOOLS.parent
 FIXTURES = TOOLS / "fixtures"
-ADAPTERS = {"claude": REPO / "claude-code" / "settings.json",
-            "codex": REPO / "codex" / ".codex" / "hooks.json"}
+ADAPTERS = {"claude": REPO / "hosts" / "claude" / "settings.json",
+            "codex": REPO / "hosts" / "codex" / "hooks.json"}
 EVENT_NAMES = {"pre-tool-use": "PreToolUse", "session-start": "SessionStart", "stop": "Stop",
                "user-prompt-submit": "UserPromptSubmit"}
 REPORT_TEXT = "+++DDL_REPORT\n\n## Realize report\n\nAwaiting approval."

@@ -1,3 +1,0 @@
-# DDL: a skill runs when the user invokes $refactoring; Codex does not start it on its own (implementations under hosts/ in the protocol).
-policy:
-  allow_implicit_invocation: false

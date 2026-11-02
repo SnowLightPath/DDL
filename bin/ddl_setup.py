@@ -2,25 +2,30 @@
 """Install, check, or remove DDL at the user level (bin/install.sh, bin/doctor.sh, bin/uninstall.sh).
 
 DDL is installed into the environment, not into each project: the skills, the agent definitions,
-the gate hook, and the rules file are symlinked from this checkout into `$HOME/.claude/` and
-`$HOME/.codex/`, and the adapter's settings fragment is merged into `$HOME/.claude/settings.json`
-and `$HOME/.codex/hooks.json`. A project then needs only `design.md` and a short instruction file
-(`claude-code/CLAUDE.md` as `.claude/CLAUDE.md`, `codex/AGENTS.md` as `AGENTS.md`).
+the gate hook, and the rules file are symlinked from this checkout's generated layout `dist/` into
+`$HOME/.claude/` and `$HOME/.codex/`, and the adapter's settings fragment is merged into
+`$HOME/.claude/settings.json` and `$HOME/.codex/hooks.json`. `install`, `doctor`, and `--project`
+build `dist/` first (`tools/build.py`, from `skills/`, `protocol/`, `hosts/`, and `tools/ddl_gate.py`),
+so a fresh clone works. A project then needs only `design.md` and a short instruction file
+(`dist/claude/.claude/CLAUDE.md` as `.claude/CLAUDE.md`, `dist/codex/AGENTS.md` as `AGENTS.md`; both
+come from `hosts/<host>/guidance.md`).
 
-  install    create or repoint the symlinks and merge the fragment (idempotent; existing settings
-             are kept, DDL's own entries are replaced so a path change takes effect)
-  doctor     check every link and merged entry, probe configured push hooks in a temporary home,
-             run the gate's tests, and check the Codex native push rule separately;
+  install    build dist/, create or repoint the symlinks, and merge the fragment (idempotent; existing
+             settings are kept, DDL's own entries are replaced so a path change takes effect)
+  doctor     build dist/, check every link and merged entry, probe configured push hooks in a
+             temporary home, run the gate's tests, and check the Codex native push rule separately;
              prints `N OK, M not OK` and exits 1 when M > 0
   uninstall  remove the links that point at DDL and the merged entries (an entry is removed only
              when its value is the one DDL wrote); a settings file left empty is removed; no backup
-             is written on uninstall
+             is written on uninstall; needs no dist/ (the fragment is generated in memory when its
+             file is absent)
 
 Runtimes: `--claude` and `--codex` select one; by default each runtime whose home directory exists
 (`$HOME/.claude`, `$HOME/.codex`) is handled. `install --project DIR` copies the per-project layout
-instead (`claude-code/` into `DIR/.claude/`, `codex/` into `DIR/`; an existing instruction file is
-kept). `--dry-run` prints the actions without performing them. `$HOME` is honoured, so a temporary
-home can be used for a rehearsal.
+instead (`dist/claude/.claude/` into `DIR/.claude/`, `dist/codex/` into `DIR/`; an existing
+instruction file is kept). `--dry-run` prints the actions on the home directory without performing
+them (dist/ is still built: it is this checkout's own build product). `$HOME` is honoured, so a
+temporary home can be used for a rehearsal.
 
 What the merge does (Claude Code `settings.json`): `hooks.<event>` gets the fragment's groups
 appended after any group that already carries a DDL command (one whose `command` contains
@@ -47,38 +52,54 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 SKILLS = ["ddl-protocol", "draft", "realize", "reflect", "validate", "commit", "docs", "refactoring", "resonate"]
 GATE_MARK = "ddl_gate.py"
 
+# Every source path points into the generated layout dist/ (tools/build.py), never at skills/, protocol/, or hosts/.
 RUNTIMES = {
     "claude": {
         "home": ".claude",
         "label": "Claude Code",
-        "links": {**{f"skills/{n}": f"claude-code/skills/{n}" for n in SKILLS},
-                  "agents/explorer.md": "claude-code/agents/explorer.md",
-                  "agents/worker.md": "claude-code/agents/worker.md",
-                  "hooks/ddl_gate.py": "claude-code/hooks/ddl_gate.py"},
+        "links": {**{f"skills/{n}": f"dist/claude/.claude/skills/{n}" for n in SKILLS},
+                  "agents/explorer.md": "dist/claude/.claude/agents/explorer.md",
+                  "agents/worker.md": "dist/claude/.claude/agents/worker.md",
+                  "hooks/ddl_gate.py": "dist/claude/.claude/hooks/ddl_gate.py"},
         "settings": "settings.json",
-        "fragment": "claude-code/settings.json",
+        "fragment": "dist/claude/.claude/settings.json",
         "rewrite": ('"$CLAUDE_PROJECT_DIR"/.claude/hooks/ddl_gate.py', '"$HOME"/.claude/hooks/ddl_gate.py'),
-        "project_src": "claude-code",
+        "project_src": "dist/claude/.claude",
         "project_dst": ".claude",
         "instruction": "CLAUDE.md",
     },
     "codex": {
         "home": ".codex",
         "label": "Codex",
-        "links": {**{f"skills/{n}": f"codex/.agents/skills/{n}" for n in SKILLS},
-                  "agents/explorer.toml": "codex/.codex/agents/explorer.toml",
-                  "agents/worker.toml": "codex/.codex/agents/worker.toml",
-                  "hooks/ddl_gate.py": "codex/.codex/hooks/ddl_gate.py",
-                  "rules/ddl.rules": "codex/.codex/rules/ddl.rules"},
+        "links": {**{f"skills/{n}": f"dist/codex/.agents/skills/{n}" for n in SKILLS},
+                  "agents/explorer.toml": "dist/codex/.codex/agents/explorer.toml",
+                  "agents/worker.toml": "dist/codex/.codex/agents/worker.toml",
+                  "hooks/ddl_gate.py": "dist/codex/.codex/hooks/ddl_gate.py",
+                  "rules/ddl.rules": "dist/codex/.codex/rules/ddl.rules"},
         "settings": "hooks.json",
-        "fragment": "codex/.codex/hooks.json",
+        "fragment": "dist/codex/.codex/hooks.json",
         "rewrite": ('"$(git rev-parse --show-toplevel 2>/dev/null || pwd)/.codex/hooks/ddl_gate.py"',
                     '"$HOME/.codex/hooks/ddl_gate.py"'),
-        "project_src": "codex",
+        "project_src": "dist/codex",
         "project_dst": ".",
         "instruction": "AGENTS.md",
     },
 }
+
+
+def build_module():
+    """tools/build.py from this checkout (python3 -I keeps the script directory off sys.path)."""
+    tools = str(ROOT / "tools")
+    if tools not in sys.path:
+        sys.path.insert(0, tools)
+    import build
+    return build
+
+
+def ensure_dist(report):
+    """Generate dist/ from the sources, so the links and copies have something to point at on a fresh clone."""
+    written = build_module().write(ROOT)
+    report.info(f"build {ROOT / 'dist'} ({len(written)} files)")
 
 
 class Report:
@@ -123,8 +144,14 @@ def load_json(path):
 
 
 def fragment_for(rt):
-    """The adapter's settings with the hook commands rewritten for the user level."""
-    data = load_json(ROOT / rt["fragment"])
+    """The adapter's settings with the hook commands rewritten for the user level; read from dist/ when
+    it is built, otherwise generated in memory (uninstall needs no dist/)."""
+    path = ROOT / rt["fragment"]
+    if path.is_file():
+        data = load_json(path)
+    else:
+        rel = pathlib.Path(rt["fragment"]).relative_to("dist").as_posix()
+        data = json.loads(build_module().generate(ROOT)[rel].decode("utf-8"))
     old, new = rt["rewrite"]
     for groups in data.get("hooks", {}).values():
         for group in groups:
@@ -262,7 +289,7 @@ def cmd_install(args, report):
             source = ROOT / src
             link = base / rel
             if not source.exists():
-                report.fail(f"{src} missing in {ROOT} (run tools/sync_mirrors.py?)")
+                report.fail(f"{src} missing in {ROOT} (run python3 tools/build.py?)")
                 continue
             if link.is_symlink():
                 if link.resolve() == source.resolve():
@@ -306,7 +333,7 @@ def install_project(args, report):
         src = ROOT / rt["project_src"]
         target = (dest / rt["project_dst"]).resolve()
         print(f"== {rt['label']} -> {target}")
-        for path in sorted(p for p in src.rglob("*") if p.is_file() and p.name != "README.md"):
+        for path in sorted(p for p in src.rglob("*") if p.is_file()):
             rel = path.relative_to(src)
             out = target / rel
             if rel.name == rt["instruction"] and rel.parent == pathlib.Path(".") and out.exists():
@@ -522,6 +549,8 @@ def main(argv):
     report = Report(dry_run=args.dry_run)
     if args.dry_run:
         print("(dry run: nothing is written)")
+    if args.command in ("install", "doctor"):
+        ensure_dist(report)
     return {"install": cmd_install, "doctor": cmd_doctor, "uninstall": cmd_uninstall}[args.command](args, report)
 
 

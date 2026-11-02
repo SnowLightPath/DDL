@@ -1,30 +1,58 @@
 #!/usr/bin/env python3
-"""Check maintained DDL structure and documentation, without running a model.
+"""Check the maintained DDL source, the generated host layouts and the documentation, without running a model.
 
-The command check validates each phase and operand block, not aggregate word
-counts. The protocol check (P1-P14 of the instruction-set specification)
-counts the units the protocol must define: sections, table rows, operation
-steps, literals, keywords, byte budgets and duplicated sentences; it reads the
-maintained text only. The
-documentation check preserves the existing language/terminology checks. Model
-loading and human choice delivery need separate live tests.
+Three modes, one line of output on success:
+
+  source  SOURCE_OK     the eight commands under skills/ with the shared Phase 0 lines read from the template in
+                        protocol/command-authoring.md (phases, STOP, SWARM values, +++DETECT headers: P11; the
+                        template in both forms: P8), the protocol source (the entry P1, the six operations P2-P8,
+                        the implementations under hosts/<host>/ P9, the vocabulary P10, duplicated sentences P14),
+                        the guidance twins hosts/<host>/guidance.md and the adapter files under hosts/
+  dist    DIST_OK       the trees tools/build.py generates, in memory: every link resolves inside each host's
+                        protocol and no {host} placeholder remains (P12), the command twins and the instruction
+                        files pass the source checks, the gate copies equal tools/ddl_gate.py, the byte budgets
+                        per host (P13), and dist/ on disk, when present, equals the generated trees
+  docs    DOCUMENTS_OK  the philosophy documents, the glossary, the READMEs and the names of earlier layouts
+
+The checks count the units the protocol must define: sections, table rows, operation steps, literals, keywords,
+bytes and sentences; they read text only. Model loading and human choice delivery need separate live tests.
 """
+import argparse
+import importlib.util
 import json
 import pathlib
 import re
 import sys
+from pathlib import PurePosixPath
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-import sync_mirrors  # noqa: E402
+TOOLS = pathlib.Path(__file__).resolve().parent
 
 COMMANDS = ("draft", "realize", "reflect", "validate", "resonate", "commit", "docs", "refactoring")
-PROTOCOL = "claude-code/skills/ddl-protocol"
-# The six operations live beside the entry; the eight implementations live under hosts/<host>/<operation>.md.
+SKILLS = "skills"      # skills/<command>/SKILL.md: the eight commands, in the Claude form (/name)
+PROTOCOL = "protocol"  # protocol/SKILL.md (the entry) and the six operations beside it, with {host} placeholders
+HOSTS = "hosts"        # hosts/<host>/<operation>.md: the four implementations per host, beside the adapter files
 OPERATIONS = ("approval", "close", "command-authoring", "git-review", "notebook", "parallel-work")
-HOST_NAMES = ("claude-code", "codex")
+HOST_NAMES = ("claude", "codex")
+HOST_TITLES = {"claude": "Claude", "codex": "Codex"}
 HOST_OPERATIONS = ("start", "approval", "parallel-work", "git-review")
 IMPLEMENTATIONS = tuple(f"{host}/{operation}" for host in HOST_NAMES for operation in HOST_OPERATIONS)
+PLACEHOLDERS = ("{host}", "{Host}")
+IMPLEMENTATION_LINK = re.compile(r"hosts/\{host\}/([a-z-]+)\.md")
+# The guidance twins: the instruction-file templates and the invocation prefix of their command table.
+GUIDES = {"claude": ("hosts/claude/guidance.md", "/"), "codex": ("hosts/codex/guidance.md", "$")}
+LOCAL_GUIDE = ".claude/CLAUDE.md"  # this repository's own instruction file, local-only: checked when it exists
+# The runtime artifacts both adapters ship, now under hosts/, and the gate's source.
+ADAPTER_FILES = ("hosts/claude/settings.json", "hosts/claude/agents/explorer.md", "hosts/claude/agents/worker.md",
+                 "hosts/claude/guidance.md", "hosts/codex/config.toml", "hosts/codex/hooks.json",
+                 "hosts/codex/agents/explorer.toml", "hosts/codex/agents/worker.toml", "hosts/codex/rules/ddl.rules",
+                 "hosts/codex/guidance.md", "tools/ddl_gate.py")
+# The generated layout: keys of build.generate(), relative to dist/.
+DIST_SKILLS = {"claude": "claude/.claude/skills", "codex": "codex/.agents/skills"}
+DIST_PROTOCOL = {host: f"{DIST_SKILLS[host]}/ddl-protocol" for host in HOST_NAMES}
+DIST_GUIDE = {"claude": "claude/.claude/CLAUDE.md", "codex": "codex/AGENTS.md"}
+DIST_GATE = {"claude": "claude/.claude/hooks/ddl_gate.py", "codex": "codex/.codex/hooks/ddl_gate.py"}
+DIST_JUNK = ("__pycache__", ".DS_Store")
 ENTRY_H2 = ("Start", "Instruction set", "Pending STOP", "Reading map", "Interruption")
 OPERATION_H2 = ("Read when", "Syntax", "Operands", "Operation", "Formats", "Example", "Exceptions", "Implementation")
 HOST_H2 = ("Read when", "Mapping", "Observed", "Coverage")
@@ -102,8 +130,8 @@ GIT_CONCERNS = ("Prepare", "nativeRequest", "Revocation", "Push confirmation", "
 # Keyed by operation: the same concerns for every host's implementation of it (P9).
 CONCERNS = {"start": START_CONCERNS, "parallel-work": PARALLEL_CONCERNS, "approval": APPROVAL_CONCERNS,
             "git-review": GIT_CONCERNS}
-# Reading budgets in UTF-8 bytes (P13): each path adds its files to the previous one and is counted per host;
-# file names are paths under the skill directory with {host} filled in.
+# Reading budgets in UTF-8 bytes (P13): each path adds its files to the previous one and is counted per host on
+# the generated tree; file names are paths under the installed skill directory with {host} filled in.
 BUDGET_PATHS = (
     ("validate", 20000, ("SKILL.md", "hosts/{host}/start.md", "approval.md", "hosts/{host}/approval.md")),
     ("draft", 29000, ("notebook.md",)),
@@ -113,29 +141,56 @@ BUDGET_PATHS = (
 EXECUTION_LIMIT = 62000
 AUTHOR_ONLY = ("command-authoring",)  # operations read by authors only: outside the execution total
 INLINE_CODE = re.compile(r"`+[^`\n]*`+")
+NOTES = []  # remarks printed on stderr that are not errors (a skipped optional check)
+_BUILD = {}
 
 
 def read(relative):
     return (ROOT / relative).read_text(encoding="utf-8")
 
 
+def render(text, host):
+    """The text a host reads: the {host} and {Host} placeholders filled in."""
+    return text.replace("{host}", host).replace("{Host}", HOST_TITLES[host])
+
+
+def load_build():
+    """The generator module tools/build.py, loaded once from this directory; None when missing or broken (NOTES says why)."""
+    if "module" not in _BUILD:
+        path = TOOLS / "build.py"
+        _BUILD["module"] = None
+        if not path.is_file():
+            _BUILD["error"] = "tools/build.py missing"
+        else:
+            try:
+                spec = importlib.util.spec_from_file_location("ddl_build", path)
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+                _BUILD["module"] = module
+            except Exception as exc:  # noqa: BLE001 - a half-written generator is reported, not raised
+                _BUILD["error"] = f"tools/build.py failed to import: {exc}"
+    return _BUILD["module"]
+
+
+def build_error():
+    load_build()
+    return _BUILD.get("error", "tools/build.py missing")
+
+
 def protocol_path(name):
-    """The repository path of a protocol file named relative to the skill directory."""
+    """The repository path of an entry or operation file named relative to the protocol directory."""
     return f"{PROTOCOL}/{name}"
+
+
+def implementation_path(name):
+    """The repository path of the implementation <host>/<operation>."""
+    return f"{HOSTS}/{name}.md"
 
 
 def protocol_files():
     """Every maintained protocol file: the entry, the six operations and the eight implementations (P10, P14)."""
-    files = [f"{PROTOCOL}/SKILL.md"] + [f"{PROTOCOL}/{n}.md" for n in OPERATIONS]
-    return files + [f"{PROTOCOL}/hosts/{n}.md" for n in IMPLEMENTATIONS]
-
-
-def byte_size(relative):
-    """The size of a file in bytes, or None when it is missing (reported by P1, P2 or P9)."""
-    try:
-        return (ROOT / relative).stat().st_size
-    except OSError:
-        return None
+    files = [protocol_path("SKILL.md")] + [protocol_path(f"{n}.md") for n in OPERATIONS]
+    return files + [implementation_path(n) for n in IMPLEMENTATIONS]
 
 
 def visible_lines(text):
@@ -169,6 +224,12 @@ def h2_sections(text):
         else:
             current.append(raw)
     return titles, bodies
+
+
+def h1_title(text):
+    """The H1 line outside fences, or None."""
+    found = re.search(r"(?m)^# (\S.*)$", "\n".join(visible_lines(text)))
+    return found[1].strip() if found else None
 
 
 def cells(row):
@@ -248,6 +309,16 @@ def links(text):
     return re.findall(r"\[[^\]]*\]\(\s*<?([^\s)>]+)>?(?:\s+[^)]*)?\)", INLINE_CODE.sub("", text))
 
 
+def local_links(text):
+    """The paths (fragments dropped) of the relative links outside fences and code spans."""
+    paths = []
+    for link in links("\n".join(visible_lines(text))):
+        path = link.split("#")[0]
+        if path and not path.startswith("/") and not re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", path):
+            paths.append(path)
+    return paths
+
+
 def local_targets(text, directory):
     """The resolved files (fragments dropped) that the local links in text point to."""
     targets = set()
@@ -257,6 +328,34 @@ def local_targets(text, directory):
             continue
         targets.add((directory / path).resolve())
     return targets
+
+
+def implementation_operation(path):
+    """The operation an implementation link names, when its path is hosts/{host}/<operation>.md with the placeholder."""
+    found = IMPLEMENTATION_LINK.fullmatch(path)
+    return found[1] if found and found[1] in HOST_OPERATIONS else None
+
+
+def implementation_link_errors(err, where, paths):
+    """Errors for the links of a Reading map cell or an Implementation section (P1, P2): exactly one link to
+    hosts/{host}/<operation>.md with the literal placeholder, whose target exists for every host."""
+    hits = [path for path in paths if "hosts/" in path]
+    if len(hits) != 1:
+        err(f"{where} needs exactly one link to hosts/{{host}}/<operation>.md, got {len(hits)}")
+    for path in hits:
+        operation = implementation_operation(path)
+        if operation is None:
+            err(f"{where} link must be hosts/{{host}}/<operation>.md with the placeholder, got {path}")
+            continue
+        for host in HOST_NAMES:
+            if not (ROOT / implementation_path(f"{host}/{operation}")).is_file():
+                err(f"{where} link target missing for {host}: hosts/{host}/{operation}.md")
+
+
+def beside_entry(path):
+    """True when a link path names a file beside the entry (an operation or the entry itself)."""
+    target = (ROOT / PROTOCOL / path).resolve()
+    return target.is_file() and target.parent == (ROOT / PROTOCOL).resolve()
 
 
 def keyword_errors(ident, label, section, column, keywords):
@@ -288,7 +387,7 @@ def situations(bodies):
 
 def authoring_template():
     """(frontmatter name, template text or None, errors): the ````markdown fence under ## Example of command-authoring.md."""
-    path = f"{PROTOCOL}/command-authoring.md"
+    path = protocol_path("command-authoring.md")
     try:
         text = read(path)
     except OSError:
@@ -315,32 +414,45 @@ def shared_lines(template):
     return shared, errors
 
 
+def template_shared():
+    """(name, template, shared lines, errors) of the authoring template, for the command checks of both modes."""
+    name, template, errors = authoring_template()
+    shared = {}
+    if template is not None:
+        shared, shared_errors = shared_lines(template)
+        errors += shared_errors
+    return name, template, shared, errors
+
+
 def check_template(name, template, shared):
-    """Structural errors of the template in its Claude Code form and in its Codex form."""
+    """Structural errors of the template in its Claude form and, when the generator is importable, its Codex form."""
     label = "command-authoring template"
     errors = check_command(label, template, shared)
+    to_codex = getattr(load_build(), "to_codex", None)
+    if to_codex is None:
+        NOTES.append(f"note: {build_error()}; the template's Codex form is not checked")
+        return errors
     try:
-        codex = sync_mirrors.to_codex(name, template)
+        codex = to_codex(name, template)
     except SystemExit as exc:
         return errors + [f"{label}: Codex conversion failed: {exc}"]
     return errors + check_command(f"{label} (Codex form)", codex, shared)
 
 
 def check_shared_contract():
-    """The runtime artifacts both adapters must ship (commands mode)."""
+    """The runtime artifacts both adapters ship under hosts/, and the gate's source (source mode)."""
     errors = []
-    artifacts = ("claude-code/settings.json", "claude-code/agents/explorer.md", "claude-code/agents/worker.md",
-                 "claude-code/hooks/ddl_gate.py", "codex/.codex/config.toml", "codex/.codex/hooks.json",
-                 "codex/.codex/hooks/ddl_gate.py", "codex/.codex/agents/explorer.toml",
-                 "codex/.codex/agents/worker.toml", "codex/.codex/rules/ddl.rules")
-    for path in artifacts:
+    for path in ADAPTER_FILES:
         if not (ROOT / path).is_file():
             errors.append(f"missing runtime artifact: {path}")
-    if not re.search(r"(?m)^max_concurrent_threads_per_session\s*=\s*[1-9]\d*", read("codex/.codex/config.toml")):
-        errors.append("Codex config: missing positive worker limit")
-    for role in ("explorer", "worker"):
-        if not re.search(r'(?m)^name\s*=\s*"' + role + '"', read(f"codex/.codex/agents/{role}.toml")):
-            errors.append(f"Codex role: missing name {role}")
+    try:
+        if not re.search(r"(?m)^max_concurrent_threads_per_session\s*=\s*[1-9]\d*", read("hosts/codex/config.toml")):
+            errors.append("Codex config: missing positive worker limit")
+        for role in ("explorer", "worker"):
+            if not re.search(r'(?m)^name\s*=\s*"' + role + '"', read(f"hosts/codex/agents/{role}.toml")):
+                errors.append(f"Codex role: missing name {role}")
+    except OSError:
+        pass  # reported above as a missing artifact
     return errors
 
 
@@ -424,36 +536,55 @@ def check_command(label, text, shared_lines):
     return errors
 
 
-def check_commands():
-    name, template, errors = authoring_template()
-    shared = {}
-    if template is not None:
-        shared, shared_errors = shared_lines(template)
-        errors += shared_errors + check_template(name, template, shared)
-    for directory in ("claude-code/skills", "codex/.agents/skills"):
-        for command in COMMANDS:
-            path = f"{directory}/{command}/SKILL.md"
-            errors += check_command(path, read(path), shared)
-    guides = ("claude-code/CLAUDE.md", "codex/AGENTS.md", ".claude/CLAUDE.md")
-    for path in guides:
-        text = read(path)
-        names = re.findall(r"(?m)^\| `[/$](\w+)` \|", text)
-        for command in COMMANDS:
-            if names.count(command) != 1:
-                errors.append(f"{path}: command table needs one {command}")
-        if re.search(r"§\s*\d", text):
-            errors.append(f"{path}: obsolete numbered protocol reference")
-    headings = [re.findall(r"(?m)^## (.+)", read(p)) for p in guides[:2]]
-    if headings[0] != [h.replace("Skills", "Commands") for h in headings[1]]:
-        errors.append("runtime instruction templates: heading structure differs")
+def check_guide(label, text, prefix):
+    """The command table of an instruction file: one `<prefix><command>` row per command, no section signs."""
+    errors = []
+    names = re.findall(r"(?m)^\| `" + re.escape(prefix) + r"(\w+)` \|", text)
+    for command in COMMANDS:
+        if names.count(command) != 1:
+            errors.append(f"{label}: command table needs one {command} (`{prefix}{command}`)")
+    if re.search(r"§\s*\d", text):
+        errors.append(f"{label}: obsolete numbered protocol reference")
     return errors
 
 
-# Protocol mode: P1-P10 and P13-P14 (P11 lives in check_command, P12 in tools/test_protocol.py).
+def guide_headings(text):
+    return re.findall(r"(?m)^## (.+)", text)
+
+
+def check_commands():
+    """The eight commands against the template's shared lines, the template itself, and the guidance twins."""
+    name, template, shared, errors = template_shared()
+    if template is not None:
+        errors += check_template(name, template, shared)
+    for command in COMMANDS:
+        path = f"{SKILLS}/{command}/SKILL.md"
+        try:
+            errors += check_command(path, read(path), shared)
+        except OSError:
+            errors.append(f"missing command: {path}")
+    texts = {}
+    for host, (path, prefix) in GUIDES.items():
+        try:
+            texts[host] = read(path)
+        except OSError:
+            errors.append(f"missing guidance twin: {path}")
+            continue
+        errors += check_guide(path, texts[host], prefix)
+    if (ROOT / LOCAL_GUIDE).is_file():
+        errors += check_guide(LOCAL_GUIDE, read(LOCAL_GUIDE), "/")
+    if len(texts) == 2:
+        headings = [guide_headings(texts[host]) for host in HOST_NAMES]
+        if headings[0] != [h.replace("Skills", "Commands") for h in headings[1]]:
+            errors.append("guidance twins: heading structure differs")
+    return errors
+
+
+# Protocol source: P1-P10 and P14 (P11 lives in check_command, P12 and P13 in dist mode and tools/test_protocol.py).
 
 def check_entry():
-    """P1: the entry's sections, the Instruction set table and the Reading map."""
-    path = f"{PROTOCOL}/SKILL.md"
+    """P1: the entry's sections, the Instruction set table, the Reading map and the links it holds."""
+    path = protocol_path("SKILL.md")
     try:
         text = read(path)
     except OSError:
@@ -466,6 +597,8 @@ def check_entry():
     start = steps(bodies.get("Start", []))
     if len(start) != 4:
         err(f"Start needs exactly 4 numbered items, got {len(start)}")
+    if "hosts/{host}/start.md" not in local_links(section_text(bodies.get("Start", []))):
+        err("Start needs a link to hosts/{host}/start.md")
     header = "| Directive | Syntax | Count | Placement | Rule |"
     found = table(bodies.get("Instruction set", []))
     if found is None or header_text(found[0]) != header:
@@ -485,7 +618,6 @@ def check_entry():
         if len(found[1]) < 6:
             err(f"Reading map needs at least 6 rows, got {len(found[1])}")
         base = (ROOT / PROTOCOL).resolve()
-        hosts = base / "hosts"
         for row in found[1]:
             name = link_text(row[0])
             targets = local_targets(row[0], base)
@@ -495,24 +627,29 @@ def check_entry():
                 if not target.is_file() or target.parent != base:
                     err(f"Reading map row {name!r}: Operation link target is not a file beside the entry: {target.name}")
             cell = row[2] if len(row) > 2 else ""
-            targets = local_targets(cell, base)
             if plain(cell) == "none":
                 continue
-            if not targets:
-                err(f"Reading map row {name!r}: Implementation cell needs none or a link to a file under hosts/")
-            for target in targets:
-                if not target.is_file() or not target.is_relative_to(hosts):
-                    err(f"Reading map row {name!r}: Implementation link target is not a file under hosts/: {target.name}")
+            paths = local_links(cell)
+            if not paths:
+                err(f"Reading map row {name!r}: Implementation cell needs none or one link to hosts/{{host}}/<operation>.md")
+                continue
+            implementation_link_errors(err, f"Reading map row {name!r}: Implementation", paths)
+    for path in local_links(text):
+        if "hosts/" in path:
+            if implementation_operation(path) is None:
+                err(f"link to hosts/ must be hosts/{{host}}/<operation>.md with the placeholder: {path}")
+        elif not beside_entry(path):
+            err(f"link target is not a file beside the entry: {path}")
     return errors
 
 
 def check_schema(label, text, titles, bodies):
-    """P2: the eight sections of an operation, their emptiness rules and the Implementation links."""
+    """P2: the eight sections of an operation, their emptiness rules and the links (one implementation link)."""
     errors = []
     err = lambda message: errors.append(f"P2: {label}: {message}")  # noqa: E731
     if titles != list(OPERATION_H2):
         err(f"H2 headings must be {list(OPERATION_H2)}, got {titles}")
-    if not re.search(r"(?m)^# \S", "\n".join(visible_lines(text))):
+    if h1_title(text) is None:
         err("needs an H1 title")
     for title in OPERATION_H2:
         body = bodies.get(title)
@@ -533,15 +670,13 @@ def check_schema(label, text, titles, bodies):
                 err(f"{title} needs a table with at least one row")
             elif title == "Exceptions" and header_text(found[0]) != "| Situation | Behavior |":
                 err("Exceptions table header must be | Situation | Behavior |")
-    implementation = section_text(bodies.get("Implementation", []))
-    directory = ROOT / PROTOCOL
-    for host in HOST_NAMES:
-        hits = [link for link in links(implementation) if f"hosts/{host}/" in link]
-        if not hits:
-            err(f"Implementation needs a link whose path contains hosts/{host}/")
-        for hit in hits:
-            if not (directory / hit.split("#")[0]).is_file():
-                err(f"Implementation link target missing: {hit}")
+    implementation_link_errors(err, "Implementation", local_links(section_text(bodies.get("Implementation", []))))
+    for path in local_links(text):
+        if "hosts/" in path:
+            if implementation_operation(path) is None:
+                err(f"link to hosts/ must be hosts/{{host}}/<operation>.md with the placeholder: {path}")
+        elif not beside_entry(path):
+            err(f"link target is not a file beside the entry: {path}")
     return errors
 
 
@@ -572,13 +707,11 @@ def check_notebook(text, bodies):
     defined = section_text(bodies.get("Formats", []))
     errors += literal_errors(ident, label, "Formats", defined, FORMATS["notebook"])
     for command in NOTEBOOK_WRITERS:
+        path = f"{SKILLS}/{command}/SKILL.md"
         try:
-            uses = read(f"claude-code/skills/{command}/SKILL.md")
-            twin = ROOT / f"codex/.agents/skills/{command}/SKILL.md"
-            if twin.is_file():
-                uses += "\n" + twin.read_text(encoding="utf-8")
+            uses = read(path)
         except OSError:
-            errors.append(f"{ident}: missing claude-code/skills/{command}/SKILL.md")
+            errors.append(f"{ident}: missing {path}")
             continue
         for mark in NOTEBOOK_MARKS:
             if mark in uses and mark not in defined:
@@ -688,24 +821,26 @@ def check_command_authoring(text, bodies):
 
 
 def check_implementations():
-    """P9 (and the P2 heading rule) for the eight implementations under hosts/."""
+    """P9 (and the P2 heading rule) for the eight implementations hosts/<host>/<operation>.md: four sections, the
+    host's title, the Mapping concerns, dated Observed rows, Coverage bullets, operations named and never linked."""
     errors = []
-    directory = ROOT / PROTOCOL / "hosts"
-    base = (ROOT / PROTOCOL).resolve()
     for name in IMPLEMENTATIONS:
         host, _, operation = name.partition("/")
-        label = f"hosts/{name}.md"
+        label = implementation_path(name)
         err = lambda message, label=label: errors.append(f"P9: {label}: {message}")  # noqa: E731
         try:
-            text = read(f"{PROTOCOL}/hosts/{name}.md")
+            text = read(label)
         except OSError:
             err("missing")
             continue
         titles, bodies = h2_sections(text)
         if titles != list(HOST_H2):
             errors.append(f"P2: {label}: H2 headings must be {list(HOST_H2)}, got {titles}")
-        if not re.search(r"(?m)^# \S", "\n".join(visible_lines(text))):
+        title = h1_title(text)
+        if title is None:
             err("needs an H1 title")
+        elif not title.startswith(f"{HOST_TITLES[host]}: "):
+            err(f"H1 must be '# {HOST_TITLES[host]}: {operation.replace('-', ' ')}', got '# {title}'")
         found = table(bodies.get("Mapping", []))
         if found is None or header_text(found[0]) != MAPPING_HEADER:
             err(f"Mapping table header must be {MAPPING_HEADER}")
@@ -725,16 +860,12 @@ def check_implementations():
                     err(f"Observed row {number} needs a YYYY-MM-DD Date, got {date!r}")
         if len(bullets(bodies.get("Coverage", []))) < 2:
             err("Coverage needs at least two bullets")
-        targets = local_targets(section_text(bodies.get("Read when", [])), directory / host)
-        if operation != "start":
-            if base / f"{operation}.md" not in targets:
-                err(f"Read when needs a link back to ../../{operation}.md")
-        else:
-            if not any(target.parent == base for target in targets):
-                err("Read when needs a link back to an operation or the entry")
-            for sibling in HOST_OPERATIONS[1:]:
-                if (directory / host / f"{sibling}.md").resolve() not in targets:
-                    err(f"Read when needs a link to {sibling}.md")
+        for link in links("\n".join(visible_lines(text))):
+            err(f"implementations hold no links; refer to operations by name: {link}")
+        read_when = section_text(bodies.get("Read when", [])).lower()
+        named = ("entry", "protocol") if operation == "start" else (operation.replace("-", " "),)
+        if not any(word in read_when for word in named):
+            err(f"Read when needs to name {' or '.join(named)}")
     return errors
 
 
@@ -746,35 +877,31 @@ def check_vocabulary():
             text = read(path)
         except OSError:
             continue  # reported by P1, P2 or P9
-        label = path[len(PROTOCOL) + 1:]
         if "§" in text:
-            errors.append(f"P10: {label}: contains a section sign (§); refer to operations by name and link")
-        if "/hosts/" not in path:
+            errors.append(f"P10: {path}: contains a section sign (§); refer to operations by name and link")
+        if not path.startswith(f"{HOSTS}/"):
             names = sorted({m[1] for m in TOOL_NAMES.finditer(text)})
             if names:
-                errors.append(f"P10: {label}: host tool names belong under hosts/: {', '.join(names)}")
+                errors.append(f"P10: {path}: host tool names belong under hosts/: {', '.join(names)}")
     return errors
 
 
-def check_budget():
-    """P13: the cumulative byte budgets of the validate, draft, realize-plan and realize-close paths per host, and the execution total."""
-    errors = []
-    for host in HOST_NAMES:
-        files, total = [], 0
-        for name, limit, additions in BUDGET_PATHS:
-            for file in (addition.format(host=host) for addition in additions):
-                size = byte_size(protocol_path(file))
-                if size is not None:
-                    files.append(file)
-                    total += size
-            if total > limit:
-                errors.append(f"P13: {host} {name}: {total} bytes exceeds {limit} ({' + '.join(files)})")
+def check_budget(host, sizes):
+    """P13 for one host's generated protocol tree: the cumulative byte budgets of the validate, draft, realize-plan
+    and realize-close paths and the execution total; sizes maps paths under the skill directory to byte counts."""
+    errors, files, total = [], [], 0
+    for name, limit, additions in BUDGET_PATHS:
+        for file in (addition.format(host=host) for addition in additions):
+            if file in sizes:
+                files.append(file)
+                total += sizes[file]
+        if total > limit:
+            errors.append(f"P13: {host} {name}: {total} bytes exceeds {limit} ({' + '.join(files)})")
     execution = ["SKILL.md"] + [f"{n}.md" for n in OPERATIONS if n not in AUTHOR_ONLY]
-    execution += [f"hosts/{n}.md" for n in IMPLEMENTATIONS]
-    sizes = [byte_size(protocol_path(file)) for file in execution]
-    total = sum(size for size in sizes if size is not None)
+    execution += [f"hosts/{host}/{n}.md" for n in HOST_OPERATIONS]
+    total = sum(sizes.get(file, 0) for file in execution)
     if total > EXECUTION_LIMIT:
-        errors.append(f"P13: execution total: {total} bytes exceeds {EXECUTION_LIMIT}")
+        errors.append(f"P13: {host} execution total: {total} bytes exceeds {EXECUTION_LIMIT}")
     return errors
 
 
@@ -798,9 +925,8 @@ def check_duplicates():
             text = read(path)
         except OSError:
             continue  # reported by P1, P2 or P9
-        label = path[len(PROTOCOL) + 1:]  # named as in P13
         for number, sentence in sentences(text):
-            places.setdefault(sentence, []).append((label, number))
+            places.setdefault(sentence, []).append((path, number))
     for sentence, found in places.items():
         first = f"{found[0][0]}:{found[0][1]}"
         for label, number in found[1:]:
@@ -809,11 +935,12 @@ def check_duplicates():
 
 
 def check_protocol():
+    """The protocol source: the entry, the six operations, the eight implementations, the vocabulary, duplicates."""
     errors = check_entry()
     checks = {"parallel-work": check_parallel_work, "notebook": check_notebook, "approval": check_approval,
               "close": check_close, "git-review": check_git_review, "command-authoring": check_command_authoring}
     for name in OPERATIONS:
-        path = f"{PROTOCOL}/{name}.md"
+        path = protocol_path(f"{name}.md")
         try:
             text = read(path)
         except OSError:
@@ -824,10 +951,151 @@ def check_protocol():
         errors += checks[name](text, bodies)
     errors += check_implementations()
     errors += check_vocabulary()
-    errors += check_budget()
     errors += check_duplicates()
     return errors
 
+
+def check_source():
+    return check_shared_contract() + check_commands() + check_protocol()
+
+
+# Dist mode: the generated trees, in memory.
+
+def generated_tree():
+    """({path relative to dist/: bytes}, errors) from build.generate(ROOT); the tree is None when generation failed."""
+    build = load_build()
+    if build is None:
+        return None, [f"dist: {build_error()}"]
+    if not hasattr(build, "generate"):
+        return None, ["dist: tools/build.py lacks generate()"]
+    try:
+        files = build.generate(ROOT)
+    except SystemExit as exc:
+        return None, [f"dist: build failed: {exc}"]
+    except Exception as exc:  # noqa: BLE001 - a generator mid-edit is reported, not raised
+        return None, [f"dist: build failed: {type(exc).__name__}: {exc}"]
+    return {str(PurePosixPath(str(key))): bytes(data) for key, data in files.items()}, []
+
+
+def resolve_link(directory, path):
+    """The normalized tree path a relative link reaches from a directory, or None when it climbs out of the tree."""
+    parts = []
+    for part in PurePosixPath(directory, path).parts:
+        if part == "..":
+            if not parts:
+                return None
+            parts.pop()
+        elif part not in (".", ""):
+            parts.append(part)
+    return "/".join(parts)
+
+
+def decoded(data):
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+def check_dist_protocol(host, tree):
+    """P12 on one host's generated protocol: the expected files, only that host's implementations, every link
+    resolving inside the tree, no placeholder; then the P13 budgets."""
+    errors = []
+    prefix = DIST_PROTOCOL[host] + "/"
+    err = lambda message: errors.append(f"P12: dist {host}: {message}")  # noqa: E731
+    protocol = {key[len(prefix):]: data for key, data in tree.items() if key.startswith(prefix)}
+    expected = ["SKILL.md"] + [f"{n}.md" for n in OPERATIONS] + [f"hosts/{host}/{n}.md" for n in HOST_OPERATIONS]
+    for name in expected:
+        if name not in protocol:
+            err(f"missing {prefix}{name}")
+    for name in sorted(protocol):
+        if name.startswith("hosts/") and not name.startswith(f"hosts/{host}/"):
+            err(f"another host's implementation generated: {prefix}{name}")
+    for name, data in sorted(protocol.items()):
+        if not name.endswith(".md"):
+            continue
+        text = decoded(data)
+        if text is None:
+            err(f"{prefix}{name}: not UTF-8")
+            continue
+        directory = str(PurePosixPath(name).parent)
+        for link in links("\n".join(visible_lines(text))):
+            path = link.split("#")[0]
+            if not path or path.startswith("/") or re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", path):
+                continue
+            target = resolve_link("" if directory == "." else directory, path)
+            if target is None or target not in protocol:
+                err(f"{prefix}{name}: link does not resolve inside the generated protocol: {link}")
+    errors += check_budget(host, {name: len(data) for name, data in protocol.items()})
+    return errors
+
+
+def check_dist():
+    """DIST_OK: the generated trees of both hosts, built in memory, and the freshness of dist/ on disk."""
+    tree, errors = generated_tree()
+    if tree is None:
+        return errors
+    for key, data in sorted(tree.items()):
+        text = decoded(data)
+        if text is None:
+            continue
+        for placeholder in PLACEHOLDERS:
+            if placeholder in text:
+                errors.append(f"P12: dist {key}: placeholder {placeholder} not rendered")
+    name, template, shared, template_errors = template_shared()
+    errors += template_errors
+    gate = (ROOT / "tools/ddl_gate.py").read_bytes() if (ROOT / "tools/ddl_gate.py").is_file() else None
+    guides = {}
+    for host in HOST_NAMES:
+        errors += check_dist_protocol(host, tree)
+        for command in COMMANDS:
+            key = f"{DIST_SKILLS[host]}/{command}/SKILL.md"
+            if key not in tree:
+                errors.append(f"dist: missing {key}")
+                continue
+            text = decoded(tree[key])
+            if text is None:
+                errors.append(f"dist: {key}: not UTF-8")
+                continue
+            errors += check_command(f"dist/{key}", text, shared)
+            if host == "claude" and (ROOT / SKILLS / command / "SKILL.md").is_file() \
+                    and tree[key] != (ROOT / SKILLS / command / "SKILL.md").read_bytes():
+                errors.append(f"dist: {key} is not a byte copy of {SKILLS}/{command}/SKILL.md")
+        if host == "codex":
+            for skill in (*COMMANDS, "ddl-protocol"):
+                key = f"{DIST_SKILLS[host]}/{skill}/agents/openai.yaml"
+                if key not in tree:
+                    errors.append(f"dist: missing {key}")
+        key = DIST_GUIDE[host]
+        if key not in tree or decoded(tree[key]) is None:
+            errors.append(f"dist: missing {key}")
+        else:
+            guides[host] = decoded(tree[key])
+            errors += check_guide(f"dist/{key}", guides[host], GUIDES[host][1])
+        key = DIST_GATE[host]
+        if key not in tree:
+            errors.append(f"dist: missing {key}")
+        elif gate is not None and tree[key] != gate:
+            errors.append(f"dist: {key} differs from tools/ddl_gate.py")
+    if len(guides) == 2:
+        headings = [guide_headings(guides[host]) for host in HOST_NAMES]
+        if headings[0] != [h.replace("Skills", "Commands") for h in headings[1]]:
+            errors.append("dist: instruction files: heading structure differs")
+    dist = ROOT / "dist"
+    if dist.is_dir():
+        # Stale: a generated file missing or different, or a file under dist/<host> that is no longer generated
+        # (tools/build.py removes those when it writes).
+        stale = any(not (dist / key).is_file() or (dist / key).read_bytes() != data for key, data in tree.items())
+        if not stale:
+            present = {path.relative_to(dist).as_posix() for host in HOST_NAMES for path in (dist / host).rglob("*")
+                       if path.is_file() and not any(junk in path.parts for junk in DIST_JUNK)}
+            stale = bool(present - set(tree))
+        if stale:
+            errors.append("dist stale: run python3 tools/build.py")
+    return errors
+
+
+# Docs mode.
 
 def check_docs():
     errors = []
@@ -862,35 +1130,58 @@ def check_docs():
     if "LLMs lack long-term memory" in documents[2] or "LLM には長期記憶がありません" in documents[3]:
         errors.append("philosophy: obsolete memory explanation")
     flow = "INIT → SURVEY/READ → WORK → REPORT (+++STOP) → EXECUTE → VERIFY"
-    for path in ("claude-code/README.md", "codex/README.md", "docs/en/design_philosophy_extended.md", "docs/ja/design_philosophy_extended.md"):
-        if flow not in read(path):
-            errors.append(f"{path}: missing the documented phase-role sequence")
-    paths = [ROOT / "README.md", ROOT / "claude-code/README.md", ROOT / "codex/README.md", ROOT / ".claude/CLAUDE.md",
-             ROOT / "claude-code/CLAUDE.md", ROOT / "codex/AGENTS.md"]
-    paths += list((ROOT / "docs").rglob("*.md"))
-    # Names of the protocol tree before the hosts/ layout are obsolete in every document (the tokens are split so
-    # that this file does not match a search for them).
+    for path in ("hosts/claude/README.md", "hosts/codex/README.md", "docs/en/design_philosophy_extended.md",
+                 "docs/ja/design_philosophy_extended.md"):
+        try:
+            if flow not in read(path):
+                errors.append(f"{path}: missing the documented phase-role sequence")
+        except OSError:
+            errors.append(f"{path}: missing")
+    paths = [ROOT / "README.md", ROOT / "hosts/claude/README.md", ROOT / "hosts/codex/README.md",
+             ROOT / "hosts/claude/guidance.md", ROOT / "hosts/codex/guidance.md"]
+    paths += sorted((ROOT / "docs").rglob("*.md"))
+    if (ROOT / LOCAL_GUIDE).is_file():
+        paths.append(ROOT / LOCAL_GUIDE)
+    # Names of the trees before the hosts/ layout and before the generated dist/ are obsolete in every document
+    # (the tokens are split so that this file does not match a search for them). `codex/` alone stays valid:
+    # hosts/codex/ is the host's directory and dist/codex/ the generated layout.
     obsolete = ("DESIGN" + ".md", "examples" + "/", ".codex/commands", ".claude/commands",
                 "DDL-PROTOCOL-SKILL", "Codex Runtime Contract", "dog" + "food", "EXECUTE → VALIDATE",
-                "references" + "/", "runtimes" + "/", "-start" + ".md", "examples" + ".md")
+                "references" + "/", "runtimes" + "/", "-start" + ".md", "examples" + ".md",
+                "claude-code" + "/", "sync_" + "mirrors", "hosts/claude" + "-code")
+    obsolete_codex = re.compile(r"(?<!hosts/)(?<!dist/)codex/(\.agents|README|AGENTS)")
     for path in paths:
-        text = path.read_text(encoding="utf-8")
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            errors.append(f"{path.relative_to(ROOT)}: missing")
+            continue
         for token in obsolete:
             if token in text:
                 errors.append(f"{path.relative_to(ROOT)}: obsolete reference {token!r}")
+        for found in sorted({m[0] for m in obsolete_codex.finditer(text)}):
+            errors.append(f"{path.relative_to(ROOT)}: obsolete reference {found!r}")
     return errors
 
 
-MODES = {"commands": (lambda: check_shared_contract() + check_commands(), "COMMANDS_OK"),
-         "docs": (check_docs, "DOCUMENTS_OK"),
-         "protocol": (check_protocol, "PROTOCOL_OK")}
+MODES = {"source": (check_source, "SOURCE_OK"),
+         "dist": (check_dist, "DIST_OK"),
+         "docs": (check_docs, "DOCUMENTS_OK")}
 
 
-def main():
-    if len(sys.argv) != 2 or sys.argv[1] not in MODES:
-        raise SystemExit("usage: check_ddl.py commands|docs|protocol")
-    check, success = MODES[sys.argv[1]]
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        prog="check_ddl.py",
+        description="Check the DDL source (skills/, protocol/, hosts/), the generated host layouts, or the documents.")
+    parser.add_argument("mode", choices=sorted(MODES),
+                        help="source: the commands, the protocol, the guidance twins and the adapter files "
+                             "(prints SOURCE_OK); dist: the trees tools/build.py generates, in memory, and the "
+                             "freshness of dist/ (prints DIST_OK); docs: the documents (prints DOCUMENTS_OK)")
+    args = parser.parse_args(argv)
+    check, success = MODES[args.mode]
     errors = check()
+    for note in NOTES:
+        print(note, file=sys.stderr)
     if errors:
         print("\n".join(errors), file=sys.stderr)
         return 1

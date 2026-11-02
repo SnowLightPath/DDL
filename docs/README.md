@@ -13,8 +13,8 @@ At a required STOP, review the current numbered recommendations together and app
 
 Choose the setup guide for your tool:
 
-- [Codex](../codex/README.md): use the GUI with native choices; the guide explains the known CLI limit.
-- [Claude Code](../claude-code/README.md): install DDL and start with `/draft`.
+- [Codex](../hosts/codex/README.md): use the GUI with native choices; the guide explains the known CLI limit.
+- [Claude](../hosts/claude/README.md): install DDL and start with `/draft`.
 
 For a quick overview and command mapping, return to the [project README](../README.md).
 
