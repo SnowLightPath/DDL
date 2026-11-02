@@ -56,7 +56,7 @@ One native approval interaction covers that set, with optional free text: **appr
 
 Subset editing is optional and starts only when requested, using a supported native checklist or grouped form rather than an automatic item-by-item question loop or a forced typed ID list. A request receipt, cancellation, dismissal, unanswered question, or timeout approves nothing. If a permitted, answerable native interface is unavailable, DDL explains the limitation and stops instead of silently substituting typed choices.
 
-The protocol defines the workflow. Runtime hooks provide guardrails for the calls they receive; they do not establish complete STOP enforcement. See the [runtime limits and verification notes](./docs/maintainers/README.md#runtime-boundaries) for the distinction.
+The [protocol](./claude-code/skills/ddl-protocol/SKILL.md) defines the workflow and routes each command to the guidance it needs, such as Approval, Parallel work, Notebook, Close, or Git review. These are shared references within the selected protocol, not additional commands. Runtime hooks provide guardrails for the calls they receive; they do not establish complete STOP enforcement. See the [runtime limits and verification notes](./docs/maintainers/README.md#runtime-boundaries) for the distinction.
 
 ## Learn more
 

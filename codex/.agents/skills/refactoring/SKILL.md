@@ -20,11 +20,15 @@ Audit and fix code quality issues.
 
 A command run from a user-level install follows the project's own copy when one exists (`.claude/skills/<name>/SKILL.md` in Claude Code, `.agents/skills/<name>/SKILL.md` in Codex, or the file the project's instruction file names as the command's source): the project's version is the one that runs.
 
-1. Read the DDL protocol when it is not already in context: the project's copy when present (`.claude/skills/ddl-protocol/SKILL.md` in Claude Code, `.agents/skills/ddl-protocol/SKILL.md` in Codex, or the file the project's instruction file names as the protocol); otherwise the user-level copy (`$HOME/.claude/skills/ddl-protocol/SKILL.md` in Claude Code, `$HOME/.codex/skills/ddl-protocol/SKILL.md` in Codex).
+1. Read the DDL protocol when it is not already in context: the project's copy when present (`.claude/skills/ddl-protocol/SKILL.md` in Claude Code, `.agents/skills/ddl-protocol/SKILL.md` in Codex, or the file the project's instruction file names as the protocol); otherwise the user-level copy (`$HOME/.claude/skills/ddl-protocol/SKILL.md` in Claude Code, `$HOME/.codex/skills/ddl-protocol/SKILL.md` in Codex). Complete its Start procedure before continuing.
 2. Read project-local runtime guidance when it is not already in context (the runtime loads `AGENTS.md` for Codex, and `CLAUDE.md` or `.claude/CLAUDE.md` for Claude Code, at session start), and any applicable command overlay.
 3. Read `design.md` when it is not already in context — extract scopes, Binding Decisions, validation commands
 4. If no `design.md` exists → scan project root for common patterns
-5. If a path is given, audit only that path and the scopes it covers (§2.3 of the protocol)
+5. If a path is given, audit only that path and the scopes it covers
+
+If Binding Decisions exist, read the selected protocol’s Notebook feature before checking them.
+
+When a STOP needs a decision, read the selected protocol’s Approval feature and its current-host choice procedure before presenting the decision. When a SWARM fires, read its Parallel work feature before fan-out.
 
 ### Phase 1: SCAN
 
@@ -62,11 +66,11 @@ Decision: apply all current compatible refactors, select or revise the set, or l
 Recommendation: a concise overall reason, then numbered fixes with stable IDs and any material uncertainty or downside.
 Consequence: approve-all applies the displayed ready set; subset approval changes only the selected fix IDs. Behavior or Binding Decision changes remain outside this approval.
 Review detail: each stable fix ID, file/line, detection type, finding, and proposed correction.
-Choices: request one batch approval through protocol §1.5; open item selection only when requested, with no per-fix reapproval after approve-all. With no findings, state that no refactor needs approval and stop.
+Choices: request one batch approval through Approval; open item selection only when requested, with no per-fix reapproval after approve-all. With no findings, state that no refactor needs approval and stop.
 
 ### Phase 3: EXECUTE
 
-**Pre-condition.** Enter this phase only after explicit user approval of its scope at the Phase 2 STOP gate (per §1.5 of the protocol). If the actual answer does not authorize this work, return to Phase 2 and re-present the current decision.
+**Pre-condition.** Enter this phase only after explicit user approval of its scope at the Phase 2 STOP gate (per Approval). If the actual answer does not authorize this work, return to Phase 2 and re-present the current decision.
 
 +++SWARM: 2+ approved fixes across independent scopes
 

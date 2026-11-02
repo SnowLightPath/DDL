@@ -110,6 +110,8 @@ The skill structure is defined by the shared [DDL protocol](./.agents/skills/ddl
 
 `+++DDL_PHASE` is required before a mutating phase and `+++DDL_REPORT` heads the report at a STOP. The protocol defines approval, resume, compaction, and worker rules; the adapter supplies mechanical guardrails on dispatched calls rather than complete STOP enforcement.
 
+The protocol entry links to focused Approval, Parallel work, Notebook, Close, Git review, and Command authoring guidance. A skill reads a feature when it needs it from the same selected protocol; these references are not additional `$` commands.
+
 This directory mirrors a project's root: [AGENTS.md](./AGENTS.md), generated skills under `.agents/skills/`, and the adapter under `.codex/`. For source ownership, configuration, session loading, and verification, use the [maintainer reference](../docs/maintainers/README.md).
 
 </details>

@@ -20,11 +20,15 @@ Detect divergence between implementation and design.md, then reconcile.
 
 A command run from a user-level install follows the project's own copy when one exists (`.claude/skills/<name>/SKILL.md` in Claude Code, `.agents/skills/<name>/SKILL.md` in Codex, or the file the project's instruction file names as the command's source): the project's version is the one that runs.
 
-1. Read the DDL protocol when it is not already in context: the project's copy when present (`.claude/skills/ddl-protocol/SKILL.md` in Claude Code, `.agents/skills/ddl-protocol/SKILL.md` in Codex, or the file the project's instruction file names as the protocol); otherwise the user-level copy (`$HOME/.claude/skills/ddl-protocol/SKILL.md` in Claude Code, `$HOME/.codex/skills/ddl-protocol/SKILL.md` in Codex).
+1. Read the DDL protocol when it is not already in context: the project's copy when present (`.claude/skills/ddl-protocol/SKILL.md` in Claude Code, `.agents/skills/ddl-protocol/SKILL.md` in Codex, or the file the project's instruction file names as the protocol); otherwise the user-level copy (`$HOME/.claude/skills/ddl-protocol/SKILL.md` in Claude Code, `$HOME/.codex/skills/ddl-protocol/SKILL.md` in Codex). Complete its Start procedure before continuing.
 2. Read project-local runtime guidance when it is not already in context (the runtime loads `AGENTS.md` for Codex, and `CLAUDE.md` or `.claude/CLAUDE.md` for Claude Code, at session start), and any applicable command overlay.
-3. Read `design.md` when it is not already in context — extract scopes, principles, Experience, Binding Decisions, Direction, and Acceptance Gates (protocol §3)
+3. Read `design.md` when it is not already in context — extract scopes, principles, Experience, Binding Decisions, Direction, and Acceptance Gates (Notebook)
 4. If no `design.md` exists → refuse ("Nothing to reflect against")
-5. If a path is given, work only on the scopes it covers (§2.3 of the protocol)
+5. If a path is given, work only on the scopes it covers
+
+Read the selected protocol’s Notebook feature for the section rules.
+
+When a STOP needs a decision, read the selected protocol’s Approval feature and its current-host choice procedure before presenting the decision. When a SWARM fires, read its Parallel work feature before fan-out.
 
 ### Phase 1: READ
 
@@ -49,7 +53,7 @@ Lead integrates results and performs cross-scope analysis:
 
 1. Compare each scope's implementation against `design.md` principles and Binding Decisions
 2. Compare implemented behavior against Experience: states the code handles that Experience does not describe, and Experience items the code does not deliver
-3. Compare finished work against Direction and Acceptance Gates through their passed marks (protocol §3): which stages have every gate marked passed, which deviated, and whether every Acceptance Gate is marked passed
+3. Compare finished work against Direction and Acceptance Gates through their passed marks (Notebook): which stages have every gate marked passed, which deviated, and whether every Acceptance Gate is marked passed
 4. Compare Scopes and Validation against the repository: scope paths that no longer exist and Validation commands that cannot run
 5. Classify divergences:
    - **Code drifted** — implementation violates a principle or a Binding Decision, or does not deliver an Experience item
@@ -57,7 +61,7 @@ Lead integrates results and performs cross-scope analysis:
    - **New pattern** — code introduced something `design.md` doesn't cover
    - **Direction spent** — stages whose gates are all marked passed; replace them with the outcome, delete the `Approved plan` lines that served them, and delete the section when every stage is done (quote the removed stages in the REPORT when design.md is not under version control)
    - **Acceptance Gates spent** — every gate is marked passed, so the work was accepted; move gates that should keep running into Validation, then delete the section (quote it in the REPORT when design.md is not under version control)
-6. If the project keeps its own headings for these sections (for example `Stack` or `Execution plan`), propose one mapping onto protocol §3; never force a rename
+6. If the project keeps its own headings for these sections (for example `Stack` or `Execution plan`), propose one mapping onto Notebook; never force a rename
 
 +++DETECT:
   D1: Drift — Implementation contradicts a stated principle
@@ -81,11 +85,11 @@ Decision: apply all current compatible recommendations, select or revise the set
 Recommendation: a concise overall reason, then numbered actions with stable IDs, each naming the affected principle, Binding Decision, Direction stage, or section as its `Target` and its material effect.
 Consequence: approve-all applies the displayed ready set; subset approval applies only the selected IDs. A Binding Drift still requires an explicit action naming code correction or Binding Decision change, never a silent resolution.
 Review detail: each stable proposal ID, type, target, finding and supporting file/line evidence; any required quotations of removed Direction or Acceptance Gates.
-Choices: request one batch approval through protocol §1.5; open item selection only when requested, with no per-recommendation reapproval after approve-all. With no findings, state that no change needs approval and stop.
+Choices: request one batch approval through Approval; open item selection only when requested, with no per-recommendation reapproval after approve-all. With no findings, state that no change needs approval and stop.
 
 ### Phase 4: APPLY
 
-**Pre-condition.** Enter this phase only after explicit user approval of its scope at the Phase 3 STOP gate (per §1.5 of the protocol). If the actual answer does not authorize this work, return to Phase 3 and re-present the current decision.
+**Pre-condition.** Enter this phase only after explicit user approval of its scope at the Phase 3 STOP gate (per Approval). If the actual answer does not authorize this work, return to Phase 3 and re-present the current decision.
 
 +++SWARM: 2+ approved changes across scopes
 
@@ -103,7 +107,7 @@ Choices: request one batch approval through protocol §1.5; open item selection 
 
 After applying:
 1. Summarize what changed
-2. When an applied change touched a document that has a language counterpart, name that pair and the reason it still needs syncing; standalone, that work is `$resonate`, and inside the Close stage protocol §1.7 covers it
+2. When an applied change touched a document that has a language counterpart, name that pair and the reason it still needs syncing; standalone, that work is `$resonate`, and inside the Close stage the Close feature covers it
 
 ## Constraints
 

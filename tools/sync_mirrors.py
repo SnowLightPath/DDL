@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Generate the Codex skills and the gate copies from the Claude Code skills.
 
-Source: `claude-code/skills/<name>/SKILL.md`, the single hand-maintained copy of the nine DDL skills: the
-protocol `ddl-protocol` and the eight commands draft, realize, reflect, validate, commit, docs, refactoring,
-and resonate. `tools/ddl_gate.py` is the gate's source.
+Source: `claude-code/skills/<name>/SKILL.md`, the single hand-maintained copy of the nine DDL skills,
+and the protocol's reference tree. `tools/ddl_gate.py` is the gate's source.
 
-Generated files (20):
+Generated files:
   codex/.agents/skills/<name>/SKILL.md            for the nine skills
   codex/.agents/skills/<name>/agents/openai.yaml  for the nine skills (no implicit invocation)
+  codex/.agents/skills/ddl-protocol/references/   the protocol's reference tree, byte-for-byte
   claude-code/hooks/ddl_gate.py                   a byte copy of tools/ddl_gate.py
   codex/.codex/hooks/ddl_gate.py                  a byte copy of tools/ddl_gate.py
 
@@ -19,10 +19,11 @@ Rules:
   - A command SKILL.md keeps name, description, and metadata.short-description from the Claude frontmatter and
     drops argument-hint and disable-model-invocation, which Codex does not know (agents/openai.yaml replaces
     the latter). Its body is the Claude body with slash commands turned into skills: `/draft` -> `$draft` for
-    the eight command names, not inside paths or words (the SLASH regex). Nothing else changes: § references
-    to the protocol stay, because the Codex protocol is the same skill, and Phase 0 stays as written.
+    the eight command names, not inside paths or words (the SLASH regex). Phase 0 stays as written.
   - The protocol SKILL.md keeps name and description (and metadata.short-description when the source has
     one); its body is copied unchanged, not even `/cmd` -> `$cmd`, since it describes both runtimes.
+    Protocol references are copied unchanged too; `--check` reports unexpected files in their
+    generated directory without deleting them.
   - agents/openai.yaml is the same fixed text for every command skill, with the skill's name; the protocol
     gets a comment saying it is read in Phase 0 and never invoked.
   - Both hooks/ddl_gate.py files are byte copies of tools/ddl_gate.py.
@@ -54,10 +55,10 @@ GATE_COPIES = [pathlib.Path("claude-code/hooks/ddl_gate.py"), pathlib.Path("code
 
 OPENAI_POLICY = ("policy:\n"
                  "  allow_implicit_invocation: false\n")
-OPENAI_YAML = ("# DDL: a skill runs when the user invokes ${name}; Codex does not start it on its own (protocol §2.5).\n"
+OPENAI_YAML = ("# DDL: a skill runs when the user invokes ${name}; Codex does not start it on its own (runtime adapters in the protocol).\n"
                + OPENAI_POLICY)
 OPENAI_YAML_PROTOCOL = ("# DDL: the protocol skill; commands read it in Phase 0, nobody invokes $ddl-protocol, and Codex "
-                        "does not start it on its own (protocol §2.5).\n" + OPENAI_POLICY)
+                        "does not start it on its own (runtime adapters in the protocol).\n" + OPENAI_POLICY)
 
 SLASH = re.compile(r"(?<![A-Za-z0-9_./-])/(draft|realize|reflect|validate|commit|docs|refactoring|resonate)\b")
 
@@ -67,10 +68,19 @@ def read(path):
         return f.read()
 
 
-def write(path, text):
+def write(path, data):
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8", newline="") as f:
-        f.write(text)
+    path.write_bytes(data)
+
+
+def symlink_component(root, relative):
+    """Return a symlink in a generated path, without following it for a write."""
+    path = root
+    for part in relative.parts:
+        path = path / part
+        if path.is_symlink():
+            return path
+    return None
 
 
 def split_frontmatter(name, text, short_description):
@@ -113,10 +123,20 @@ def generate(repo):
         source = repo / SOURCE / name / "SKILL.md"
         if not source.is_file():
             raise SystemExit(f"{source.relative_to(repo)}: missing")
-        out[CODEX_SKILLS / name / "SKILL.md"] = to_codex(name, read(source))
+        out[CODEX_SKILLS / name / "SKILL.md"] = to_codex(name, read(source)).encode("utf-8")
         yaml = OPENAI_YAML_PROTOCOL if name == PROTOCOL else OPENAI_YAML.format(name=name)
-        out[CODEX_SKILLS / name / "agents" / "openai.yaml"] = yaml
-    gate = read(repo / GATE_SOURCE)
+        out[CODEX_SKILLS / name / "agents" / "openai.yaml"] = yaml.encode("utf-8")
+    resource_dir = repo / SOURCE / PROTOCOL / "references"
+    if resource_dir.is_symlink() or resource_dir.exists() and not resource_dir.is_dir():
+        raise SystemExit(f"{resource_dir.relative_to(repo)}: expected a real directory")
+    if resource_dir.is_dir():
+        for source in sorted(resource_dir.rglob("*")):
+            if source.is_symlink():
+                raise SystemExit(f"{source.relative_to(repo)}: symlink in protocol reference tree")
+            if source.is_file():
+                relative = pathlib.Path(PROTOCOL) / "references" / source.relative_to(resource_dir)
+                out[CODEX_SKILLS / relative] = source.read_bytes()
+    gate = (repo / GATE_SOURCE).read_bytes()
     for rel in GATE_COPIES:
         out[rel] = gate
     return out
@@ -143,20 +163,51 @@ def main(argv):
     if not (repo / SOURCE).is_dir():
         raise SystemExit(f"{repo}: no {SOURCE}/ (not the DDL repository?)")
     files = generate(repo)
+    # Generated artifacts are ordinary files. Following a symlink may make a stale mirror appear
+    # identical or overwrite a source/user file, so reject before either checking or writing.
+    roots = [repo]
+    if out_dir is not None and not check:
+        roots.append(out_dir.resolve())
+    unsafe = sorted({path for root in roots for rel in files
+                     if (path := symlink_component(root, rel)) is not None})
+    # A symlinked reference directory is unsafe even when the source tree is empty.
+    unsafe = sorted(set(unsafe) | {path for root in roots
+                                   if (path := symlink_component(root, CODEX_SKILLS / PROTOCOL / "references")) is not None})
+    if unsafe:
+        for path in unsafe:
+            print(f"generated path contains symlink: {path} (not followed or removed)", file=sys.stderr)
+        return 1
     changed = 0
-    for rel, text in sorted(files.items()):
+    for rel, data in sorted(files.items()):
         current = repo / rel
-        old = read(current) if current.exists() else ""
-        if old == text:
+        old = current.read_bytes() if current.is_file() else None
+        if old == data:
             continue
         changed += 1
         if check:
-            sys.stdout.writelines(difflib.unified_diff(old.splitlines(True), text.splitlines(True),
-                                                       f"a/{rel}", f"b/{rel}"))
+            if old is None:
+                print(f"missing generated file: {rel}")
+                continue
+            try:
+                old_text = old.decode("utf-8")
+                new_text = data.decode("utf-8")
+            except UnicodeDecodeError:
+                print(f"binary or missing generated file differs: {rel}")
+            else:
+                sys.stdout.writelines(difflib.unified_diff(old_text.splitlines(True), new_text.splitlines(True),
+                                                           f"a/{rel}", f"b/{rel}"))
         else:
             dest = (out_dir or repo) / rel
-            write(dest, text)
+            write(dest, data)
             print(f"wrote {dest}")
+    if check:
+        references = repo / CODEX_SKILLS / PROTOCOL / "references"
+        if references.is_dir():
+            expected = {repo / rel for rel in files if rel.is_relative_to(CODEX_SKILLS / PROTOCOL / "references")}
+            unexpected = sorted(p for p in references.rglob("*") if (p.is_file() or p.is_symlink()) and p not in expected)
+            for path in unexpected:
+                print(f"unexpected protocol reference: {path.relative_to(repo)} (not removed)", file=sys.stderr)
+            changed += len(unexpected)
     print(f"{len(files)} generated, {changed} differ", file=sys.stderr)
     return 1 if check and changed else 0
 

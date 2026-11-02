@@ -22,11 +22,13 @@ Run mechanical validation per scope as declared in design.md.
 
 A command run from a user-level install follows the project's own copy when one exists (`.claude/skills/<name>/SKILL.md` in Claude Code, `.agents/skills/<name>/SKILL.md` in Codex, or the file the project's instruction file names as the command's source): the project's version is the one that runs.
 
-1. Read the DDL protocol when it is not already in context: the project's copy when present (`.claude/skills/ddl-protocol/SKILL.md` in Claude Code, `.agents/skills/ddl-protocol/SKILL.md` in Codex, or the file the project's instruction file names as the protocol); otherwise the user-level copy (`$HOME/.claude/skills/ddl-protocol/SKILL.md` in Claude Code, `$HOME/.codex/skills/ddl-protocol/SKILL.md` in Codex).
+1. Read the DDL protocol when it is not already in context: the project's copy when present (`.claude/skills/ddl-protocol/SKILL.md` in Claude Code, `.agents/skills/ddl-protocol/SKILL.md` in Codex, or the file the project's instruction file names as the protocol); otherwise the user-level copy (`$HOME/.claude/skills/ddl-protocol/SKILL.md` in Claude Code, `$HOME/.codex/skills/ddl-protocol/SKILL.md` in Codex). Complete its Start procedure before continuing.
 2. Read project-local runtime guidance when it is not already in context (the runtime loads `AGENTS.md` for Codex, and `CLAUDE.md` or `.claude/CLAUDE.md` for Claude Code, at session start), and any applicable command overlay.
 3. Read `design.md` when it is not already in context — extract scopes, the Validation block, and the mechanical gates (commands) listed in Acceptance Gates
 4. If no `design.md` exists → refuse ("Declare scopes and a Validation block in design.md first")
-5. If a scope is given, validate only that scope (§2.3 of the protocol)
+5. If a scope is given, validate only that scope
+
+When a STOP needs a decision, read the selected protocol’s Approval feature and its current-host choice procedure before presenting the decision. When a SWARM fires, read its Parallel work feature before fan-out.
 
 ### Phase 1: SCAN
 
@@ -47,8 +49,10 @@ A command run from a user-level install follows the project's own copy when one 
 
 Mechanical gates from Acceptance Gates that name no scope are run by the lead and reported as named results.
 
+Mark a check PASS only from an observed command result: its exit code and, when declared, its expected output must match. A failed worker launch, empty response, or absent result leaves the check NOT RUN. Run that check in the lead when possible and report the sequential fallback; otherwise report the blocker. Do not turn a worker or host failure into a validation success.
+
 +++DETECT:
-  D1: Silenced Failure — Non-zero exit code, or output other than the expected value declared with the command, reported as PASS
+  D1: Silenced Failure — A missing result, non-zero exit code, or output other than the expected value declared with the command is reported as PASS
   D2: Out-of-scope Validation — Validation touches files outside the declared scope
   D3: Design-Validation Drift — Validation command in design.md fails to execute (missing binary, invalid syntax)
   D4: Timeout Ignored — Validation hung or timed out without surfacing
@@ -58,19 +62,19 @@ Mechanical gates from Acceptance Gates that name no scope are run by the lead an
 
 +++STOP: always
 
-Report per §1.5 of the protocol. Do not auto-fix.
+Emit `+++DDL_REPORT`, then report the results without auto-fixing. If a next action needs a decision, follow Approval before asking; an informational report still emits the marker and ends the turn without asking for approval.
 
 +++Report:
 Outcome: the overall PASS/FAIL result and every unresolved failure or blocker, without a full command inventory in the main report.
 Recommendation: the next command selected below with a short reason, or, when every check passes, that nothing remains.
 Consequence: choosing that command starts its workflow, not an automatic fix or a waiver of its approval gates; when nothing remains, no choice is offered.
 Review detail: each scope or gate's Validation Command, Status, exit code and Output Excerpt, with the corresponding detection code where applicable.
-Choices: when next direction is needed, request it for the complete proposed next action through protocol §1.5, without per-check approval; otherwise state that no approval is required and end the turn.
+Choices: when next direction is needed, request it for the complete proposed next action through Approval, without per-check approval; otherwise state that no approval is required and end the turn.
 
 If any FAIL or detection target fired, list it explicitly with the corresponding D-code.
 Choose the suggested next command before emitting the STOP report — `/validate` itself never edits:
 lint / format / style failures → `/refactoring`; design-validation drift (D3) → `/reflect`;
-validation references unimplemented design → `/realize`; all PASS → no next command: state that nothing remains (protocol §1.5).
+validation references unimplemented design → `/realize`; all PASS → no next command: state that nothing remains.
 
 ## Constraints
 

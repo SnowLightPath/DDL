@@ -87,6 +87,8 @@ The command structure is defined by the shared [DDL protocol](./skills/ddl-proto
 
 `+++DDL_PHASE` marks a mutating phase and `+++DDL_REPORT` heads the report at a STOP. The protocol defines approval, resume, compaction, and worker rules; the adapter supplies mechanical guardrails on dispatched calls rather than complete STOP enforcement.
 
+The protocol entry links to focused Approval, Parallel work, Notebook, Close, Git review, and Command authoring guidance. A command reads a feature when it needs it from the same selected protocol; these references are not additional slash commands.
+
 This directory mirrors a project's `.claude/`: [CLAUDE.md](./CLAUDE.md), [settings.json](./settings.json), command skills, agent definitions, and the gate hook. For source ownership, project overlays, session loading, and verification, use the [maintainer reference](../docs/maintainers/README.md).
 
 </details>

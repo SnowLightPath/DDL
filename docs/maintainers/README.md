@@ -31,19 +31,20 @@ For project-contained layouts, use `bash DDL/bin/install.sh --project your-proje
 | Source | Generated output |
 |---|---|
 | `claude-code/skills/<name>/SKILL.md` | Nine Codex skill files and nine `agents/openai.yaml` files |
+| `claude-code/skills/ddl-protocol/references/` | The corresponding Codex protocol reference tree |
 | `tools/ddl_gate.py` | `claude-code/hooks/ddl_gate.py` and `codex/.codex/hooks/ddl_gate.py` |
 
-The [mirror generator](../../tools/sync_mirrors.py) produces 20 files. Command bodies translate `/command` invocations to `$command`; the protocol body is copied unchanged because it describes both runtimes. Generated YAML prevents implicit invocation of the command skills; the protocol is read by commands in Phase 0.
+The [mirror generator](../../tools/sync_mirrors.py) generates the skill files, protocol references, and gate copies. Command bodies translate `/command` invocations to `$command`; the protocol and its references are copied unchanged. Generated YAML prevents implicit invocation of the command skills; the protocol entry is read by commands in Phase 0.
 
-Runtime instruction templates, settings, agent definitions, rules, and READMEs are maintained directly in their source directories. The canonical behavior lives in the [shared protocol](../../claude-code/skills/ddl-protocol/SKILL.md); command files refer to it rather than duplicating its rules.
+Runtime instruction templates, settings, agent definitions, rules, and READMEs are maintained directly in their source directories. The canonical behavior lives in the [shared protocol](../../claude-code/skills/ddl-protocol/SKILL.md); command files refer to it rather than duplicating its rules. The entry routes to focused, on-demand guidance for [Approval](../../claude-code/skills/ddl-protocol/references/approval.md), [Parallel work](../../claude-code/skills/ddl-protocol/references/parallel-work.md), [Notebook](../../claude-code/skills/ddl-protocol/references/notebook.md), [Close](../../claude-code/skills/ddl-protocol/references/close.md), [Git review](../../claude-code/skills/ddl-protocol/references/git-review.md), and [Command authoring](../../claude-code/skills/ddl-protocol/references/command-authoring.md). These are reference files within the selected protocol skill, not extra user-invoked commands.
 
 ### Project overrides and session context
 
 A project's own command skill takes precedence over the environment-installed command. `commands/<name>.md` can add project facts such as target paths, protected terms, and validation commands. Commands use the project's protocol copy when present, otherwise the user-level copy under `~/.claude/skills/` or `~/.codex/skills/`.
 
-Claude Code loads the instruction file and its `design.md` import at session start and after compaction. Codex loads `AGENTS.md`; trusted SessionStart hooks inject `design.md`, or the skill reads it when the hook is unavailable. A worker receives a self-contained prompt with its scope and approved work; it does not depend on inheriting the lead's conversation. See protocol §2.4–2.5 for worker roles, runtime mappings, and fallback behavior.
+Claude Code loads the instruction file and its `design.md` import at session start and after compaction. Codex loads `AGENTS.md`; trusted SessionStart hooks inject `design.md`, or the skill reads it when the hook is unavailable. A worker receives a self-contained prompt with its scope and approved work; it does not depend on inheriting the lead's conversation. See [Parallel work](../../claude-code/skills/ddl-protocol/references/parallel-work.md) for worker roles and fallback behavior.
 
-`design.md` contains the human-agreed Experience and any Binding Decisions, Direction, Acceptance Gates, principles, scopes, and validation the project needs. Automatic memory is a recall layer, not a source of binding agreement. Protocol §3 defines section ownership, passed marks, approved plans, and retirement rules.
+`design.md` contains the human-agreed Experience and any Binding Decisions, Direction, Acceptance Gates, principles, scopes, and validation the project needs. Automatic memory is a recall layer, not a source of binding agreement. [Notebook](../../claude-code/skills/ddl-protocol/references/notebook.md) defines section ownership, passed marks, approved plans, and retirement rules.
 
 ## Batch approval
 
@@ -57,7 +58,7 @@ The native question is the final interaction while waiting at that STOP. A synch
 
 ## Close stage
 
-Work ends in a Close stage (protocol §1.7). `/realize` runs it after the last implementation stage, and `/commit` runs its scan before the Git review: reflect the code into `design.md`, audit the documentation the change set touches, align language pairs, validate, then prepare one Git review of the whole change set. Inside `/realize` the approved plan authorizes the Close edits, and the Git review is where the user sees them. Inside `/commit` the findings form one batch approval first. After the commit, the report states that nothing remains or names leftovers with reasons; no next command is suggested. `/reflect`, `/docs`, and `/resonate` remain standalone commands.
+Work ends in a [Close](../../claude-code/skills/ddl-protocol/references/close.md) stage. `/realize` runs it after the last implementation stage, and `/commit` runs its scan before the Git review: reflect the code into `design.md`, audit the documentation the change set touches, align language pairs, validate, then prepare one Git review of the whole change set. Inside `/realize` the approved plan authorizes the Close edits, and the Git review is where the user sees them. Inside `/commit` the findings form one batch approval first. After the commit, the report states that nothing remains or names leftovers with reasons; no next command is suggested. `/reflect`, `/docs`, and `/resonate` remain standalone commands.
 
 ## Runtime boundaries
 
@@ -65,7 +66,7 @@ The catch-all matchers inspect tool calls dispatched through the runtime's hooks
 
 This is a static guardrail, not complete STOP enforcement or a sandbox for ambient executable and configuration behavior. Runtime paths outside the hooks, asynchronous transcript timing, and unexpected errors limit enforcement. General STOP errors fail open with a warning. The protocol's waiting rule still applies, and the agent judges whether a submitted answer approves the current report and scope. Ordinary commits and pushes also have the independent content review below.
 
-Question invocation or receipt alone does not clear pending state. Compaction summaries, worker notifications, and messages from other agents do not approve work. Protocol §1.5 defines report reconstruction, actual input boundaries, advance approval, and the work that remains prohibited while waiting.
+Question invocation or receipt alone does not clear pending state. Compaction summaries, worker notifications, and messages from other agents do not approve work. [Approval](../../claude-code/skills/ddl-protocol/references/approval.md) defines report reconstruction, actual input boundaries, advance approval, and the work that remains prohibited while waiting.
 
 ### Git content review
 
@@ -99,13 +100,20 @@ The observed asynchronous function exposed only `questions`, `title`, and `optio
 
 For source changes, the repository's [Validation section](../../design.md#validation) is the declared check list. Useful focused checks are:
 
-```bash
-python3 tools/sync_mirrors.py . --check
-python3 -I tools/test_ddl_gate.py
-python3 -I tools/test_ddl_setup.py
-```
+| Check | What it verifies |
+|---|---|
+| `python3 -I tools/check_ddl.py commands` | Command phases, directives, shared INIT, and runtime instruction structure |
+| `python3 -I tools/check_ddl.py docs` | Language-pair structure, glossary terms, current references, and layout |
+| `python3 tools/sync_mirrors.py . --check` | Generated skills, protocol resources, and gate copies match their sources |
+| `python3 -I tools/test_protocol.py` | Resource generation, local-link reachability, invalid and missing resource cases, and delivery in both installation layouts |
+| `python3 -I tools/test_ddl_gate.py` | STOP and Git review handling through simulated dispatch and disposable Git repositories |
+| `python3 -I tools/test_ddl_setup.py` | Installation, settings preservation, diagnostics, and removal in isolated homes and projects |
 
-The setup suite runs separately from doctor so its install/doctor/uninstall rehearsal cannot recurse. Its isolated homes and projects exercise configured hook commands, not the native UI. Preserve that distinction when reporting results.
+The command, documentation, resource, and generation checks inspect maintained text and files; they do not establish that a model follows the protocol. The setup suite runs separately from doctor so its install/doctor/uninstall rehearsal cannot recurse. Its isolated homes and projects exercise configured hook commands, not the native UI.
+
+For live behavior checks, identify the runtime version, model and reasoning setting, session mode, and selected protocol source. Inspect actual tool and worker results; exclude restricted runs when use of the intended source cannot be confirmed. Host output formats also affect the evidence: on 2026-11-02, a persistent Codex 0.166.0 run confirmed command exit 0 through two default workers after the custom explorer's symlink failed with `ELOOP`; ephemeral JSON output did not establish the child results.
+
+Keep conclusions specific to those conditions. In Claude Code 2.1.316 checks on 2026-11-02, Fable 5.1 xhigh read the required validate/draft guidance, emitted `+++DDL_REPORT`, reported unavailable native selection, and left the draft unsaved; Haiku 5.5 low omitted Start guidance and a report marker. Such behavior checks do not establish native choice submission, hook enforcement, compaction or restart recovery, or token usage. Verify and report those separately; file-byte measurements describe loading size, not measured tokens.
 
 ## Documentation and translation
 

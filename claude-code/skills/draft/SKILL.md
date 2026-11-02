@@ -23,10 +23,14 @@ Write the ideal experience before implementation exists, together with the decis
 
 A command run from a user-level install follows the project's own copy when one exists (`.claude/skills/<name>/SKILL.md` in Claude Code, `.agents/skills/<name>/SKILL.md` in Codex, or the file the project's instruction file names as the command's source): the project's version is the one that runs.
 
-1. Read the DDL protocol when it is not already in context: the project's copy when present (`.claude/skills/ddl-protocol/SKILL.md` in Claude Code, `.agents/skills/ddl-protocol/SKILL.md` in Codex, or the file the project's instruction file names as the protocol); otherwise the user-level copy (`$HOME/.claude/skills/ddl-protocol/SKILL.md` in Claude Code, `$HOME/.codex/skills/ddl-protocol/SKILL.md` in Codex).
+1. Read the DDL protocol when it is not already in context: the project's copy when present (`.claude/skills/ddl-protocol/SKILL.md` in Claude Code, `.agents/skills/ddl-protocol/SKILL.md` in Codex, or the file the project's instruction file names as the protocol); otherwise the user-level copy (`$HOME/.claude/skills/ddl-protocol/SKILL.md` in Claude Code, `$HOME/.codex/skills/ddl-protocol/SKILL.md` in Codex). Complete its Start procedure before continuing.
 2. Read project-local runtime guidance when it is not already in context (the runtime loads `AGENTS.md` for Codex, and `CLAUDE.md` or `.claude/CLAUDE.md` for Claude Code, at session start), and any applicable command overlay.
-3. Read `design.md` when it is not already in context — extract scopes, existing principles, and any Experience, Binding Decisions, Direction, and Acceptance Gates (protocol §3)
+3. Read `design.md` when it is not already in context — extract scopes, existing principles, and any Experience, Binding Decisions, Direction, and Acceptance Gates (Notebook)
 4. If no `design.md` exists → ask user to create one or proceed with defaults
+
+Read the selected protocol’s Notebook feature for the section rules.
+
+When a STOP needs a decision, read the selected protocol’s Approval feature and its current-host choice procedure before presenting the decision. When a SWARM fires, read its Parallel work feature before fan-out.
 
 ### Phase 1: UNDERSTAND
 
@@ -48,14 +52,14 @@ A command run from a user-level install follows the project's own copy when one 
 ### Phase 2: DRAFT
 
 1. If the request does not already describe the experience, ask: "What experience do you want?"
-2. Sort what the user said into the sections of protocol §3, then ask only for what is missing. Experience is always needed; Binding Decisions, Direction, and Acceptance Gates are optional, so ask about them only when the user's words point to them:
+2. Sort what the user said into the sections of Notebook, then ask only for what is missing. Experience is always needed; Binding Decisions, Direction, and Acceptance Gates are optional, so ask about them only when the user's words point to them:
    - **Experience** — consumer-side usage with concrete inputs and outputs, including error, empty, and boundary states
-   - **Binding Decisions** — a technology the user fixes because the experience depends on it, an external constraint requires it, or the user states a preference for it. Record the Decision, Why it binds, and the Source (the user's words with the date, or the user's approval of the report that listed it; protocol §3). If the user gave no reason, ask once; without an answer, list it as Unbound (protocol §3)
-   - **Direction** — the user's outlook on the path to implementation: stage order, parallel lanes, what to show the user when, and human gates. Non-binding. A Direction always ends with the Close stage (protocol §1.7): write it as the last row even when the user did not mention it
+   - **Binding Decisions** — a technology the user fixes because the experience depends on it, an external constraint requires it, or the user states a preference for it. Record the Decision, Why it binds, and the Source (the user's words with the date, or the user's approval of the report that listed it; Notebook). If the user gave no reason, ask once; without an answer, list it as Unbound (Notebook)
+   - **Direction** — the user's outlook on the path to implementation: stage order, parallel lanes, what to show the user when, and human gates. Non-binding. A Direction always ends with the Close stage: write it as the last row even when the user did not mention it
    - **Acceptance Gates** — what must hold when done: mechanical gates (commands, each with its expected result when exit code alone cannot show failure) and human gates (approvals)
 3. Write consumer-side code / usage examples together, in the language and on the platform the Binding Decisions name. For a library or SDK, the consumer-side language is part of the Experience: ask for it if the user did not name it, and record it as a Binding Decision
 4. Show the technology found in Phase 1, and any decision found only in the harness's automatic memory, as existing premises; either becomes a Binding Decision only when the user gives a reason. When no technology was fixed or delegated, do not invent a technology comparison or an Unbound item merely because implementation will eventually need a choice
-5. When the user delegates a choice, present 2–3 options with trade-offs and list them as Unbound (protocol §3) until the user picks one, or until the user approves the choice in the `/realize` plan
+5. When the user delegates a choice, present 2–3 options with trade-offs and list them as Unbound (Notebook) until the user picks one, or until the user approves the choice in the `/realize` plan
 6. Do NOT implement yet — experience, decisions, and outlook only
 7. Iterate until it feels right
 
@@ -77,18 +81,18 @@ For D7, present options: change the Binding Decision, change the Experience, or 
 
 +++STOP: always
 
-Present the draft for the decision to save it, following protocol §1.5.
+Emit `+++DDL_REPORT` and present the draft for the decision to save it, following Approval. If the host cannot receive a permitted native choice, state that limitation and leave the draft unsaved.
 
 +++Report:
 Decision: save this draft to `design.md`, revise it, or leave it unsaved.
 Recommendation: the proposed experience and why it answers the user's request; keep unresolved conflicts visible.
 Consequence: saving records the approved design; it does not authorize implementation.
 Review detail: the concrete Experience examples and states; each Binding Decision with reason and source; any Direction, Acceptance Gates, Unbound items, and detections. Include only the sections the draft uses.
-Choices: request one approval for the complete displayed draft through protocol §1.5: save all recommended sections, select or revise the draft, or leave it unsaved. Do not request approval again per section or state.
+Choices: request one approval for the complete displayed draft through Approval: save all recommended sections, select or revise the draft, or leave it unsaved. Do not request approval again per section or state.
 
 ### Phase 4: EXECUTE
 
-**Pre-condition.** Enter this phase only after explicit user approval of its scope at the Phase 3 STOP gate (per §1.5 of the protocol). If the actual answer does not authorize this work, return to Phase 3 and re-present the current decision.
+**Pre-condition.** Enter this phase only after explicit user approval of its scope at the Phase 3 STOP gate (per Approval). If the actual answer does not authorize this work, return to Phase 3 and re-present the current decision.
 
 1. Save the approved draft to `design.md`: Experience, Binding Decisions, Direction (ending with its Close stage), and Acceptance Gates under their own headings (omit the sections the draft does not use); principles from D5 go to the principles section. A Binding Decision row without quoted words takes Source `approved /draft report (<date>)`
 2. Suggest: "Run `/realize` to implement this experience"
@@ -98,4 +102,4 @@ Choices: request one approval for the complete displayed draft through protocol 
 +++NEVER: Write implementation code during /draft
 +++NEVER: Hardcode scopes — they come from design.md
 +++NEVER: Save draft with unresolved principle conflict or Binding conflict
-+++NEVER: Record a Binding Decision the user did not make — list it as Unbound instead (protocol §3)
++++NEVER: Record a Binding Decision the user did not make — list it as Unbound instead (Notebook)

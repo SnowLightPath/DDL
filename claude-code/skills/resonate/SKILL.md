@@ -22,10 +22,12 @@ Synchronize English and Japanese versions.
 
 A command run from a user-level install follows the project's own copy when one exists (`.claude/skills/<name>/SKILL.md` in Claude Code, `.agents/skills/<name>/SKILL.md` in Codex, or the file the project's instruction file names as the command's source): the project's version is the one that runs.
 
-1. Read the DDL protocol when it is not already in context: the project's copy when present (`.claude/skills/ddl-protocol/SKILL.md` in Claude Code, `.agents/skills/ddl-protocol/SKILL.md` in Codex, or the file the project's instruction file names as the protocol); otherwise the user-level copy (`$HOME/.claude/skills/ddl-protocol/SKILL.md` in Claude Code, `$HOME/.codex/skills/ddl-protocol/SKILL.md` in Codex).
+1. Read the DDL protocol when it is not already in context: the project's copy when present (`.claude/skills/ddl-protocol/SKILL.md` in Claude Code, `.agents/skills/ddl-protocol/SKILL.md` in Codex, or the file the project's instruction file names as the protocol); otherwise the user-level copy (`$HOME/.claude/skills/ddl-protocol/SKILL.md` in Claude Code, `$HOME/.codex/skills/ddl-protocol/SKILL.md` in Codex). Complete its Start procedure before continuing.
 2. Read project-local runtime guidance when it is not already in context (the runtime loads `AGENTS.md` for Codex, and `CLAUDE.md` or `.claude/CLAUDE.md` for Claude Code, at session start), and any applicable command overlay.
 3. `design.md` is in context from session start; this command extracts nothing from it, because its units are document pairs
 4. Discover all `en/` and `ja/` counterparts in target path
+
+When a STOP needs a decision, read the selected protocol’s Approval feature and its current-host choice procedure before presenting the decision. When a SWARM fires, read its Parallel work feature before fan-out.
 
 ### Phase 1: READ
 
@@ -68,11 +70,11 @@ Decision: apply all current compatible language-pair proposals, select or revise
 Recommendation: a concise overall reason, then numbered proposals with stable IDs, the nuance each restores, and its effect on both languages.
 Consequence: approve-all covers the displayed ready set in both versions; subset approval covers only the selected proposal IDs.
 Review detail: each stable proposal ID, section, detection type, relevant EN/JA text and proposed edits.
-Choices: request one batch approval through protocol §1.5; open item selection only when requested, with no per-proposal or per-language reapproval after approve-all. With no dissonance, state that no change needs approval and stop.
+Choices: request one batch approval through Approval; open item selection only when requested, with no per-proposal or per-language reapproval after approve-all. With no dissonance, state that no change needs approval and stop.
 
 ### Phase 4: APPLY
 
-**Pre-condition.** Enter this phase only after explicit user approval of its scope at the Phase 3 STOP gate (per §1.5 of the protocol). If the actual answer does not authorize this work, return to Phase 3 and re-present the current decision.
+**Pre-condition.** Enter this phase only after explicit user approval of its scope at the Phase 3 STOP gate (per Approval). If the actual answer does not authorize this work, return to Phase 3 and re-present the current decision.
 
 Apply approved changes to BOTH language versions.
 
