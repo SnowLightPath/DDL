@@ -2,11 +2,11 @@
 
 > このページは翻訳者、編集者、エージェントが日本語版を保守するための内部資料です。DDL を使う方は[基本ガイド](./design_philosophy.md)や[詳説版](./design_philosophy_extended.md)をご覧ください。
 
-この用語集は英語版（`docs/en/`）を正本として日本語版（`docs/ja/`）を訳すときの対応表である。保守者は訳し直すときにこの表に従い、表に無い語を新しく訳したら表に足す。機械検査（design.md の V50）は「使わない訳」の列の語が日本語版に残っていないか、主要な訳語が日本語版に現れているかを確かめる。
+この用語集は英語版（`docs/en/`）を正本として日本語版（`docs/ja/`）を訳すときの対応表である。保守者は訳し直すときにこの表に従い、表に無い語を新しく訳したら表に足す。機械検査（design.md の V35）は「使わない訳」の列の語が日本語版に残っていないか、主要な訳語が日本語版に現れているかを確かめる。
 
 ## 翻訳・編集の方針
 
-- 節の名前とディレクティブは英語のまま書く。Experience、Binding Decisions、Direction、Acceptance Gates、Validation、Scopes、Principles、Intent、Detection Targets、`+++STOP`、`+++SWARM`、`+++NEVER`、`+++DDL_REPORT`、D1 や G7 の名前、`passed` や `Unbound:` のような印は訳さない。
+- 節の名前とディレクティブは英語のまま書く。Experience、Binding Decisions、Direction、Acceptance Gates、Validation、Scopes、Principles、Intent、Detection Targets、`+++STOP`、`+++SWARM`、`+++NEVER`、`+++DDL_REPORT`、D1 や G7 の名前、`passed` や `Unbound:` のような印は訳さない。操作と実装の節の名前（Read when、Syntax、Operands、Operation、Formats、Example、Exceptions、Implementation、Mapping、Observed、Coverage）は節を指すときは英語のまま書き、内容を述べるときは表の訳語で書く。
 - 固有名詞と文献は原文のまま書く。人名（Clark & Chalmers、Nonaka & Takeuchi など）、組織と製品（Anthropic、OpenAI、Claude Code、Codex、Spec Kit、Kiro、Tessl、Next.js）、方法論の略語（SECI、DocDD、ADR、TDD、DbC、SDD、AI-DLC、MCP）、ファイル名と識別子（design.md、CLAUDE.md、AGENTS.md、`.claude/settings.json`、`explorer`、`worker`）はそのまま。参考文献の節は英語のままにする。
 - 見出しは日本語に訳す。ただし節の名前（Experience など）と固有名詞を含む見出しはそのまま残す。訳した見出しの例: In the Harness Era は「ハーネス時代」、Background: The Session Discontinuity Problem は「背景: セッションの断絶という問題」、Core Principle は「中核の原則」、Roles: Human and LLM は「役割: 人間と LLM」、Stay Flexible は「柔軟に」、Anti-Patterns は「アンチパターン」、Summary は「まとめ」、Option 1: Pure Discipline は「選択肢1: 規律だけ」、STOP Gates は「STOP ゲート」。見出しの数と階層は英語版と一致させる（V35）。
 - em-dash（—）は使わない。読点、括弧、コロンで書く。コード、表、引用、見出しの構造は英語版に合わせる。
@@ -88,21 +88,30 @@
 | directive | ディレクティブ |  | 「命令」とは訳さない。ISA のたとえで instruction を「命令」と訳すのとは区別する |
 | protocol | プロトコル |  | 英字で protocol と書く箇所は「プロトコル」に統一 |
 | protocol lookup | プロトコルの探索先 |  |  |
-| instruction set | 命令セット | 指示セット | ISA のたとえ。directive は「ディレクティブ」のまま。directive の行（「命令」とは訳さない）と整合させる |
+| instruction set | 命令セット | 指示セット | ISA のたとえ。入口の表（十の命令）。directive は「ディレクティブ」のまま。directive の行（「命令」とは訳さない）と整合させる |
+| instruction（ISA のたとえ。`+++` ディレクティブ一つ一つ） | 命令 |  | ISA。directive は「ディレクティブ」のまま。規則としての instruction は「指示」の行に従う |
 | specification（protocol の） | 仕様 |  | 命令セット仕様 |
 | instruction-set reference | 命令セット仕様 |  | protocol の形式（P16）。「命令セットの参照資料」とは訳さない |
-| entry（protocol の入口。`SKILL.md`） | 入口 | エントリ | 命令一覧と読み込み地図を持つ |
+| protocol tree | プロトコルの木 |  | 入口、操作、`hosts/` の実装の三段。「Codex のプロトコルの木」 |
+| tier（protocol の木の三段） | 段 |  | 「三段からなる」。Direction の stage は「段階」 |
+| entry（protocol の入口。`SKILL.md`） | 入口 | エントリ | 命令セット（十の命令の表）と読み込み地図を持つ。読み込み地図は操作、読む場面、実装の 3 列 |
 | reading map | 読み込み地図 | 読み込みマップ |  |
-| reference file / references（protocol の） | 参照資料 |  | 操作ごとの資料（approval.md など）。作者向けの examples.md は「例の資料」と書く。host file とは区別する |
-| command authoring（参照資料の名） | コマンド作成 |  | 「コマンド作成の参照資料」 |
-| command template | コマンドのテンプレート | 雛形 | examples.md にある |
-| examples file（`references/examples.md`、作者向けの参照資料） | 例の資料 |  | 形式が分からないときとコマンド作成のときにだけ読む。「例N」（Example N）とは別 |
-| syntax | 構文 |  | 参照資料の節 Syntax |
-| fields / operands | オペランド |  | SWARM の operand block。参照資料の節 Fields |
-| procedure | 手順 |  | 参照資料の節 Procedure |
-| format（literal string） | 形式 |  | コマンドが書き出す文字列の定義。参照資料の節 Formats |
-| boundary（situation → behavior） | 境界 | 境界線 | 状況と振る舞いの対。参照資料の節 Boundaries |
-| host file / runtime file | ホスト資料 | 実行環境の資料 | `references/runtimes/` の八つの資料。操作ごとに一つ（開始用のホスト資料、並列作業のホスト資料）。Read when、Mapping、Observed、Coverage を持つ |
+| operation（protocol の操作。入口の隣の 6 本） | 操作 | 参照資料、例の資料 | approval.md、parallel-work.md、notebook.md、close.md、git-review.md、command-authoring.md。各操作は短い例を一つ持ち、別の例集は無い。節の名前 Operation（動作）とは区別する。Git の action や「外に出る操作」のような一般の「操作」は文脈で区別し、protocol の 6 本を指すときだけ「操作」を節やファイルの種類の名前として使う |
+| command authoring（操作の名） | コマンド作成 |  | 「コマンド作成の操作」。コマンドのテンプレートはその Example にある |
+| command template | コマンドのテンプレート | 雛形 | command-authoring.md の Example にある |
+| Read when / Read before（操作と実装の節） | 読む場面 |  | 操作と実装の 1 番目の節。読み込み地図の 2 列目。節を指すときは Read when と英字で書く |
+| syntax | 構文 |  | 操作の節 Syntax |
+| operands | オペランド |  | SWARM の operand block。操作の節 Operands |
+| Operation（操作の節） | 動作 |  | 規則の本体。ファイルとしての operation（操作）とは区別する |
+| procedure（一般の手順） | 手順 |  | 節やファイルの名前には使わない。操作の節 Operation は「動作」、protocol のファイルは「操作」 |
+| format（literal string） | 形式 |  | コマンドが書き出す文字列の定義。操作の節 Formats |
+| example（操作の節 Example） | 例 |  | 各操作に短い例が一つ。節の名前 Example は英字のまま。「例N」（Example N）とは別 |
+| Exceptions（操作の節） | 例外 |  | 動作が決めない状況と振る舞いの対 |
+| boundary（一般の境界） | 境界 | 境界線 | 入力の境界など。操作の節は Exceptions（例外） |
+| Implementation（操作の節） | 実装 |  | 操作の 8 番目の節。`hosts/` の実装（ファイル）とは文脈で区別する |
+| `hosts/`（protocol の実装を置くディレクトリ） | `hosts/` |  | ディレクトリ名は英字のまま。中の 8 本は次の行の「実装」 |
+| implementation（`hosts/` の 8 本） | 実装 | 実行環境の資料、ホスト資料 | `hosts/claude-code/` と `hosts/codex/` の八つ。ホストごとに 4 本。`start.md` は Start で読み、`approval.md`、`parallel-work.md`、`git-review.md` は同じ名前の操作とともに読む。Read when、Mapping、Observed、Coverage を持つ。節の名前の近くでは「`hosts/` の実装」と書く。`hosts/` は英字のまま。旧称 host file、runtime file は使わない |
+| the host's `start.md` | ホストの `start.md` |  | Phase 0 で入口とともに読む実装。「起動資料」とは訳さない |
 | observed（dated fact） | 観測 | 観察 | 日付と版つきの事実。「日付つきの観測の行」 |
 | coverage | 保証範囲 |  | アダプタが執行することとその限界 |
 | phase（固有名: Phase 0 など） | Phase |  |  |
@@ -167,8 +176,8 @@
 | units of work | 作業単位 |  |  |
 | sprint / bolt / epic | スプリント / ボルト / エピック |  |  |
 | mob elaboration / mob construction | モブエラボレーション / モブコンストラクション |  |  |
-| runtime table（protocol の） | 実行環境の対応表 |  |  |
-| Mapping（host 資料の節） | 対応表 |  | ツールの名前が現れる唯一の節 |
+| runtime table（protocol の） | 実行環境の対応表 |  | 旧構造の語。現在は Mapping（対応表） |
+| Mapping（実装の節） | 対応表 |  | ツールと関心事の対応を書く節。ツールの名前は `hosts/` の実装にだけ現れる |
 | vibe coding | vibe coding |  | 英字のまま |
 | deliverables | 成果物 |  | artifact と同じ語でよい |
 | runtime（実行時の意味。runtime checks） | 実行時 |  | Claude Code や Codex を指す runtime は「実行環境」 |

@@ -22,12 +22,13 @@ Synchronize English and Japanese versions.
 
 A command run from a user-level install follows the project's own copy when one exists (`.claude/skills/<name>/SKILL.md` in Claude Code, `.agents/skills/<name>/SKILL.md` in Codex, or the file the project's instruction file names as the command's source): the project's version is the one that runs.
 
-1. Read the DDL protocol when it is not already in context: the project's copy when present (`.claude/skills/ddl-protocol/SKILL.md` in Claude Code, `.agents/skills/ddl-protocol/SKILL.md` in Codex, or the file the project's instruction file names as the protocol); otherwise the user-level copy (`$HOME/.claude/skills/ddl-protocol/SKILL.md` in Claude Code, `$HOME/.codex/skills/ddl-protocol/SKILL.md` in Codex). Complete its Start procedure before continuing.
-2. Read project-local runtime guidance when it is not already in context (the runtime loads `AGENTS.md` for Codex, and `CLAUDE.md` or `.claude/CLAUDE.md` for Claude Code, at session start), and any applicable command overlay.
-3. `design.md` is in context from session start; this command extracts nothing from it, because its units are document pairs
-4. Discover all `en/` and `ja/` counterparts in target path
+1. Read the DDL protocol when it is not already in context: the project's copy when present (`.claude/skills/ddl-protocol/SKILL.md` in Claude Code, `.agents/skills/ddl-protocol/SKILL.md` in Codex, or the file the project's instruction file names as the protocol); otherwise the user-level copy (`$HOME/.claude/skills/ddl-protocol/SKILL.md` in Claude Code, `$HOME/.codex/skills/ddl-protocol/SKILL.md` in Codex). Follow its Start steps before continuing.
+2. Read the project's guidance file when it is not already in context (the host loads `AGENTS.md` for Codex, and `CLAUDE.md` or `.claude/CLAUDE.md` for Claude Code, at session start), and any applicable command overlay.
+3. Read `design.md` when it is not already in context — extract the document pairs (scopes with language counterparts) and the glossary the project names
+4. If no `design.md` exists → work on the given path alone: pair the documents by their language directories, without a glossary or protected terms
+5. Discover all `en/` and `ja/` counterparts in target path
 
-When a STOP needs a decision, read the selected protocol’s Approval feature and its current-host choice procedure before presenting the decision. When a SWARM fires, read its Parallel work feature before fan-out.
+When a STOP needs a decision, read the Approval operation and its implementation for the current host before presenting the decision. When a SWARM fires, read the Parallel work operation and its implementation before fan-out.
 
 ### Phase 1: READ
 
@@ -68,9 +69,9 @@ Do NOT apply changes without approval.
 +++Report:
 Decision: apply all current compatible language-pair proposals, select or revise the set, or leave it pending.
 Recommendation: a concise overall reason, then numbered proposals with stable IDs, the nuance each restores, and its effect on both languages.
-Consequence: approve-all covers the displayed ready set in both versions; subset approval covers only the selected proposal IDs.
+Consequence: approve all covers the displayed ready set in both versions; subset approval covers only the selected proposal IDs.
 Review detail: each stable proposal ID, section, detection type, relevant EN/JA text and proposed edits.
-Choices: request one batch approval through Approval; open item selection only when requested, with no per-proposal or per-language reapproval after approve-all. With no dissonance, state that no change needs approval and stop.
+Choices: request one batch approval through Approval; open item selection only when requested, with no per-proposal or per-language reapproval after approve all. With no dissonance, state that no change needs approval and stop.
 
 ### Phase 4: APPLY
 
@@ -101,23 +102,3 @@ After applying:
 +++NEVER: Treat either language as strictly source — proposals refine BOTH versions
 +++NEVER: Auto-apply changes — +++STOP is mandatory
 +++NEVER: Override domain authority — English for technical precision, Japanese for cultural nuance
-
-## Example
-
-```
-Human: /resonate docs/
-
-Assistant: Comparing en/ and ja/...
-
-+++DDL_REPORT
-
-Decision: apply the two displayed language-pair fixes together?
-Recommendation: restore the intended context and matching instructions.
-1. R1: add 「セッション、エージェント、ハーネスをまたいで」 to JA so the three contexts already named in EN are explicit.
-2. R2: update the stale validation command in both versions to the command declared by design.md.
-Consequence: approve-all applies R1 and R2; no further approval is requested per proposal or language.
-Review detail: R1, D1 Missing Nuance, includes the current EN/JA paragraphs and exact edit; R2, D5 Stale Pair, includes both current commands, the declared command, and the exact replacements. Show this detail before asking.
-
-The native choice interface presents: Apply both fixes / Select fixes or revise / Leave pending.
-The assistant waits for one actual submission before applying anything. Selecting both applies R1 and R2 without a second approval. Item selection opens only if requested.
-```

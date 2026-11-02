@@ -21,14 +21,14 @@ Write the ideal experience before implementation exists, together with the decis
 
 A command run from a user-level install follows the project's own copy when one exists (`.claude/skills/<name>/SKILL.md` in Claude Code, `.agents/skills/<name>/SKILL.md` in Codex, or the file the project's instruction file names as the command's source): the project's version is the one that runs.
 
-1. Read the DDL protocol when it is not already in context: the project's copy when present (`.claude/skills/ddl-protocol/SKILL.md` in Claude Code, `.agents/skills/ddl-protocol/SKILL.md` in Codex, or the file the project's instruction file names as the protocol); otherwise the user-level copy (`$HOME/.claude/skills/ddl-protocol/SKILL.md` in Claude Code, `$HOME/.codex/skills/ddl-protocol/SKILL.md` in Codex). Complete its Start procedure before continuing.
-2. Read project-local runtime guidance when it is not already in context (the runtime loads `AGENTS.md` for Codex, and `CLAUDE.md` or `.claude/CLAUDE.md` for Claude Code, at session start), and any applicable command overlay.
+1. Read the DDL protocol when it is not already in context: the project's copy when present (`.claude/skills/ddl-protocol/SKILL.md` in Claude Code, `.agents/skills/ddl-protocol/SKILL.md` in Codex, or the file the project's instruction file names as the protocol); otherwise the user-level copy (`$HOME/.claude/skills/ddl-protocol/SKILL.md` in Claude Code, `$HOME/.codex/skills/ddl-protocol/SKILL.md` in Codex). Follow its Start steps before continuing.
+2. Read the project's guidance file when it is not already in context (the host loads `AGENTS.md` for Codex, and `CLAUDE.md` or `.claude/CLAUDE.md` for Claude Code, at session start), and any applicable command overlay.
 3. Read `design.md` when it is not already in context — extract scopes, existing principles, and any Experience, Binding Decisions, Direction, and Acceptance Gates (Notebook)
 4. If no `design.md` exists → ask user to create one or proceed with defaults
 
-Read the selected protocol’s Notebook feature for the section rules.
+Read the Notebook operation for the section rules.
 
-When a STOP needs a decision, read the selected protocol’s Approval feature and its current-host choice procedure before presenting the decision. When a SWARM fires, read its Parallel work feature before fan-out.
+When a STOP needs a decision, read the Approval operation and its implementation for the current host before presenting the decision. When a SWARM fires, read the Parallel work operation and its implementation before fan-out.
 
 ### Phase 1: UNDERSTAND
 
@@ -92,7 +92,7 @@ Choices: request one approval for the complete displayed draft through Approval:
 
 **Pre-condition.** Enter this phase only after explicit user approval of its scope at the Phase 3 STOP gate (per Approval). If the actual answer does not authorize this work, return to Phase 3 and re-present the current decision.
 
-1. Save the approved draft to `design.md`: Experience, Binding Decisions, Direction (ending with its Close stage), and Acceptance Gates under their own headings (omit the sections the draft does not use); principles from D5 go to the principles section. A Binding Decision row without quoted words takes Source `approved $draft report (<date>)`
+1. Save the approved draft to `design.md`: Experience, Binding Decisions, Direction (ending with its Close stage), and Acceptance Gates under their own headings (omit the sections the draft does not use); principles from D5 go to the principles section. A Binding Decision row without quoted words takes Source `approved /draft report (<date>)`
 2. Suggest: "Run `$realize` to implement this experience"
 
 ## Constraints

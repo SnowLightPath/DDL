@@ -1,3 +1,3 @@
-# DDL: a skill runs when the user invokes $realize; Codex does not start it on its own (runtime adapters in the protocol).
+# DDL: a skill runs when the user invokes $realize; Codex does not start it on its own (implementations under hosts/ in the protocol).
 policy:
   allow_implicit_invocation: false

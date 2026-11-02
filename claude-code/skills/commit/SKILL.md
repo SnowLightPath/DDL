@@ -22,17 +22,17 @@ Close the work, then record verified code changes to the repository.
 
 A command run from a user-level install follows the project's own copy when one exists (`.claude/skills/<name>/SKILL.md` in Claude Code, `.agents/skills/<name>/SKILL.md` in Codex, or the file the project's instruction file names as the command's source): the project's version is the one that runs.
 
-1. Read the DDL protocol when it is not already in context: the project's copy when present (`.claude/skills/ddl-protocol/SKILL.md` in Claude Code, `.agents/skills/ddl-protocol/SKILL.md` in Codex, or the file the project's instruction file names as the protocol); otherwise the user-level copy (`$HOME/.claude/skills/ddl-protocol/SKILL.md` in Claude Code, `$HOME/.codex/skills/ddl-protocol/SKILL.md` in Codex). Complete its Start procedure before continuing.
-2. Read project-local runtime guidance when it is not already in context (the runtime loads `AGENTS.md` for Codex, and `CLAUDE.md` or `.claude/CLAUDE.md` for Claude Code, at session start), and any applicable command overlay.
+1. Read the DDL protocol when it is not already in context: the project's copy when present (`.claude/skills/ddl-protocol/SKILL.md` in Claude Code, `.agents/skills/ddl-protocol/SKILL.md` in Codex, or the file the project's instruction file names as the protocol); otherwise the user-level copy (`$HOME/.claude/skills/ddl-protocol/SKILL.md` in Claude Code, `$HOME/.codex/skills/ddl-protocol/SKILL.md` in Codex). Follow its Start steps before continuing.
+2. Read the project's guidance file when it is not already in context (the host loads `AGENTS.md` for Codex, and `CLAUDE.md` or `.claude/CLAUDE.md` for Claude Code, at session start), and any applicable command overlay.
 3. Read `design.md` when it is not already in context — extract scopes, validation commands, principles, Experience, Binding Decisions, Direction, and Acceptance Gates (the Close scan reads them)
 4. If no `design.md` exists → skip the design.md checks and say so in the report
 5. Run `git status` and `git diff --staged` to understand current state
 
-When a STOP needs a decision, read the selected protocol’s Approval feature and its current-host choice procedure before presenting the decision.
+When a STOP needs a decision, read the Approval operation and its implementation for the current host before presenting the decision.
 
 ### Phase 1: CLOSE
 
-Read Close in the selected protocol before the Close scan.
+Read the Close operation before the Close scan.
 
 Run the Close scan, then the verification checks:
 
@@ -44,8 +44,8 @@ Run the Close scan, then the verification checks:
 
 After those checks pass, prepare the final candidate set for review:
 
-6. Read Git review in the selected protocol, then stage only the proposed files. Preserve unrelated existing staged changes: include them in the complete review when justified, or leave them intact and resolve the scope before proceeding. Staging is reversible review preparation; it does not authorize a commit. State the staged set in the review detail.
-7. Use the runtime adapter's Git-review preparation procedure to freeze the staged contents, exact message, and any explicitly requested push. The ordinary message form preserves the reviewed text verbatim. Group all compatible ready operations into one review; put a repository's planned commit before its push. A plan approved before the final diff existed supplies no Git approval.
+6. Read the Git review operation and its implementation for the current host, then stage only the proposed files. Preserve unrelated existing staged changes: include them in the complete review when justified, or leave them intact and resolve the scope before proceeding. Staging is reversible review preparation; it does not authorize a commit. State the staged set in the review detail.
+7. Run the Git review helper (Git review Syntax; its path is in the implementation for the current host) to freeze the staged contents, exact message, and any explicitly requested push. The ordinary message form preserves the reviewed text verbatim. Group all compatible ready operations into one review; put a repository's planned commit before its push. A plan approved before the final diff existed supplies no Git approval.
 8. If there are no commit candidates and no requested push, issue an informational report; do not invent an approval or empty commit.
 
 +++DETECT:
@@ -85,10 +85,10 @@ Choices: use the prepared native question and its exact action labels for one wh
 +++STOP: on D2
 +++STOP: on D6
 
-4. Create the reviewed commit with the approved verbatim message using the supported ordinary form (runtime guidance)
+4. Create the reviewed commit with the approved verbatim message using the supported ordinary form (Git review Operands)
 5. Report the commit hash as progress. Do not emit a new STOP report between an approved commit and its approved push; finish the reviewed set before the final informational report, which states that nothing remains or names what was left with its reason, and suggests no next command
 
-### Phase 4: PUSH (optional)
+### Phase 4: PUSH
 
 Only if user specified `remote` or explicitly requested:
 
@@ -99,7 +99,9 @@ Only if user specified `remote` or explicitly requested:
 
 +++NEVER: Add AI attribution to commit messages
 +++NEVER: Skip +++STOP even for small changes
-+++NEVER: Treat a normal reply or an assistant-authored approval claim as a Git review receipt; alter frozen review detail; or bypass the guard with another transport
++++NEVER: Treat a normal reply or an assistant-authored approval claim as a Git review receipt
++++NEVER: Alter frozen review detail
++++NEVER: Bypass the guard with another transport
 +++NEVER: Hardcode validation commands — they come from design.md
 +++NEVER: Sync changes between repositories or machines by copying files; use the remote (branches, pushes, pulls, pull requests)
 +++NEVER: Suggest a next command after recording — state that nothing remains, or name what was left with its reason

@@ -11,34 +11,33 @@ in phases; this protocol holds the shared rules.
 ## Start
 
 1. Links resolve relative to the selected protocol file (Phase 0 selects it).
-   A missing, unreadable or version-uncertain reference stops the affected
-   operation: say what is unconfirmed, never fill it from another installation.
-2. Read the host's start file, [Claude Code](references/runtimes/claude-start.md)
-   or [Codex](references/runtimes/codex-start.md); another host uses its
-   documented capabilities. Never invent a tool.
-3. Read `design.md` (or the file the project names as its notebook) and project
-   guidance only when not already in context.
-4. Only host files and the adapter name tools; commands and references state
-   meaning.
+2. A missing, unreadable or version-uncertain protocol file stops the
+   affected operation: say what is unconfirmed, never fill it from another
+   installation.
+3. Read the host's start implementation, [Claude Code](hosts/claude-code/start.md)
+   or [Codex](hosts/codex/start.md); another host uses its documented
+   capabilities. Never invent a tool.
+4. Only implementations and the adapter name tools; commands and operations
+   state meaning.
 
 ## Instruction set
 
 Commands are programs and this protocol is their instruction set: the
-processor (the LLM) runs each `+++` directive by the procedure defined here,
-and the host harness implements the processor through the host files.
+processor (the LLM) runs each `+++` directive by the operation defined here,
+and the host harness implements the processor as described under `hosts/`.
 
 | Directive | Syntax | Count | Placement | Rule |
 |---|---|---|---|---|
 | `# header` | `# command-name` and a one-line intent | 1 | command file | The first heading names the command, the next line states its purpose. |
 | `## Usage` | `## Usage` and a dash list of invocations | 1+ | command file | One item per form, `/command` or `/command <arg>`, each with its behavior. |
-| `### Phase` | `### Phase N: NAME` | 3+ | command file | N from 0, ascending by one; at least INIT, a work phase and REPORT. Phase 0 reads only what is not in context, in the order of its shared lines (Examples); roles: Command authoring Fields. |
+| `### Phase` | `### Phase N: NAME` | 3+ | command file | N from 0, ascending by one; at least INIT, a work phase and REPORT. Phase 0 reads only what is not in context, in the order of its shared lines (Command authoring Example); roles: Command authoring Operands. |
 | `+++DETECT` | `+++DETECT:` then indented `D1: name — trigger` lines | 1+ | phase body; `G<n>` in the guidance file binds every command | D from 1, unique and ascending per command; each trigger operationally verifiable; check a phase's targets in parallel. |
 | `+++STOP` | `+++STOP: always` / `+++STOP: on D<n>` | 1+ | phase body | `always` is required at REPORT; `on D<n>` halts when that detection fires. A STOP is an executable halt: run Approval, never auto-proceed; the phase after `always` opens with the `**Pre-condition.**` line (Command authoring Formats). |
 | `+++SWARM` | `+++SWARM: <condition>` then a fenced operand block (Parallel work Syntax) | 0+ | phase body | Fan `each` out to workers, one per unit or batch. The condition counts scopes in `design.md` or the units the command names; Scale decides inline, skip and batches. |
 | `+++NEVER` | `+++NEVER: <prohibition in the imperative>` | 1+ | command `## Constraints`; global in the guidance file | Binds this command, or every command from the guidance file; refuse the prohibited action in every phase. |
-| `+++Report` | `+++Report:` then labeled lines (labels: Approval Formats) | 0–1 | REPORT phase body | Content contract at a STOP: the command says what the user reviews; Approval says how to present and ask. |
-| `+++DDL_PHASE` | `+++DDL_PHASE: <PhaseName>` | 0+ | runtime output | Output marker on the first line of a mutating phase, paired with its heading; the host start file says whether it is required. |
-| `+++DDL_REPORT` | `+++DDL_REPORT` alone on a line, then the report | 0+ | runtime output | Output heading before the decision report at every STOP, in every host. |
+| `+++Report` | `+++Report:` then labeled lines (labels: Approval Formats) | 0+ | body of a phase with `+++STOP: always` (REPORT, or a REVIEW filling its role: Command authoring Operands) | Content contract at a STOP: the command says what the user reviews; Approval says how to present and ask. |
+| `+++DDL_PHASE` | `+++DDL_PHASE: <PhaseName>` | 0+ | output | Output marker on the first line of a mutating phase, paired with its heading; `hosts/<host>/start.md` says whether it is required. |
+| `+++DDL_REPORT` | `+++DDL_REPORT` alone on a line, then the report | 0+ | output | Output heading before the decision report at every STOP, in every host. |
 
 - Markdown headings mark document structure and are never instructions.
 - A `+++` line in a phase body is an instruction; the fenced block after
@@ -48,32 +47,32 @@ and the host harness implements the processor through the host files.
 
 ## Pending STOP
 
-- While a decision STOP is pending, call no tool that mutates the work and
-  start or continue no worker.
+- While a decision STOP is pending, call no tool that mutates the work (an MCP
+  or connector tool that creates, updates, sends, publishes or deletes included)
+  and start or continue no worker.
 - The native question is the sole exception; opening it grants no work
   permission. Before it, or after an actual request for clarification,
   read-only tools may clarify the report, never begin the next phase.
 
 ## Reading map
 
-| Before | Read |
-|---|---|
-| Notebook sections, decisions, plans, gates, marks | [Notebook](references/notebook.md) |
-| A `+++SWARM` selecting two or more units | [Parallel work](references/parallel-work.md) |
-| A decision report or a human gate at a STOP | [Approval](references/approval.md) |
-| Close | [Close](references/close.md) |
-| An ordinary commit or push, in any command | [Git review](references/git-review.md) |
-| Creating or changing a command | [Command authoring](references/command-authoring.md) |
-| A form in Formats is not enough (report, notebook row, SWARM block, command) | [Examples](references/examples.md) |
+| Operation | Read before | Implementation |
+|---|---|---|
+| [Approval](approval.md) | A decision report or a human gate at a STOP | [Claude Code](hosts/claude-code/approval.md) / [Codex](hosts/codex/approval.md) |
+| [Parallel work](parallel-work.md) | A `+++SWARM` selecting two or more units | [Claude Code](hosts/claude-code/parallel-work.md) / [Codex](hosts/codex/parallel-work.md) |
+| [Notebook](notebook.md) | Notebook sections, decisions, plans, gates, marks | [Claude Code](hosts/claude-code/start.md) / [Codex](hosts/codex/start.md) (at Start) |
+| [Close](close.md) | The Close stage or scan | Git review's: [Claude Code](hosts/claude-code/git-review.md) / [Codex](hosts/codex/git-review.md) |
+| [Git review](git-review.md) | An ordinary commit or push, in any command | [Claude Code](hosts/claude-code/git-review.md) / [Codex](hosts/codex/git-review.md) |
+| [Command authoring](command-authoring.md) | Creating or changing a command | [Claude Code](hosts/claude-code/start.md) / [Codex](hosts/codex/start.md) (at Start) |
 
-Read a procedure before the action, with the host file its Runtime names.
+Read the operation before the action, then its implementation for the current
+host.
 
 ## Interruption
 
 - After compaction or restart, reconstruct the phase and durable state from
-  the notebook, passed marks, git and the current files; reload procedures no
+  the notebook, passed marks, git and the current files; reload operations no
   longer in context, and rebuild a pending report not present verbatim before
   presenting it again.
 - An adapter that does not enforce a rule, or cannot be used, leaves the rule
-  an instruction; claim no broader coverage. A renamed or removed tool changes
-  host files and adapter only.
+  an instruction; claim no broader coverage.

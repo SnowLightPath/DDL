@@ -3,7 +3,7 @@
 
 Link checks cover ordinary inline Markdown links, not all Markdown syntax; a `#fragment`
 must name a heading of the target file by its GitHub slug (P12). The protocol checks
-run against a minimal conforming fixture and ten mutations of it (negative tests), so
+run against a minimal conforming fixture and thirteen mutations of it (negative tests), so
 each check is shown to fail on the unit it counts. Installation checks exercise the
 existing installer with disposable homes and projects; they do not claim that either
 host loaded a skill, trusted a hook or displayed a native UI.
@@ -55,13 +55,11 @@ def anchors(path):
 
 
 def local_link_errors(bundle):
-    """Validate local links, their anchors and reachability of Markdown resources from the entry point."""
+    """Validate local links, their anchors and reachability of every Markdown file under the skill from the entry."""
     errors = []
     root = bundle.resolve()
-    documents = [bundle / "SKILL.md"]
-    references = bundle / "references"
-    if references.is_dir():
-        documents.extend(sorted(references.rglob("*.md")))
+    entry = bundle / "SKILL.md"
+    documents = [entry] + sorted(path for path in bundle.rglob("*.md") if path != entry)
     graph = {}
     known_anchors = {}
 
@@ -141,7 +139,7 @@ def local_link_errors(bundle):
 
 BOOTSTRAP = ("A command run from a user-level install follows the project copy.\n"
              "1. Read the DDL protocol.\n"
-             "2. Read project-local runtime guidance.\n")
+             "2. Read the project's guidance file.\n")
 SWARM_ONE = ("+++SWARM: 2+ units\n\n```\n  team: first\n  spawn: reader\n  type: Explore\n  max: 5\n"
              "  batch: auto\n  each: work\n```\n")
 SWARM_TWO = "+++SWARM: 2+ units\n\n```\n  team: second\n  spawn: writer\n  type: general-purpose\n  each: work\n```\n"
@@ -153,6 +151,7 @@ TEMPLATE = ("---\nname: command-name\ndescription: One-line intent\nargument-hin
             "disable-model-invocation: true\nmetadata:\n  short-description: Short name\n---\n\n"
             "# command-name\n\nIntent line.\n\n## Usage\n\n- `/command-name` — run\n\n## Phases\n\n" + PHASES +
             "\n## Constraints\n\n+++NEVER: Skip a STOP\n")
+TEMPLATE_FENCE = "````markdown\n" + TEMPLATE + "````"
 GUIDES = (("claude-code/CLAUDE.md", "Commands", "/"), ("codex/AGENTS.md", "Skills", "$"), (".claude/CLAUDE.md", "Commands", "/"))
 
 
@@ -175,56 +174,54 @@ def write_commands(repo, command=COMMAND):
         write(repo / relative, "## " + heading + "\n" + "".join(f"| `{prefix}{name}` | test |\n" for name in COMMANDS))
 
 
+def write_command_authoring(repo, template=TEMPLATE):
+    """The smallest command-authoring.md the command checks read: the template fence under ## Example."""
+    write(repo / "claude-code/skills/ddl-protocol/command-authoring.md",
+          "# Authoring\n\n## Example\n\n````markdown\n" + template + "````\n")
+
+
 GIT_JSON = ('```json\n{"language": "en", "operations": [\n'
             '  {"cwd": "/repo", "command": ["git", "commit", "--cleanup=verbatim", "-m", "Message"]},\n'
             '  {"cwd": "/repo", "command": ["git", "push", "origin", "main"]}\n]}\n```')
-# The author-only examples: one fenced block per section after the command template (P15).
-EXAMPLE_FENCES = {
-    "Approval report": "```\n+++DDL_REPORT\nDecision: D1\nChoices: approve all / subset / hold\n```",
-    "Close report": "```\n+++DDL_REPORT\nOutcome: nothing remains\n```",
-    "Git review request": GIT_JSON,
-    "Notebook tables": "```markdown\n" + md_table(("Stage", "Work (parallel lanes)", "Human sees", "Gate"),
-                                                  [("S0", "work", "diff", "approval")]) + "\n```",
-}
 
 
-def write_examples(repo, template=TEMPLATE):
-    """references/examples.md: the template fence under ## Command template, then one fenced example per section."""
-    out = ["# Examples", "", "Read only when a Formats string is not enough.", "", "## Command template", "",
-           "````markdown\n" + template + "````"]
-    for title, fence in EXAMPLE_FENCES.items():
-        out += ["", f"## {title}", "", fence]
-    write(repo / "claude-code/skills/ddl-protocol" / check_ddl.EXAMPLES, "\n".join(out) + "\n")
-
-
-def reference_text(title, syntax, fields, procedure, formats, boundaries, runtime):
-    """A shared reference with the seven sections; syntax is given already fenced."""
+def reference_text(title, syntax, operands, operation, formats, example, exceptions, implementation):
+    """An operation with the eight sections; syntax and example are given already fenced."""
     out = [f"# {title}", "", "## Read when", "", "Read this before the step it covers.", "", "## Syntax", "",
-           syntax or "None.", "", "## Fields", "", md_table(*fields) if fields else "None.", "", "## Procedure", ""]
-    out += [f"{i}. {step}" for i, step in enumerate(procedure, 1)]
+           syntax or "None.", "", "## Operands", "", md_table(*operands) if operands else "None.", "", "## Operation", ""]
+    out += [f"{i}. {step}" for i, step in enumerate(operation, 1)]
     out += ["", "## Formats", ""] + [f"- `{literal}`" for literal in formats]
-    out += ["", "## Boundaries", "", md_table(("Situation", "Behavior"), [(s, "Behavior.") for s in boundaries]),
-            "", "## Runtime", "", runtime, ""]
+    out += ["", "## Example", "", example]
+    out += ["", "## Exceptions", "", md_table(("Situation", "Behavior"), [(s, "Behavior.") for s in exceptions]),
+            "", "## Implementation", "", implementation, ""]
     return "\n".join(out)
 
 
-def host_text(name):
-    host, _, operation = name.partition("-")
+def host_text(host, operation):
+    """The implementation hosts/<host>/<operation>.md with its four sections."""
     if operation != "start":
-        read_when = f"Read after [the procedure](../{check_ddl.HOST_SHARED[operation]})."
+        read_when = f"Read after [the operation](../../{operation}.md)."
     else:
-        read_when = "Read after [the notebook](../notebook.md), then " + ", ".join(
-            f"[{op}]({host}-{op}.md)" for op in check_ddl.HOST_SHARED) + "."
-    mapping = md_table(("Concern", "Procedure"), [(concern, "The host tool.") for concern in check_ddl.CONCERNS[name]])
+        read_when = "Read after [the notebook](../../notebook.md), then " + ", ".join(
+            f"[{op}]({op}.md)" for op in check_ddl.HOST_OPERATIONS[1:]) + "."
+    mapping = md_table(("Concern", "Implementation"),
+                       [(concern, "The host tool.") for concern in check_ddl.CONCERNS[operation]])
     observed = md_table(("Fact", "Version", "Date"), [("An observed fact", "Host 1.0", "2026-11-01")])
     return (f"# {host}: {operation}\n\n## Read when\n\n{read_when}\n\n## Mapping\n\n{mapping}\n\n"
             f"## Observed\n\n{observed}\n\n## Coverage\n\n- The hook checks dispatched calls only.\n"
             "- Internal errors warn and fail open.\n")
 
 
+def implementation_cell(name):
+    """The Reading map's third cell: both implementations of a host operation, or none."""
+    if name not in check_ddl.HOST_OPERATIONS:
+        return "none"
+    return f"[Claude Code](hosts/claude-code/{name}.md) / [Codex](hosts/codex/{name}.md)"
+
+
 ENTRY = ("---\nname: ddl-protocol\ndescription: test\n---\n\n# DDL protocol\n\n## Start\n\n"
          "1. Follow the project copy.\n2. Resolve links relative to the selected protocol.\n"
-         "3. Identify the host and read [Claude Code](references/runtimes/claude-start.md) or [Codex](references/runtimes/codex-start.md).\n"
+         "3. Identify the host and read [Claude Code](hosts/claude-code/start.md) or [Codex](hosts/codex/start.md).\n"
          "4. Read design.md when it is not in context.\n\n## Instruction set\n\nCommands are programs.\n\n"
          + md_table(("Directive", "Syntax", "Count", "Placement", "Rule"),
                     [(f"`{d}`", f"`{s}`", c, p, "Rule.") for d, s, c, p in (
@@ -238,65 +235,78 @@ ENTRY = ("---\nname: ddl-protocol\ndescription: test\n---\n\n# DDL protocol\n\n#
          + "\n\n- Markdown headings mark structure.\n- `+++` lines are executable instructions.\n"
          "- The fenced block after `+++SWARM:` holds operands.\n\n## Pending STOP\n\nNo mutation while a STOP is pending.\n\n"
          "## Reading map\n\n"
-         + md_table(("Before", "Read"), [(f"a {name}", f"[{name}](references/{name}.md)") for name in check_ddl.REFERENCES]
-                    + [("a form in Formats is not enough", f"[Examples]({check_ddl.EXAMPLES})")])
+         + md_table(("Operation", "Read before", "Implementation"),
+                    [(f"[{name}]({name}.md)", f"a {name}", implementation_cell(name)) for name in check_ddl.OPERATIONS])
          + "\n\n## Interruption\n\nReconstruct state from the notebook.\n")
 
 SWARM_SYNTAX = ("````\n+++SWARM: 2+ scopes in design.md\n\n```\n  team: command-phase\n  spawn: role-{scope}\n"
                 "  type: Explore\n  max: 5\n  batch: auto\n  each: |\n    Work on {scope}.\n  collect: synthesize\n```\n````")
+
+
+def implementation_links(operation):
+    return (f"Read [Claude Code](hosts/claude-code/{operation}.md) or [Codex](hosts/codex/{operation}.md).")
+
+
 REFERENCE_FIXTURES = {
     "approval": dict(
         title="Approval at a STOP", syntax="```\n+++STOP: always\n+++STOP: on D<n>\n+++DDL_REPORT\n```",
-        fields=(("Form", "Fires when"), [("`always`", "REPORT"), ("`on D<n>`", "the detection fires"),
-                                         ("design.md human gate", "the stage ends")]),
-        procedure=["**Present:** emit `+++DDL_REPORT`.", "**Ask:** one native choice.", "**Wait and resume:** wait."],
-        runtime="Read [Claude Code](runtimes/claude-approval.md) or [Codex](runtimes/codex-approval.md)."),
+        operands=(("Form", "Fires when"), [("`always`", "REPORT"), ("`on D<n>`", "the detection fires"),
+                                           ("design.md human gate", "the stage ends")]),
+        operation=["**Present:** emit `+++DDL_REPORT`.", "**Ask:** one native choice.", "**Wait and resume:** wait."],
+        example="```\n+++DDL_REPORT\nDecision: D1\nChoices: approve all / subset / hold\n```",
+        implementation=implementation_links("approval")),
     "close": dict(
         title="Close", syntax=None,
-        fields=(("Command", "Authority for steps 1–3", "Git review"),
-                [("`/realize`", "the approved plan", "one review"), ("`/commit`", "one batch approval", "one review")]),
-        procedure=["**Reflect:** add Experience.", "**Docs:** fix references.", "**Resonate:** update counterparts.",
+        operands=(("Command", "Authority for steps 1–3", "Git review"),
+                  [("`/realize`", "the approved plan", "one review"), ("`/commit`", "one batch approval", "one review")]),
+        operation=["**Reflect:** add Experience.", "**Docs:** fix references.", "**Resonate:** update counterparts.",
                    "**Validate:** run the Validation block.", "**Git review:** stage the whole set."],
-        runtime="Read [Claude Code](runtimes/claude-git.md) or [Codex](runtimes/codex-git.md)."),
+        example="```\n+++DDL_REPORT\nOutcome: nothing remains\n```",
+        implementation=implementation_links("start")),
     "git-review": dict(
         title="Content-bound Git review", syntax="```\npython3 <gate> prepare-git-review --runtime <host>\n```",
-        fields=(("Operation", "Supported forms", "Unsupported forms"),
-                [("`commit`", "named branch", "forced"), ("`push`", "one remote", "mirror")]),
-        procedure=["**Prepare:** stage.", "**Review:** emit the report.", "**Wait:** for the submission.",
+        operands=(("Git action", "Supported forms", "Unsupported forms"),
+                  [("`commit`", "named branch", "forced"), ("`push`", "one remote", "mirror")]),
+        operation=["**Prepare:** stage.", "**Review:** emit the report.", "**Wait:** for the submission.",
                    "**Keep the reviewed index intact:** any change needs a new review."],
-        runtime="Read [Claude Code](runtimes/claude-git.md) or [Codex](runtimes/codex-git.md)."),
+        example=GIT_JSON,
+        implementation=implementation_links("git-review")),
     "parallel-work": dict(
         title="Parallel work", syntax=SWARM_SYNTAX,
-        fields=(("Field", "Position", "Required", "Default", "Meaning"),
-                [(f"`{f}`", "block", "no", "-", "Meaning.") for f in check_ddl.FIELDS_ROWS["parallel-work"]]),
-        procedure=[f"**{s}**" for s in check_ddl.PROCEDURE_STEPS["parallel-work"]],
-        runtime="Read [Claude Code](runtimes/claude-parallel.md) or [Codex](runtimes/codex-parallel.md)."),
+        operands=(("Operand", "Position", "Required", "Default", "Meaning"),
+                  [(f"`{f}`", "block", "no", "-", "Meaning.") for f in check_ddl.OPERANDS_ROWS["parallel-work"]]),
+        operation=[f"**{s}**" for s in check_ddl.OPERATION_STEPS["parallel-work"]],
+        example="```\n+++SWARM: 3 scopes\n\n```\n  team: realize-implement\n  spawn: impl-{scope}\n  each: work\n```\n```",
+        implementation=implementation_links("parallel-work")),
     "notebook": dict(
         title="The shared notebook", syntax=None,
-        fields=(("Section", "Holds", "Written by", "Read by"),
-                [(f"`{s}`", "content", "/draft", "every command") for s in check_ddl.FIELDS_ROWS["notebook"]]),
-        procedure=["Binding Decisions.", "Direction.", "Acceptance Gates.", "Passed marks.", "Aligned checks."],
-        runtime="Read [Claude Code](runtimes/claude-start.md) or [Codex](runtimes/codex-start.md)."),
+        operands=(("Section", "Holds", "Written by", "Read by"),
+                  [(f"`{s}`", "content", "/draft", "every command") for s in check_ddl.OPERANDS_ROWS["notebook"]]),
+        operation=["Binding Decisions.", "Direction.", "Acceptance Gates.", "Passed marks.", "Aligned checks."],
+        example="```markdown\n" + md_table(("Stage", "Work (parallel lanes)", "Human sees", "Gate"),
+                                           [("S0", "work", "diff", "approval")]) + "\n```",
+        implementation=implementation_links("start")),
     "command-authoring": dict(
         title="Authoring a DDL command", syntax="```\n### Phase N: NAME\n+++DETECT:\n  D1: name — trigger\n```",
-        fields=(("Role", "Phase name", "Required"),
-                [(r, "domain name", "yes") for r in ("INIT", "SURVEY/READ", "WORK/IMPLEMENT", "REPORT", "EXECUTE", "VERIFY")]),
-        procedure=["Copy the template in Examples.", "Keep the shared Phase 0 lines verbatim.", "Define phases.",
+        operands=(("Role", "Phase name", "Required"),
+                  [(r, "domain name", "yes") for r in ("INIT", "SURVEY/READ", "WORK/IMPLEMENT", "REPORT", "EXECUTE", "VERIFY")]),
+        operation=["Copy the template in Example.", "Keep the shared Phase 0 lines verbatim.", "Define phases.",
                    "Run the checker."],
-        runtime="Read [Claude Code](runtimes/claude-start.md) or [Codex](runtimes/codex-start.md)."),
+        example=TEMPLATE_FENCE,
+        implementation=implementation_links("start")),
 }
 
 
 def write_protocol_fixture(repo):
-    """The entry, six references, examples.md, eight host files, 16 commands and 3 guides that pass every check."""
+    """The entry, six operations, eight implementations under hosts/, 16 commands and 3 guides that pass every check."""
     bundle = repo / "claude-code/skills/ddl-protocol"
     write(bundle / "SKILL.md", ENTRY)
     for name, spec in REFERENCE_FIXTURES.items():
-        text = reference_text(formats=check_ddl.FORMATS[name], boundaries=check_ddl.BOUNDARIES[name], **spec)
-        write(bundle / "references" / f"{name}.md", text)
-    write_examples(repo)
-    for name in check_ddl.HOSTS:
-        write(bundle / "references/runtimes" / f"{name}.md", host_text(name))
+        text = reference_text(formats=check_ddl.FORMATS[name], exceptions=check_ddl.EXCEPTIONS[name], **spec)
+        write(bundle / f"{name}.md", text)
+    for name in check_ddl.IMPLEMENTATIONS:
+        host, _, operation = name.partition("/")
+        write(bundle / "hosts" / host / f"{operation}.md", host_text(host, operation))
     write_commands(repo)
     return bundle
 
@@ -310,6 +320,7 @@ class ProtocolTest(unittest.TestCase):
         self.repo.mkdir()
 
     def source_fixture(self):
+        """A small skill tree for the generator and link tests: a nested subdirectory, a binary file, a hosts/ file."""
         skills = self.repo / "claude-code/skills"
         for name in ("ddl-protocol", *COMMANDS):
             path = skills / name / "SKILL.md"
@@ -320,8 +331,12 @@ class ProtocolTest(unittest.TestCase):
         (refs / "intro.md").write_text("# Intro\n[More](nested/procedure.md#part)\n")
         (refs / "nested/procedure.md").write_text("# Part\n[Intro](../intro.md)\n")
         (refs / "nested/data.bin").write_bytes(b"\x00\xff\n")
+        start = skills / "ddl-protocol/hosts/codex/start.md"
+        start.parent.mkdir(parents=True)
+        start.write_text("# Codex start\n[Entry](../../SKILL.md)\n")
         (skills / "ddl-protocol/SKILL.md").write_text(
-            "---\nname: ddl-protocol\ndescription: test\n---\n\n# Protocol\n[Intro](references/intro.md)\n")
+            "---\nname: ddl-protocol\ndescription: test\n---\n\n# Protocol\n[Intro](references/intro.md) "
+            "[Codex](hosts/codex/start.md)\n")
         gate = self.repo / "tools/ddl_gate.py"
         gate.parent.mkdir(parents=True)
         gate.write_text("# fixture\n")
@@ -333,13 +348,17 @@ class ProtocolTest(unittest.TestCase):
 
     def test_resources_are_recursive_exact_and_extras_are_never_deleted(self):
         refs = self.source_fixture()
+        source = refs.parent
         self.assertEqual(self.sync().returncode, 0)
-        output = self.repo / "codex/.agents/skills/ddl-protocol/references"
-        for path in refs.rglob("*"):
-            if path.is_file():
-                self.assertEqual(path.read_bytes(), (output / path.relative_to(refs)).read_bytes())
+        output = self.repo / "codex/.agents/skills/ddl-protocol"
+        copied = [path for path in source.rglob("*") if path.is_file() and path != source / "SKILL.md"]
+        self.assertIn(source / "hosts/codex/start.md", copied)
+        self.assertIn(source / "references/nested/data.bin", copied)
+        for path in copied:
+            self.assertEqual(path.read_bytes(), (output / path.relative_to(source)).read_bytes())
+        self.assertTrue((output / "agents/openai.yaml").is_file())
         self.assertEqual(self.sync("--check").returncode, 0)
-        generated = output / "intro.md"
+        generated = output / "references/intro.md"
         generated.write_text("altered\n")
         self.assertNotEqual(self.sync("--check").returncode, 0)
         self.assertEqual(self.sync().returncode, 0)
@@ -354,9 +373,17 @@ class ProtocolTest(unittest.TestCase):
         (refs / "nested/new.md").unlink()
         checked = self.sync("--check")
         self.assertNotEqual(checked.returncode, 0)
-        self.assertIn("unexpected protocol reference", checked.stderr)
-        self.assertTrue((output / "nested/new.md").exists())
-        unknown = output / "user-note.md"
+        self.assertIn("unexpected protocol file", checked.stderr)
+        self.assertTrue((output / "references/nested/new.md").exists())
+        (output / "references/nested/new.md").unlink()
+        stray = output / "hosts/stray.md"
+        stray.write_text("stale implementation\n")
+        checked = self.sync("--check")
+        self.assertNotEqual(checked.returncode, 0)
+        self.assertIn("unexpected protocol file: codex/.agents/skills/ddl-protocol/hosts/stray.md", checked.stderr)
+        self.assertNotIn("openai.yaml", checked.stderr)
+        self.assertTrue(stray.exists())
+        unknown = output / "references/user-note.md"
         unknown.write_text("user-owned\n")
         self.assertEqual(self.sync().returncode, 0)
         self.assertEqual(unknown.read_text(), "user-owned\n")
@@ -395,10 +422,24 @@ class ProtocolTest(unittest.TestCase):
         self.assertNotEqual(self.sync("--check").returncode, 0)
         self.assertEqual((outside_dir / "README.md").read_text(), "keep directory contents\n")
         nested.unlink()
+        hosts = self.repo / "codex/.agents/skills/ddl-protocol/hosts"
+        shutil.rmtree(hosts)
+        hosts.symlink_to(outside_dir, target_is_directory=True)
+        self.assertNotEqual(self.sync().returncode, 0)
+        self.assertNotEqual(self.sync("--check").returncode, 0)
+        self.assertEqual((outside_dir / "README.md").read_text(), "keep directory contents\n")
+        hosts.unlink()
         (refs / "linked.md").symlink_to(victim)
         result = self.sync()
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("symlink", result.stderr)
+        self.assertEqual(victim.read_text(), "keep\n")
+        (refs / "linked.md").unlink()
+        (refs.parent / "hosts/claude-code").mkdir()
+        (refs.parent / "hosts/claude-code/start.md").symlink_to(victim)
+        result = self.sync()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("symlink in protocol skill tree", result.stderr)
         self.assertEqual(victim.read_text(), "keep\n")
 
     def test_links_accept_local_fragments_and_reject_missing_or_escape(self):
@@ -421,6 +462,17 @@ class ProtocolTest(unittest.TestCase):
         orphan.unlink()
         orphan.symlink_to(self.base / "outside.md")
         self.assertTrue(any("symlink" in x for x in local_link_errors(bundle)))
+        orphan.unlink()
+        intro.write_text("[More](nested/procedure.md)\n")
+        # The walk covers hosts/ too: an implementation nobody links is unreachable, a bad link there is reported.
+        stray = bundle / "hosts/claude-code/start.md"
+        stray.parent.mkdir(parents=True)
+        stray.write_text("# Stray\n")
+        self.assertTrue(any("unreachable Markdown resource" in x and "claude-code" in x for x in local_link_errors(bundle)))
+        (bundle / "hosts/codex/start.md").write_text("# Codex start\n[Entry](../../SKILL.md) [Sibling](../claude-code/start.md)\n")
+        self.assertEqual(local_link_errors(bundle), [])
+        stray.write_text("# Stray\n[Gone](../../missing.md)\n")
+        self.assertTrue(any("missing link target" in x and "claude-code" in x for x in local_link_errors(bundle)))
 
     def test_source_and_generated_skill_links(self):
         for bundle in (ROOT / "claude-code/skills/ddl-protocol", ROOT / "codex/.agents/skills/ddl-protocol"):
@@ -436,7 +488,7 @@ class ProtocolTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         for source, installed in ((ROOT / "claude-code/skills/ddl-protocol", project / ".claude/skills/ddl-protocol"),
                                   (ROOT / "codex/.agents/skills/ddl-protocol", project / ".agents/skills/ddl-protocol")):
-            for file in (source / "references").rglob("*"):
+            for file in source.rglob("*"):
                 if file.is_file():
                     with self.subTest(resource=file.relative_to(source)):
                         self.assertEqual(file.read_bytes(), (installed / file.relative_to(source)).read_bytes())
@@ -471,15 +523,17 @@ class ProtocolTest(unittest.TestCase):
              contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(ddl_setup.cmd_install(args, ddl_setup.Report()), 0)
             for runtime, directory in (("claude", ".claude"), ("codex", ".codex")):
-                installed = home / directory / "skills/ddl-protocol/references"
-                self.assertEqual((installed / "nested/procedure.md").read_text(), "# Part\n[Intro](../intro.md)\n")
-                self.assertEqual((installed / "nested/data.bin").read_bytes(), b"\x00\xff\n")
+                installed = home / directory / "skills/ddl-protocol"
+                self.assertEqual((installed / "references/nested/procedure.md").read_text(), "# Part\n[Intro](../intro.md)\n")
+                self.assertEqual((installed / "references/nested/data.bin").read_bytes(), b"\x00\xff\n")
+                self.assertEqual((installed / "hosts/codex/start.md").read_text(), "# Codex start\n[Entry](../../SKILL.md)\n")
             args.project = str(project)
             self.assertEqual(ddl_setup.cmd_install(args, ddl_setup.Report()), 0)
             self.assertEqual(ddl_setup.cmd_install(args, ddl_setup.Report()), 0)
             for bundle in (project / ".claude/skills/ddl-protocol", project / ".agents/skills/ddl-protocol"):
                 self.assertEqual((bundle / "references/nested/procedure.md").read_text(), "# Part\n[Intro](../intro.md)\n")
                 self.assertEqual((bundle / "references/nested/data.bin").read_bytes(), b"\x00\xff\n")
+                self.assertEqual((bundle / "hosts/codex/start.md").read_text(), "# Codex start\n[Entry](../../SKILL.md)\n")
             self.assertFalse((project / ".claude/README.md").exists())
             self.assertFalse((project / ".claude/skills/draft/README.md").exists())
             self.assertEqual(custom.read_text(), "keep this\n")
@@ -489,18 +543,18 @@ class ProtocolTest(unittest.TestCase):
             self.assertFalse((home / ".codex/skills/ddl-protocol").exists())
 
     def test_command_checks_reject_missing_or_misplaced_structure(self):
-        write_examples(self.repo)
+        write_command_authoring(self.repo)
         write_commands(self.repo)
-        examples = self.repo / "claude-code/skills/ddl-protocol" / check_ddl.EXAMPLES
+        authoring = self.repo / "claude-code/skills/ddl-protocol/command-authoring.md"
         changed = self.repo / "claude-code/skills/draft/SKILL.md"
         guide = self.repo / "claude-code/CLAUDE.md"
         with mock.patch.object(check_ddl, "ROOT", self.repo):
             self.assertEqual(check_ddl.check_commands(), [])
-            write_examples(self.repo, TEMPLATE.replace("1. Read the DDL protocol.\n", ""))
+            write_command_authoring(self.repo, TEMPLATE.replace("1. Read the DDL protocol.\n", ""))
             self.assertTrue(any("authoring template" in e for e in check_ddl.check_commands()))
-            examples.write_text("# Examples\n\n## Command template\n\nNo fence.\n")
+            authoring.write_text("# Authoring\n\n## Example\n\nNo fence.\n")
             self.assertTrue(any("authoring template" in e for e in check_ddl.check_commands()))
-            write_examples(self.repo)
+            write_command_authoring(self.repo)
             row = "| `/draft` | test |\n"
             original = guide.read_text()
             guide.write_text(original.replace(row, row + row))
@@ -544,6 +598,18 @@ class ProtocolTest(unittest.TestCase):
         with mock.patch.object(check_ddl, "ROOT", self.repo):
             self.assert_check(check_ddl.check_protocol(), "P1", "Instruction set")
 
+    def test_p1_rejects_reading_map_row_without_implementation_link(self):
+        entry = write_protocol_fixture(self.repo) / "SKILL.md"
+        self.mutate(entry, implementation_cell("approval"), "later")
+        with mock.patch.object(check_ddl, "ROOT", self.repo):
+            errors = check_ddl.check_protocol()
+            self.assert_check(errors, "P1", "Reading map row 'approval': Implementation cell needs none or a link to a file under hosts/")
+            self.assertEqual(len([e for e in errors if e.startswith("P1:")]), 1, errors)
+        self.mutate(entry, "[Codex](hosts/codex/git-review.md)", "[Codex](hosts/codex/missing.md)")
+        with mock.patch.object(check_ddl, "ROOT", self.repo):
+            self.assert_check(check_ddl.check_protocol(), "P1",
+                              "Reading map row 'git-review': Implementation link target is not a file under hosts/: missing.md")
+
     def test_p11_rejects_detection_lines_without_detect_header(self):
         write_protocol_fixture(self.repo)
         self.mutate(self.repo / "claude-code/skills/draft/SKILL.md", "+++DETECT:\n", "")
@@ -570,56 +636,67 @@ class ProtocolTest(unittest.TestCase):
 
     def test_p4_rejects_undefined_passed_mark_used_by_realize(self):
         bundle = write_protocol_fixture(self.repo)
-        self.mutate(bundle / "references/notebook.md", "- `passed <date>`\n", "")
+        self.mutate(bundle / "notebook.md", "- `passed <date>`\n", "")
         with mock.patch.object(check_ddl, "ROOT", self.repo):
             self.assert_check(check_ddl.check_protocol(), "P4", "/realize writes 'passed <date>'")
 
     def test_p2_rejects_missing_schema_heading(self):
         bundle = write_protocol_fixture(self.repo)
-        self.mutate(bundle / "references/approval.md", "## Formats\n", "")
+        self.mutate(bundle / "approval.md", "## Formats\n", "")
         with mock.patch.object(check_ddl, "ROOT", self.repo):
             self.assert_check(check_ddl.check_protocol(), "P2", "approval.md: H2 headings")
 
     def test_p9_rejects_blank_observed_date(self):
         bundle = write_protocol_fixture(self.repo)
-        self.mutate(bundle / "references/runtimes/claude-approval.md", "| 2026-11-01 |", "|  |")
+        self.mutate(bundle / "hosts/claude-code/approval.md", "| 2026-11-01 |", "|  |")
         with mock.patch.object(check_ddl, "ROOT", self.repo):
-            self.assert_check(check_ddl.check_protocol(), "P9", "claude-approval.md: Observed row 1 needs a YYYY-MM-DD Date")
+            self.assert_check(check_ddl.check_protocol(), "P9", "hosts/claude-code/approval.md: Observed row 1 needs a YYYY-MM-DD Date")
+
+    def test_p10_rejects_tool_name_in_operation(self):
+        bundle = write_protocol_fixture(self.repo)
+        self.mutate(bundle / "approval.md", "**Ask:** one native choice.", "**Ask:** one AskUserQuestion call.")
+        with mock.patch.object(check_ddl, "ROOT", self.repo):
+            errors = check_ddl.check_protocol()
+            self.assert_check(errors, "P10", "approval.md: host tool names belong under hosts/: AskUserQuestion")
+            self.assertFalse([e for e in errors if not e.startswith("P10:")], errors)
 
     def test_p13_rejects_oversized_validate_path(self):
         bundle = write_protocol_fixture(self.repo)
-        approval = bundle / "references/approval.md"
+        approval = bundle / "approval.md"
         # One fenced block (so P14 stays silent) that alone exceeds the validate limit for both hosts.
-        approval.write_text(approval.read_text(encoding="utf-8") + "\n```\n" + "x" * 19_000 + "\n```\n", encoding="utf-8")
+        approval.write_text(approval.read_text(encoding="utf-8") + "\n```\n" + "x" * 20_000 + "\n```\n", encoding="utf-8")
         with mock.patch.object(check_ddl, "ROOT", self.repo):
             errors = check_ddl.check_protocol()
-            self.assert_check(errors, "P13", "claude validate:", "codex validate:", "bytes exceeds 19000",
-                              "SKILL.md + runtimes/claude-start.md + approval.md + runtimes/claude-approval.md")
+            self.assert_check(errors, "P13", "claude-code validate:", "codex validate:", "bytes exceeds 20000",
+                              "SKILL.md + hosts/claude-code/start.md + approval.md + hosts/claude-code/approval.md")
             self.assertFalse([e for e in errors if not e.startswith("P13:")], errors)
 
     def test_p14_rejects_sentence_duplicated_into_second_file(self):
         bundle = write_protocol_fixture(self.repo)
         sentence = "Resolve every link relative to the selected protocol copy before reading anything else."
         for name in ("approval", "close"):
-            self.mutate(bundle / f"references/{name}.md", "## Read when\n\n", f"## Read when\n\n{sentence}\n\n")
+            self.mutate(bundle / f"{name}.md", "## Read when\n\n", f"## Read when\n\n{sentence}\n\n")
         with mock.patch.object(check_ddl, "ROOT", self.repo):
             errors = check_ddl.check_protocol()
             self.assert_check(errors, "P14", "duplicate sentence: approval.md:5 and close.md:5",
                               '"resolve every link relative to the selected protocol copy be"')
             self.assertEqual(len([e for e in errors if e.startswith("P14:")]), 1, errors)
 
-    def test_p15_rejects_examples_without_template_fence(self):
+    def test_p7_rejects_example_without_push(self):
         bundle = write_protocol_fixture(self.repo)
-        examples = bundle / check_ddl.EXAMPLES
-        self.mutate(examples, "````markdown\n" + TEMPLATE + "````", "No fence.")
-        with mock.patch.object(check_ddl, "ROOT", self.repo):
-            self.assert_check(check_ddl.check_protocol(), "P15", "examples.md: Command template needs a fenced block")
-        write_examples(self.repo)
-        self.mutate(examples, '"push"', '"fetch"')
+        self.mutate(bundle / "git-review.md", '"push"', '"fetch"')
         with mock.patch.object(check_ddl, "ROOT", self.repo):
             errors = check_ddl.check_protocol()
-            self.assert_check(errors, "P15", "examples.md: Git review request operations need a git push operation")
-            self.assertEqual(len([e for e in errors if e.startswith("P15:")]), 1, errors)
+            self.assert_check(errors, "P7", "git-review.md: Example operations need a git push operation")
+            self.assertEqual(len([e for e in errors if e.startswith("P7:")]), 1, errors)
+
+    def test_p8_rejects_authoring_without_template_fence(self):
+        bundle = write_protocol_fixture(self.repo)
+        self.mutate(bundle / "command-authoring.md", TEMPLATE_FENCE, "No fence.")
+        with mock.patch.object(check_ddl, "ROOT", self.repo):
+            errors = check_ddl.check_protocol()
+            self.assert_check(errors, "P8", "needs a ````markdown fence under ## Example")
+            self.assert_check(errors, "P2", "command-authoring.md: Example needs a fenced block")
 
 
 if __name__ == "__main__":

@@ -22,14 +22,14 @@ Manifest design philosophy as working code.
 
 A command run from a user-level install follows the project's own copy when one exists (`.claude/skills/<name>/SKILL.md` in Claude Code, `.agents/skills/<name>/SKILL.md` in Codex, or the file the project's instruction file names as the command's source): the project's version is the one that runs.
 
-1. Read the DDL protocol when it is not already in context: the project's copy when present (`.claude/skills/ddl-protocol/SKILL.md` in Claude Code, `.agents/skills/ddl-protocol/SKILL.md` in Codex, or the file the project's instruction file names as the protocol); otherwise the user-level copy (`$HOME/.claude/skills/ddl-protocol/SKILL.md` in Claude Code, `$HOME/.codex/skills/ddl-protocol/SKILL.md` in Codex). Complete its Start procedure before continuing.
-2. Read project-local runtime guidance when it is not already in context (the runtime loads `AGENTS.md` for Codex, and `CLAUDE.md` or `.claude/CLAUDE.md` for Claude Code, at session start), and any applicable command overlay.
+1. Read the DDL protocol when it is not already in context: the project's copy when present (`.claude/skills/ddl-protocol/SKILL.md` in Claude Code, `.agents/skills/ddl-protocol/SKILL.md` in Codex, or the file the project's instruction file names as the protocol); otherwise the user-level copy (`$HOME/.claude/skills/ddl-protocol/SKILL.md` in Claude Code, `$HOME/.codex/skills/ddl-protocol/SKILL.md` in Codex). Follow its Start steps before continuing.
+2. Read the project's guidance file when it is not already in context (the host loads `AGENTS.md` for Codex, and `CLAUDE.md` or `.claude/CLAUDE.md` for Claude Code, at session start), and any applicable command overlay.
 3. Read `design.md` when it is not already in context — extract scopes, principles, validation commands, and the Experience, Binding Decisions, Direction, and Acceptance Gates for the feature (Notebook)
 4. If no `design.md` exists → refuse ("Run `/draft` first")
 
-Read the selected protocol’s Notebook feature for the section rules.
+Read the Notebook operation for the section rules.
 
-When a STOP needs a decision, read the selected protocol’s Approval feature and its current-host choice procedure before presenting the decision. When a SWARM fires, read its Parallel work feature before fan-out.
+When a STOP needs a decision, read the Approval operation and its implementation for the current host before presenting the decision. When a SWARM fires, read the Parallel work operation and its implementation before fan-out.
 
 ### Phase 1: READ
 
@@ -50,7 +50,7 @@ When a STOP needs a decision, read the selected protocol’s Approval feature an
 
 +++STOP: always
 
-Lead with the decision to implement the complete proposed plan, the recommended approach and reason, and what approval authorizes (Approval). Make the files to touch, principles applied, how each Binding Decision is honored, the Direction stage to start from and any planned deviation, and the gates to pass available as review detail before approval. For each `Unbound:` line marked delegated, state the choice and its reason. Group lines awaiting choice into compatible complete plan options, or leave the unresolved portion pending; do not start a serial approval sequence. An argument that names a technology different from a Binding Decision on the same topic is shown as a separately identified Binding Decision change with the D6 options; approving the plan does not approve that change unless the user explicitly selects an action naming it. Request one batch approval to implement all displayed recommendations, select or revise the plan, or hold. After approval, do not ask again per file, task, or resolved choice; later STOPs still apply. Wait for actual approval before entering Phase 2 through the native choice and waiting procedure of Approval; request receipt never authorizes implementation. The plan ends with the Close stage (Close): when Direction lacks one, add it as the final stage, and state the commit and, when the user asked for it, the `remote` push that its Git review will cover.
+Lead with the decision to implement the complete proposed plan, the recommended approach and reason, and what approval authorizes (Approval). Make the files to touch, principles applied, how each Binding Decision is honored, the Direction stage to start from and any planned deviation, and the gates to pass available as review detail before approval. For each `Unbound:` line marked delegated, state the choice and its reason. Group lines awaiting choice into compatible complete plan options, or leave the unresolved portion pending; do not start a serial approval sequence. An argument that names a technology different from a Binding Decision on the same topic is shown as a separately identified Binding Decision change with the D6 options; approving the plan does not approve that change unless the user explicitly selects an action naming it. Request one batch approval to implement all displayed recommendations, select or revise the plan, or hold. After approval, do not ask again per file, task, or resolved choice; later STOPs still apply. Wait for actual approval before entering Phase 2 through Approval Operation steps 2 and 3 (Ask; Wait and resume); request receipt never authorizes implementation. The plan ends with the Close stage (Close): when Direction lacks one, add it as the final stage, and state the commit and, when the user asked for it, the `remote` push that its Git review will cover.
 
 ### Phase 2: IMPLEMENT
 
@@ -106,7 +106,7 @@ After a stage, run that stage's mechanical gate and the validation commands of t
 
 ### Phase 4: CLOSE
 
-On entry, read Close in the selected protocol.
+On entry, read the Close operation.
 
 Enter this phase only when the approved plan includes the Close stage (approved at the Phase 1 STOP) and every earlier stage's gates are marked passed; a D1, D6, or D7 STOP on the way returns to the phase whose decision is pending. Run the Close stage as Close defines, in order:
 
@@ -114,9 +114,9 @@ Enter this phase only when the approved plan includes the Close stage (approved 
 2. Docs: audit and fix the documentation the change set touches
 3. Resonate: align every changed document with its language counterpart, including dated Changelog rows where the project keeps them
 4. Validate: run all validation commands in `design.md` and the mechanical gates in Acceptance Gates again; D7 stops as in Phase 3
-5. Read Git review in the selected protocol, stage the whole change set (implementation, design.md, documents), then prepare the Git review for the commit and for the push when the plan names `remote`; a commit precedes its push in the review
+5. Read the Git review operation and its implementation for the current host, stage the whole change set (implementation, design.md, documents), then prepare the Git review for the commit and for the push when the plan names `remote`; a commit precedes its push in the review
 
-Apply steps 1–3 with the Phase 2 SWARM when 2+ scopes change; the lead performs the comparison, the validation, and the review preparation.
+Apply steps 1–3 with a SWARM shaped like Phase 2's, team `realize-close`, when 2+ scopes change; the lead performs the comparison, the validation, and the review preparation.
 
 ### Phase 5: REVIEW
 
@@ -144,7 +144,7 @@ Choices: use the prepared native question and its exact action labels for one wh
 +++STOP: on D8
 +++STOP: on D9
 
-4. Create the reviewed commit with the approved verbatim message in the supported ordinary form (runtime guidance), then push only the reviewed operation when the plan named `remote`
+4. Create the reviewed commit with the approved verbatim message in the supported ordinary form (Git review Operands), then push only the reviewed operation when the plan named `remote`
 5. Report the commit hash and the push result as progress
 
 ### Phase 7: REPORT
