@@ -357,8 +357,8 @@ def configured_hook_outputs(settings, event, payload, env, cwd):
     return outputs
 
 
-def doctor_push_hooks(key, base, settings, report):
-    """Probe the installed command in a disposable home/state; all push text stays in JSON."""
+def doctor_git_hooks(key, base, settings, report):
+    """Probe unapproved commit/push rejection through installed hooks; execute no payload command."""
     with tempfile.TemporaryDirectory(prefix="ddl-doctor-hooks-") as tmp:
         isolated = pathlib.Path(tmp)
         gate = isolated / RUNTIMES[key]["home"] / "hooks/ddl_gate.py"
@@ -375,21 +375,25 @@ def doctor_push_hooks(key, base, settings, report):
                        {"type": "response_item", "payload": {"type": "message", "role": "user",
                          "content": [{"type": "input_text", "text": "Continue."}]}}]
         transcript.write_text("".join(json.dumps(record) + "\n" for record in records))
-        probes = [("git push", str(transcript), False)]
+        probes = [("git commit --cleanup=verbatim -m doctor", str(transcript), "default"),
+                  ("git push origin main", str(transcript), "default"),
+                  ("git push origin main", None, "default"),
+                  ("git push origin main", str(transcript), "bypassPermissions")]
         if key == "codex":
-            probes += [("git -C /tmp push", str(transcript), True), ("git -C /tmp push", None, True)]
-        for index, (command, record, deny) in enumerate(probes):
+            probes += [("git -C /tmp push", str(transcript), "default"), ("git -C /tmp push", None, "default")]
+        for index, (command, record, mode) in enumerate(probes):
             payload = {"session_id": f"doctor-{index}", "turn_id": "doctor", "transcript_path": record,
-                       "cwd": str(isolated), "hook_event_name": "PreToolUse", "permission_mode": "default",
+                       "cwd": str(isolated), "hook_event_name": "PreToolUse", "permission_mode": mode,
                        "tool_name": "Bash", "tool_input": {"command": command}}
             name = (f"{RUNTIMES[key]['label']} installed PreToolUse: {command} "
-                    f"({'OPEN' if record else 'null'} transcript)")
+                    f"({'OPEN' if record else 'null'} transcript, {mode})")
             try:
                 outputs = configured_hook_outputs(settings, "PreToolUse", payload, env, isolated)
                 decisions = [specific.get("permissionDecision") if isinstance(specific, dict) else None
                              for specific in (out.get("hookSpecificOutput") for out in outputs)]
-                valid = decisions == ["deny"] if deny else not outputs
-                outcome = "deny (independent push guard)" if deny else "continue (no explicit allow)"
+                valid = decisions == ["deny"] and all("DDL Git review:" in out.get("hookSpecificOutput", {}).get(
+                    "permissionDecisionReason", "") for out in outputs)
+                outcome = "deny (independent Git review)"
                 (report.good if valid else report.fail)(f"{name} -> {outcome if valid else repr(outputs)}")
             except (OSError, ValueError, TypeError, re.error, subprocess.TimeoutExpired) as exc:
                 report.fail(f"{name} -> {exc}")
@@ -451,7 +455,7 @@ def cmd_doctor(args, report):
             report.fail(f"{pretty(settings_path)}: {m} missing (run install)")
         for d in differing:
             report.info(f"{pretty(settings_path)}: {d} has another value (kept; DDL's is not applied)")
-        doctor_push_hooks(key, base, settings, report)
+        doctor_git_hooks(key, base, settings, report)
         if key == "codex":
             rules = base / "rules/ddl.rules"
             doctor_codex_rules(rules, report)

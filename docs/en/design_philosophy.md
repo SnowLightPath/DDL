@@ -171,9 +171,13 @@ DDL uses temporary notes to help Human and LLM share purposes and designs across
 
 Ultimately, code becomes the source of truth. Delete DDL documents when no longer needed.
 
+Before recording or sending changes with Git, the agent shows the final diff, exact message, and destination. One submitted native choice covers the compatible ready set. The hook checks ordinary commit/push calls against that review even when STOP is open; an earlier implementation approval or a normal reply is insufficient. Changed contents require a new review. This guard covers calls reaching the hook, with the runtime limits documented separately.
+
 **Tool-Assisted Option:** [Claude Code](../../claude-code/) (`/draft`, `/realize`, `/reflect` + support commands) | [OpenAI Codex](../../codex/) (`$draft`, `$realize`, `$reflect` + support skills)
 
 ## Changelog
+
+- **2026-11-01:** Require a content-bound native Git review for ordinary commits and pushes, while keeping ready operations in one approval.
 
 - **2026-11-01:** Documentation audit: qualify adapter enforcement, clarify approval scope and Binding Decision wording, and align emphasis across languages.
 - **2026-11-01:** **Batch approval correction.** Review compatible numbered recommendations together through one approve-all, subset/revise, or hold interaction. Approval covers only the displayed current batch and stated resolutions, without per-item pauses or waivers of future gates. Group independent clarifications where possible.

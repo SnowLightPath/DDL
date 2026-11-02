@@ -150,7 +150,7 @@ class SetupTest(unittest.TestCase):
         self.assertRegex(out, r"\d+ OK, 0 not OK")
         self.assertIn("codex native execpolicy check: git push -> prompt", out)
         self.assertIn("codex native execpolicy check: git -C /tmp push -> no matching rule", out)
-        self.assertEqual(out.count("deny (independent push guard)"), 2)
+        self.assertEqual(out.count("deny (independent Git review)"), 10)
         checks = [json.loads(line) for line in self.policy_log.read_text().splitlines()]
         self.assertEqual([args[4:] for args in checks], [["git", "push"], ["git", "-C", "/tmp", "push"]])
         self.cli("uninstall", "--claude", "--codex")
@@ -247,7 +247,7 @@ class SetupTest(unittest.TestCase):
         self.env["DDL_TEST_POLICY_DECISION"] = "allow"
         out = self.cli("doctor", "--codex", expected=1)
         self.assertIn("git push -> allow (expected prompt)", out)
-        self.assertEqual(out.count("deny (independent push guard)"), 2)
+        self.assertEqual(out.count("deny (independent Git review)"), 6)
         self.assertIn("1 not OK", out)
 
     def test_doctor_rejects_missing_independent_guard_and_explicit_allow(self):
@@ -257,13 +257,13 @@ class SetupTest(unittest.TestCase):
         gate.parent.mkdir(parents=True)
         settings = {"hooks": {"PreToolUse": [{"matcher": ".*", "hooks": [{
             "type": "command", "command": 'python3 "$HOME/.codex/hooks/ddl_gate.py"'}]}]}}
-        for body, ok, bad in [("", 1, 2),
-                              ('print(\'{"hookSpecificOutput":{"permissionDecision":"allow"}}\')\n', 0, 3)]:
+        for body, ok, bad in [("", 0, 6),
+                              ('print(\'{"hookSpecificOutput":{"permissionDecision":"allow"}}\')\n', 0, 6)]:
             with self.subTest(body=body):
                 gate.write_text(body)
                 report = ddl_setup.Report()
                 with contextlib.redirect_stdout(io.StringIO()):
-                    ddl_setup.doctor_push_hooks("codex", base, settings, report)
+                    ddl_setup.doctor_git_hooks("codex", base, settings, report)
                 self.assertEqual((report.ok, report.bad), (ok, bad))
 
     def test_dry_run_creates_no_runtime_files(self):

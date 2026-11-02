@@ -45,7 +45,7 @@ Open your project in the **Codex GUI** or Claude Code and describe the experienc
 | Review code quality | `/refactoring` | `$refactoring` |
 | Commit verified changes | `/commit` | `$commit` |
 
-`/commit remote` and `$commit remote` also propose a push. Approval names the files, message, and any remote action it covers.
+`/commit remote` and `$commit remote` also propose a push. Approval names the files, message, and any remote action it covers. The final diff, exact message, and destination form one clickable Git review. Ordinary commit/push calls without that matching review are refused by the hook, even after another approval has opened STOP. If implementation had not yet produced the final diff, this adds one review at the point the contents are ready.
 
 ## Review the recommendations together
 

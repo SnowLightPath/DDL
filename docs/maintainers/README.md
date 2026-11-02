@@ -59,15 +59,25 @@ The native question is the final interaction while waiting at that STOP. A synch
 
 The catch-all matchers inspect tool calls dispatched through the runtime's hooks. While a report awaits human input, the gate permits exact known read tools, human-question tools, input-free polling where supported, and bounded literal shell reads. Unknown tools, worker follow-ups, general scripts, and unsupported shell forms are denied on covered paths. Use display forms such as `cat`, `head`, `tail`, `rg`, or `sed -n '1,10p' file` to clarify a report.
 
-This is a static guardrail, not complete STOP enforcement or a sandbox for ambient executable and configuration behavior. Runtime paths outside the hooks, asynchronous transcript timing, and unexpected errors limit enforcement. Internal errors fail open with a warning. The protocol's waiting rule still applies, and the agent judges whether a submitted answer approves the current report and scope.
+This is a static guardrail, not complete STOP enforcement or a sandbox for ambient executable and configuration behavior. Runtime paths outside the hooks, asynchronous transcript timing, and unexpected errors limit enforcement. General STOP errors fail open with a warning. The protocol's waiting rule still applies, and the agent judges whether a submitted answer approves the current report and scope. Ordinary commits and pushes also have the independent content review below.
 
 Question invocation or receipt alone does not clear pending state. Compaction summaries, worker notifications, and messages from other agents do not approve work. Protocol §1.5 defines report reconstruction, actual input boundaries, advance approval, and the work that remains prohibited while waiting.
+
+### Git content review
+
+The gate's `prepare-git-review` command snapshots the staged contents, exact message, and requested push targets. It returns complete review detail and a runtime-specific `nativeRequest`; pass that request unchanged to the supported question tool. The report must name its generated review ID. Preparation data contains no approval flag. Before recognized ordinary commit/push calls, the hook checks the actual native request/result association and compares the live Git state with that prepared set, even while STOP is OPEN and under `never`. Hold, revision, timeout, receipts, unrelated answers, changed content, missing proof, and resumed preparations do not authorize those calls. A ready commit and its exact dependent push can share one answer.
+
+This changes the default workflow: stage the proposed set for review, preserve unrelated user changes, then keep that index intact after approval. Supported ordinary forms use `git commit --cleanup=verbatim -m ...` or `-F ...` on a named branch, and one configured push remote with one branch/refspec. Follow-tags and recursive submodule pushes must be explicitly suppressed when configuration would otherwise expand the destination set. Unsupported options and operations stop with the reason; they are not silently removed. Review directories are private and remote credentials are omitted from the saved report and metadata.
+
+Unprovable recognized reviews deny inside a running handler. The handler has a shorter Git-verification budget than the adapter timeout, but a runtime-level hook failure or timeout may still fail open. Arbitrary program internals, aliases, existing-process input, Git hooks that rewrite a commit, and concurrent changes between inspection and execution are outside a universal guarantee. The guard is not a tamper-proof authorization service for a hostile process that can edit its own transcript and state.
+
+Regression tests use native-shaped reply fixtures, real disposable Git repositories and local bare remotes, and the installed adapter commands. These are simulated dispatch tests, not new live choice-submission tests in both apps. A separate live Codex desktop observation confirmed that the existing hook transport denies a call while a diagnostic pending marker exists and permits it after cleanup; it does not by itself prove the new content-review feature was deployed or exercised live.
 
 ### Push confirmation
 
 The Codex native rule requests confirmation for literal `git push ...`. A separate hook guard rejects recognized static forms that miss that rule, such as Git global options or explicit wrappers. Use a separate canonical invocation with the tool's working directory set to the intended repository only when it preserves the original meaning; otherwise explain the limitation. The guard never rewrites commands or grants permission. Absolute host Git paths keep native executable resolution; arbitrary scripts, aliases, and dynamically built pushes remain outside this form check.
 
-Explicit `bypassPermissions` and documented `dontAsk` modes waive only the push-form guard, not STOP. Sessions whose approval policy never prompts show no execution-time confirmation; the report's approval still applies. Claude Code retains its native push permission rule and disables attribution through settings; Codex adds no attribution.
+Explicit `bypassPermissions` and documented `dontAsk` modes waive only the push-form guard, not STOP or the Git content review. Sessions whose approval policy never prompts show no execution-time confirmation; the content review still applies. Claude Code retains its native push permission rule and disables attribution through settings; Codex adds no attribution.
 
 ### Native question observations
 

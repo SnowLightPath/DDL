@@ -47,6 +47,12 @@ Review the draft before saving it. Use `$realize` when you are ready to review a
 
 `draft` and `realize` accept a feature; `reflect`, `resonate`, `docs`, and `refactoring` accept a path; `validate` accepts a scope. `ddl-protocol` may appear in the skill list; the command skills read it, and you do not invoke it yourself.
 
+## Before recording or sending changes
+
+The agent shows the final staged diff, exact commit message, and any requested push destination in one Git review. Approve the ready set once through the native choices. A ready commit and its push share that approval; files and languages do not get separate questions.
+
+The hook independently checks the actual contents and submitted choice before ordinary `git commit` and `git push` calls. A general reply or an earlier implementation approval supplies no Git permission. Changed contents, message, destination, or an unprovable answer stop the operation. Git reads remain available. A native permission policy that shows no command prompt does not skip this content check.
+
 ## Decision points
 
 At a required STOP, the report gives one overall recommendation and a visible numbered set of compatible actions with stable IDs. Material impacts, risks, and unknowns stay visible; detailed evidence is available separately. The whole displayed ready set is one review, even when it contains several proposals.
@@ -59,7 +65,7 @@ Subset editing starts only when requested and uses the host's actual native capa
 
 On 2026-11-01, the Codex desktop host used for verification accepted actual click responses after final messages. This is a result for that host, not a guarantee about every Codex surface.
 
-The tested **Codex CLI 0.166.0 Default** could show a question but could not collect its answer after the response ended. DDL therefore leaves the work unapproved on that route. Other versions may behave differently; support depends on whether the interface can collect the required approval.
+The tested **Codex CLI 0.166.0 Default** could show a question but could not collect its answer after the response ended. DDL therefore leaves the work unapproved on that route, including Git recording and sending: typed approval cannot replace the missing native Git-review answer. Other versions may behave differently; support depends on whether the interface can collect the required approval.
 
 See the [native question observations](../docs/maintainers/README.md#native-question-observations) for request receipts, timeout metadata, and the distinction between tool arguments and app-server schema fields.
 

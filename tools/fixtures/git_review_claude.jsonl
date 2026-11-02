@@ -1,0 +1,3 @@
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"+++DDL_REPORT\nGit review G-@ID@\nReview detail: @REPORT@"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"git-review-call","name":"AskUserQuestion","input":"@REQUEST@"}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"git-review-call","content":"Submitted native answer"}]},"toolUseResult":{"answers":"@ANSWERS@"},"permissionDecision":{"decision":"accept","source":"user_temporary"}}

@@ -1,0 +1,6 @@
+{"type":"event_msg","payload":{"type":"task_started","turn_id":"review-turn"}}
+{"type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"+++DDL_REPORT\nGit review G-@ID@\nReview detail: @REPORT@"}]}}
+{"type":"response_item","payload":{"type":"function_call","name":"request_user_input_async","call_id":"git-review-call","arguments":"@REQUEST_JSON@"}}
+{"type":"event_msg","payload":{"type":"task_complete","turn_id":"review-turn"}}
+{"type":"event_msg","payload":{"type":"task_started","turn_id":"answer-turn"}}
+{"type":"event_msg","payload":{"type":"item_completed","turn_id":"answer-turn","item":{"type":"UserMessage","id":"submitted-answer","content":[{"type":"text","text":"@REPLY@"}]}}}

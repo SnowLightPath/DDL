@@ -13,11 +13,13 @@ import json
 import os
 import pathlib
 import re
+import shlex
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 TOOLS = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(TOOLS))
@@ -453,7 +455,7 @@ class GateTest(unittest.TestCase):
 
     def run_gate(self, event, runtime, data, argv=None):
         stdin = data if isinstance(data, str) else json.dumps(data)
-        env = dict(os.environ, DDL_GATE_STATE_DIR=self.state)
+        env = dict(getattr(self, "git_env", os.environ), DDL_GATE_STATE_DIR=self.state)
         if argv is None:
             argv = [event, "--runtime", runtime]
         proc = subprocess.run([sys.executable, "-I", GATE] + argv, input=stdin, capture_output=True, text=True, env=env)
@@ -590,16 +592,16 @@ class CodexPreToolUseTest(GateTest):
 class PushConfirmationTest(GateTest):
     """The gate never executes these commands or supplies a native approval."""
 
-    def test_canonical_push_preserves_native_confirmation(self):
+    def test_canonical_push_needs_review_even_without_pending_stop(self):
         for transcript in (fixture("codex_open.jsonl"), None):
             for command in ("git push origin main", "/usr/bin/git push origin main"):
                 with self.subTest(transcript=transcript, command=command):
                     data = payload("codex", transcript=transcript, tool_name="exec_command",
                                    tool_input={"cmd": command})
                     proc = self.run_gate("pre-tool-use", "codex", data)
-                    if proc.stdout:
-                        self.assertNotIn("permissionDecision", proc.stdout)
-                        self.assertIn("systemMessage", json.loads(proc.stdout))
+                    out = json.loads(proc.stdout)["hookSpecificOutput"]
+                    self.assertEqual(out["permissionDecision"], "deny")
+                    self.assertIn("DDL Git review", out["permissionDecisionReason"])
 
     def test_noncanonical_direct_push_is_denied_even_without_pending_stop(self):
         commands = [
@@ -648,7 +650,11 @@ class PushConfirmationTest(GateTest):
             with self.subTest(command=command):
                 data = payload("codex", transcript=fixture("codex_open.jsonl"), tool_name="Bash",
                                tool_input={"command": command})
-                self.assert_allowed(self.run_gate("pre-tool-use", "codex", data))
+                proc = self.run_gate("pre-tool-use", "codex", data)
+                if ddl_gate.visible_git_write(command):
+                    self.assertEqual(json.loads(proc.stdout)["hookSpecificOutput"]["permissionDecision"], "deny")
+                else:
+                    self.assert_allowed(proc)
 
     def test_mode_exception_does_not_skip_stop(self):
         command = "git -C /repo push origin main"
@@ -656,7 +662,7 @@ class PushConfirmationTest(GateTest):
             with self.subTest(mode=mode):
                 data = payload("codex", transcript=fixture("codex_open.jsonl"), permission_mode=mode,
                                tool_name="exec_command", tool_input={"cmd": command})
-                self.assert_allowed(self.run_gate("pre-tool-use", "codex", data))
+                self.assertIn("DDL Git review", self.run_gate("pre-tool-use", "codex", data).stdout)
                 data["transcript_path"] = fixture("codex_closed_in_turn.jsonl")
                 self.assert_denied(self.run_gate("pre-tool-use", "codex", data), command)
 
@@ -991,6 +997,406 @@ class SessionStartTest(GateTest):
         root, cwd = self.project(design=True, sub="inner")
         (root / "inner" / ".git").mkdir()  # a nested repository root hides the outer design.md
         self.assert_allowed(self.run_gate("session-start", "codex", payload("codex", "session-start", None, cwd=cwd, source="startup")))
+
+
+class GitReviewTest(GateTest):
+    """Real disposable Git repositories; native-shaped fixtures authorize no real user repository."""
+
+    def setUp(self):
+        super().setUp()
+        self.git_env = dict(os.environ, GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
+        self.repo = pathlib.Path(self.tmp) / "review repo"
+        self.repo.mkdir()
+        self.git("init", "-q", "-b", "main")
+        self.git("config", "user.email", "fixture@example.invalid")
+        self.git("config", "user.name", "DDL fixture")
+        self.git("config", "commit.gpgSign", "false")
+        self.file = self.repo / "sample.txt"
+        self.file.write_text("base\n")
+        self.git("add", "sample.txt")
+        self.git("commit", "-q", "--cleanup=verbatim", "-m", "base")
+        self.stage("reviewed\n")
+        self.message = pathlib.Path(self.tmp) / "message.txt"
+        self.message.write_text("Record reviewed contents\n\nPreserve the exact message.\n")
+        self.command = "git commit --cleanup=verbatim -F " + shlex.quote(str(self.message))
+        self.remote = pathlib.Path(self.tmp) / "remote.git"
+        subprocess.run(["git", "init", "--bare", "-q", str(self.remote)], check=True, capture_output=True, env=self.git_env)
+        self.git("remote", "add", "origin", str(self.remote))
+        self.transcript = pathlib.Path(self.tmp) / "native.jsonl"
+
+    def git(self, *args):
+        proc = subprocess.run(["git", "-C", str(self.repo), *args], capture_output=True, text=True, env=self.git_env)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return proc.stdout.strip()
+
+    def stage(self, text):
+        self.file.write_text(text)
+        self.git("add", "sample.txt")
+
+    def prepare(self, runtime, commands=None):
+        operations = [{"cwd": str(self.repo), "command": command} for command in (commands or [self.command])]
+        proc = self.run_gate("prepare-git-review", runtime, {"language": "ja", "operations": operations})
+        return json.loads(proc.stdout)
+
+    def record(self, runtime, review, choice=0, mutate=None):
+        q = review["question"]
+        answer = q["options"][choice]
+        request = review["nativeRequest"]
+        reply = [{"questionItemId": json.dumps(["request_user_input_async", "git-review-call", 0]),
+                  "question": q["title"], "answer": answer}]
+        replacements = {"@ID@": review["reviewId"][2:], "@REPORT@": review["report"],
+                        "@REQUEST@": request, "@REQUEST_JSON@": json.dumps(request),
+                        "@ANSWERS@": {q["title"]: answer},
+                        "@REPLY@": "<send_user_message_question_reply>\n" + json.dumps(reply) +
+                                   "\n</send_user_message_question_reply>"}
+        def render(value):
+            if isinstance(value, str):
+                if value in replacements:
+                    return replacements[value]
+                for key in ("@ID@", "@REPORT@"):
+                    value = value.replace(key, replacements[key])
+                return value
+            if isinstance(value, list):
+                return [render(v) for v in value]
+            if isinstance(value, dict):
+                return {k: render(v) for k, v in value.items()}
+            return value
+        rows = [render(json.loads(line)) for line in pathlib.Path(fixture("git_review_" + runtime + ".jsonl")).read_text().splitlines()]
+        if mutate:
+            mutate(rows)
+        self.transcript.write_text("".join(json.dumps(row) + "\n" for row in rows))
+        return rows
+
+    def check(self, runtime, command=None, transcript=True, **extra):
+        data = payload(runtime, cwd=str(self.repo), transcript=str(self.transcript) if transcript else None,
+                       tool_name="Bash", tool_input={"command": command or self.command}, **extra)
+        return self.run_gate("pre-tool-use", runtime, data)
+
+    def blocked(self, proc):
+        out = json.loads(proc.stdout)["hookSpecificOutput"]
+        self.assertEqual(out["permissionDecision"], "deny")
+        return out["permissionDecisionReason"]
+
+    def test_missing_review_is_denied_in_both_runtimes_and_all_permission_modes(self):
+        for runtime in ("claude", "codex"):
+            for mode in ("default", "bypassPermissions", "dontAsk", "never"):
+                for command in (self.command, "git push origin main"):
+                    with self.subTest(runtime=runtime, mode=mode, command=command):
+                        self.assertIn("DDL Git review", self.blocked(self.check(runtime, command, False, permission_mode=mode)))
+
+    def test_matching_native_choice_passes_without_granting_host_permission(self):
+        for runtime in ("claude", "codex"):
+            review = self.prepare(runtime)
+            self.record(runtime, review)
+            self.assert_allowed(self.check(runtime, permission_mode="bypassPermissions"))
+
+    def test_hold_revision_and_normal_text_cannot_authorize_git(self):
+        for runtime in ("claude", "codex"):
+            review = self.prepare(runtime)
+            for choice in (1, 2):
+                self.record(runtime, review, choice)
+                self.blocked(self.check(runtime))
+            self.record(runtime, review)
+            if runtime == "claude":
+                row = user("OK", origin={"kind": "human"})
+            else:
+                row = {"type": "event_msg", "payload": {"type": "item_completed", "item": {
+                    "type": "UserMessage", "content": [{"type": "text", "text": "OK"}]}}}
+            with self.transcript.open("a") as f:
+                f.write(json.dumps(row) + "\n")
+            self.blocked(self.check(runtime))
+
+    def test_receipt_missing_request_and_wrong_report_cannot_authorize_git(self):
+        for runtime in ("claude", "codex"):
+            review = self.prepare(runtime)
+            def omit_detail(rows):
+                entry = rows[0] if runtime == "claude" else rows[1]["payload"]
+                message = entry["message"] if runtime == "claude" else entry
+                message["content"][0]["text"] = "+++DDL_REPORT\nGit review " + review["reviewId"]
+            for change in (lambda rows: rows.pop(), lambda rows: rows.pop(1 if runtime == "claude" else 2),
+                           lambda rows: rows.pop(0 if runtime == "claude" else 1), omit_detail):
+                self.record(runtime, review, mutate=change)
+                self.blocked(self.check(runtime))
+
+    def test_wrong_native_request_id_or_question_is_denied(self):
+        for runtime in ("claude", "codex"):
+            review = self.prepare(runtime)
+            rows = self.record(runtime, review)
+            if runtime == "claude":
+                rows[-1]["message"]["content"][0]["tool_use_id"] = "another-call"
+            else:
+                rows[2]["payload"]["call_id"] = "another-call"
+            self.transcript.write_text("".join(json.dumps(row) + "\n" for row in rows))
+            self.blocked(self.check(runtime))
+
+    def test_claude_auto_timeout_and_nonhuman_permission_are_denied(self):
+        review = self.prepare("claude")
+        for auto in (True, False):
+            rows = self.record("claude", review)
+            if auto:
+                rows[-1]["toolUseResult"]["afkTimeoutMs"] = 60000
+            else:
+                rows[-1]["permissionDecision"]["source"] = "config"
+            self.transcript.write_text("".join(json.dumps(row) + "\n" for row in rows))
+            self.blocked(self.check("claude"))
+
+    def test_codex_timeout_metadata_and_changed_question_are_unprovable(self):
+        review = self.prepare("codex")
+        rows = self.record("codex", review)
+        text = rows[-1]["payload"]["item"]["content"][0]
+        reply = json.loads(text["text"].split("\n")[1]);reply[0]["timedOut"] = True
+        text["text"] = "<send_user_message_question_reply>\n" + json.dumps(reply) + "\n</send_user_message_question_reply>"
+        self.transcript.write_text("".join(json.dumps(row) + "\n" for row in rows))
+        self.blocked(self.check("codex"))
+        rows = self.record("codex", review)
+        request = json.loads(rows[2]["payload"]["arguments"])
+        request["questions"][0]["options"][1] = "Different consequence"
+        rows[2]["payload"]["arguments"] = json.dumps(request)
+        self.transcript.write_text("".join(json.dumps(row) + "\n" for row in rows))
+        self.blocked(self.check("codex"))
+
+    def test_staged_contents_message_and_branch_changes_are_denied(self):
+        for runtime in ("claude", "codex"):
+            review = self.prepare(runtime)
+            self.record(runtime, review)
+            self.stage("changed after review\n")
+            self.blocked(self.check(runtime))
+            self.stage("reviewed\n")
+            original = self.message.read_text()
+            self.message.write_text("Unreviewed message\n")
+            self.blocked(self.check(runtime))
+            self.message.write_text(original)
+            self.git("checkout", "-q", "-b", "other-" + runtime)
+            self.blocked(self.check(runtime))
+            self.git("checkout", "-q", "main")
+            self.assert_allowed(self.check(runtime))
+
+    def test_review_file_diff_and_report_tampering_are_denied(self):
+        for runtime in ("claude", "codex"):
+            for name in ("review.json", "1.patch", "report.md"):
+                review = self.prepare(runtime)
+                self.record(runtime, review)
+                path = pathlib.Path(review["report"]).parent / name
+                if name == "review.json":
+                    data = json.loads(path.read_text());data["operations"][0]["message"] = "forged\n"
+                    path.write_text(json.dumps(data))
+                else:
+                    path.write_text("changed review")
+                self.blocked(self.check(runtime))
+
+    def test_resume_compact_and_clear_invalidate_previous_review(self):
+        for runtime in ("claude", "codex"):
+            for source in ("resume", "compact", "fork", "clear"):
+                review = self.prepare(runtime)
+                self.record(runtime, review)
+                self.assert_allowed(self.check(runtime))
+                self.run_gate("session-start", runtime, payload(runtime, "session-start", str(self.transcript),
+                              cwd=str(self.repo), source=source))
+                self.blocked(self.check(runtime))
+
+    def test_push_destination_url_and_source_changes_are_denied(self):
+        for runtime in ("claude", "codex"):
+            review = self.prepare(runtime, ["git push origin main"])
+            self.record(runtime, review)
+            self.assert_allowed(self.check(runtime, "git push origin main"))
+            self.blocked(self.check(runtime, "git push origin main:refs/heads/other"))
+            self.git("remote", "set-url", "origin", str(self.remote) + "-other")
+            self.blocked(self.check(runtime, "git push origin main"))
+            self.git("remote", "set-url", "origin", str(self.remote))
+
+    def test_one_native_answer_covers_commit_and_its_exact_push(self):
+        for runtime in ("claude", "codex"):
+            self.stage("reviewed " + runtime + "\n")
+            review = self.prepare(runtime, [self.command, "git push origin main"])
+            self.record(runtime, review)
+            self.assert_allowed(self.check(runtime))
+            self.blocked(self.check(runtime, "git push origin main"))  # the planned commit does not exist yet
+            self.git("commit", "--cleanup=verbatim", "-F", str(self.message))
+            self.blocked(self.check(runtime))  # an approval cannot create a second, different commit
+            self.assert_allowed(self.check(runtime, "git push origin main"))
+            self.git("push", "origin", "main")
+            self.assert_allowed(self.check(runtime, "git push origin main"))  # an idempotent retry sends no new content
+
+    def test_push_rejects_commit_created_with_different_message_or_tree(self):
+        review = self.prepare("codex", [self.command, "git push origin main"])
+        self.record("codex", review)
+        self.git("commit", "--cleanup=verbatim", "-m", "different")
+        self.blocked(self.check("codex", "git push origin main"))
+
+    def test_push_rejects_unreviewed_tree_even_with_the_approved_message(self):
+        review = self.prepare("codex", [self.command, "git push origin main"])
+        self.record("codex", review)
+        self.stage("unreviewed tree\n")
+        self.git("commit", "--cleanup=verbatim", "-F", str(self.message))
+        self.blocked(self.check("codex", "git push origin main"))
+
+    def test_crlf_message_bytes_are_preserved_for_the_dependent_push(self):
+        self.message.write_bytes(b"Reviewed message\r\n\r\nKeep CRLF.\r\n")
+        review = self.prepare("codex", [self.command, "git push origin main"])
+        self.record("codex", review)
+        self.assert_allowed(self.check("codex"))
+        self.git("commit", "--cleanup=verbatim", "-F", str(self.message))
+        self.assert_allowed(self.check("codex", "git push origin main"))
+        self.stage("another reviewed snapshot\n")
+        args = ["commit", "--cleanup=verbatim", "-m", "first paragraph\n", "-m", "second paragraph"]
+        command = shlex.join(["git", *args])
+        review = self.prepare("codex", [command, "git push origin main"])
+        self.record("codex", review)
+        self.assert_allowed(self.check("codex", command))
+        self.git(*args)
+        self.assert_allowed(self.check("codex", "git push origin main"))
+
+    def test_compatible_repositories_share_one_native_answer(self):
+        other = pathlib.Path(self.tmp) / "another repo";other.mkdir()
+        for args in (["init", "-q", "-b", "main"], ["add", "other.txt"]):
+            (other / "other.txt").write_text("second repository\n")
+            proc = subprocess.run(["git", "-C", str(other), *args], capture_output=True, env=self.git_env)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+        data = {"operations": [{"cwd": str(self.repo), "command": self.command},
+                               {"cwd": str(other), "command": self.command}]}
+        review = json.loads(self.run_gate("prepare-git-review", "codex", data).stdout)
+        self.record("codex", review)
+        self.assert_allowed(self.check("codex"))
+        call = payload("codex", cwd=str(other), transcript=str(self.transcript), tool_name="Bash",
+                       tool_input={"command": self.command})
+        self.assert_allowed(self.run_gate("pre-tool-use", "codex", call))
+
+    def test_internal_git_timeout_denies_instead_of_using_general_fail_open(self):
+        data = payload("codex", cwd=str(self.repo), tool_name="Bash", tool_input={"command": self.command})
+        with mock.patch.object(ddl_gate, "approved_git_review", side_effect=TimeoutError("probe timeout")):
+            result = ddl_gate.git_review_guard("codex", data)
+        self.assertEqual(result["hookSpecificOutput"]["permissionDecision"], "deny")
+        self.assertIn("probe timeout", result["hookSpecificOutput"]["permissionDecisionReason"])
+
+    def test_intent_to_add_is_not_misrepresented_as_committed_content(self):
+        (self.repo / "intent.txt").write_text("not fully staged\n")
+        self.git("add", "-N", "intent.txt")
+        proc = subprocess.run([sys.executable, "-I", GATE, "prepare-git-review", "--runtime", "codex"],
+                              input=json.dumps({"operations": [{"cwd": str(self.repo), "command": self.command}]}),
+                              capture_output=True, text=True, env=dict(self.git_env, DDL_GATE_STATE_DIR=self.state))
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("intent-to-add", proc.stderr)
+
+    def test_literal_examples_and_program_source_are_data_not_git_operations(self):
+        for command in ("echo 'git commit -m example'", "printf '%s' '$(git commit -m example)'",
+                        "python3 - <<'PY'\nprint('git commit -m example')\nPY",
+                        "cat <<'EXAMPLE'\ngit commit -m example\nEXAMPLE"):
+            with self.subTest(command=command):
+                self.assertFalse(ddl_gate.visible_git_write(command))
+        self.assertTrue(ddl_gate.visible_git_write("cat <<'EXAMPLE'\ngit commit -m example\nEXAMPLE\ngit push origin main"))
+
+    def test_new_prompt_revokes_old_git_approval_before_transcript_flush(self):
+        for runtime in ("claude", "codex"):
+            review = self.prepare(runtime)
+            self.record(runtime, review)
+            self.assert_allowed(self.check(runtime))
+            self.run_gate("user-prompt-submit", runtime, payload(runtime, "user-prompt-submit", str(self.transcript),
+                          cwd=str(self.repo), prompt="Please revise; do not execute."))
+            self.blocked(self.check(runtime))  # the file still contains the earlier approved answer
+
+    def test_codex_native_submission_does_not_revoke_its_own_preparation(self):
+        review = self.prepare("codex")
+        rows = self.record("codex", review)
+        prompt = rows[-1]["payload"]["item"]["content"][0]["text"]
+        self.transcript.write_text("".join(json.dumps(row) + "\n" for row in rows[:-1]))
+        self.run_gate("user-prompt-submit", "codex", payload("codex", "user-prompt-submit", str(self.transcript),
+                      cwd=str(self.repo), prompt=prompt))
+        self.blocked(self.check("codex"))  # the receipt has not been recorded yet
+        self.transcript.write_text("".join(json.dumps(row) + "\n" for row in rows))
+        self.assert_allowed(self.check("codex"))
+
+    def test_push_cannot_implicitly_send_tags_or_submodules(self):
+        self.git("config", "push.followTags", "true")
+        self.git("config", "push.recurseSubmodules", "on-demand")
+        command = "git push --no-follow-tags --recurse-submodules=no origin main"
+        review = self.prepare("codex", [command])
+        self.record("codex", review)
+        self.assert_allowed(self.check("codex", command))
+        self.blocked(self.check("codex", "git push --recurse-submodules=no origin main"))
+        self.blocked(self.check("codex", "git push --no-follow-tags origin main"))
+
+    def test_subdirectory_and_relative_diff_config_still_review_the_entire_index(self):
+        nested = self.repo / "src";nested.mkdir()
+        (nested / "inside.txt").write_text("inside\n");self.git("add", "src/inside.txt")
+        self.git("config", "diff.relative", "true")
+        review = json.loads(self.run_gate("prepare-git-review", "codex", {"operations": [
+            {"cwd": str(nested), "command": self.command}]}).stdout)
+        record = json.loads((pathlib.Path(review["report"]).parent / "review.json").read_text())
+        self.assertEqual({p for _, p in record["operations"][0]["files"]}, {"sample.txt", "src/inside.txt"})
+        self.record("codex", review)
+        data = payload("codex", cwd=str(nested), transcript=str(self.transcript), tool_name="Bash",
+                       tool_input={"command": self.command})
+        self.assert_allowed(self.run_gate("pre-tool-use", "codex", data))
+        self.stage("changed outside the subdirectory\n")
+        self.blocked(self.run_gate("pre-tool-use", "codex", data))
+
+    def test_unstaged_files_are_not_silently_added_to_the_approved_commit(self):
+        review = self.prepare("codex")
+        self.record("codex", review)
+        (self.repo / "unrelated.txt").write_text("not staged\n")
+        self.assert_allowed(self.check("codex"))
+        self.git("add", "unrelated.txt")
+        self.blocked(self.check("codex"))
+
+    def test_workdir_and_literal_git_C_resolve_the_repository(self):
+        review = self.prepare("codex")
+        self.record("codex", review)
+        data = payload("codex", cwd=self.tmp, transcript=str(self.transcript), tool_name="exec_command",
+                       tool_input={"cmd": self.command, "workdir": str(self.repo)})
+        self.assert_allowed(self.run_gate("pre-tool-use", "codex", data))
+        command = "git -C " + shlex.quote(str(self.repo)) + self.command[3:]
+        self.assert_allowed(self.check("codex", command))
+
+    def test_wrappers_compound_writes_and_unreviewed_options_are_denied(self):
+        review = self.prepare("codex")
+        self.record("codex", review)
+        for command in ("env " + self.command, "env -i " + self.command, "env -u EXAMPLE " + self.command,
+                        "command -p " + self.command, "sudo " + self.command,
+                        "bash -lc " + shlex.quote(self.command),
+                        "git add sample.txt && " + self.command, self.command + " --amend",
+                        "git commit-tree HEAD^{tree}", "git send-pack origin main", "git $OPERATION",
+                        'printf "%s" "$(git commit -m bypass)"'):
+            with self.subTest(command=command):
+                self.blocked(self.check("codex", command))
+
+    def test_merge_state_and_non_verbatim_message_do_not_reuse_an_ordinary_review(self):
+        review = self.prepare("codex")
+        self.record("codex", review)
+        self.blocked(self.check("codex", self.command.replace("--cleanup=verbatim ", "")))
+        (self.repo / ".git" / "MERGE_HEAD").write_text(self.git("rev-parse", "HEAD") + "\n")
+        self.blocked(self.check("codex"))
+
+    def test_claude_report_and_question_in_one_assistant_message(self):
+        review = self.prepare("claude")
+        rows = self.record("claude", review)
+        rows[1]["message"]["content"].insert(0, rows.pop(0)["message"]["content"][0])
+        self.transcript.write_text("".join(json.dumps(row) + "\n" for row in rows))
+        self.assert_allowed(self.check("claude"))
+
+    def test_initial_commit_and_push_share_one_review(self):
+        self.git("checkout", "--orphan", "first")
+        self.git("add", "sample.txt")
+        review = self.prepare("codex", [self.command, "git push origin first"])
+        self.record("codex", review)
+        self.assert_allowed(self.check("codex"))
+        self.git("commit", "--cleanup=verbatim", "-F", str(self.message))
+        self.assert_allowed(self.check("codex", "git push origin first"))
+
+    def test_remote_credentials_are_not_written_in_review_detail(self):
+        self.git("remote", "set-url", "origin", "https://fixture:PRIVATE_CREDENTIAL@example.invalid/repo.git")
+        review = self.prepare("codex", ["git push origin main"])
+        directory = pathlib.Path(review["report"]).parent
+        for path in directory.iterdir():
+            self.assertNotIn("PRIVATE_CREDENTIAL", path.read_text())
+        self.assertEqual(directory.stat().st_mode & 0o777, 0o700)
+
+    def test_cli_preparation_errors_are_nonzero_and_never_approval(self):
+        env = dict(os.environ, DDL_GATE_STATE_DIR=self.state)
+        for data in ({"operations": []}, {"operations": [{"cwd": str(self.repo), "command": "git commit -m x"}]}):
+            proc = subprocess.run([sys.executable, "-I", GATE, "prepare-git-review", "--runtime", "codex"],
+                                  input=json.dumps(data), capture_output=True, text=True, env=env)
+            self.assertEqual(proc.returncode, 2)
+            self.assertIn("DDL Git review", proc.stderr)
 
 
 class FailOpenTest(GateTest):
