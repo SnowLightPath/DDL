@@ -1,8 +1,9 @@
 # DDL adapter for Codex: command rules (loaded only for a trusted project).
 # A push leaves the machine, so it is confirmed at the moment it runs, on top of the approval
 # given in the $commit report. Sessions whose approval policy never prompts show nothing;
-# the report's approval still applies (protocol §1.5).
-# Independently, the hook requires a matching content-bound native Git review (§1.6), even under never.
+# the report's approval still applies (the protocol's Approval procedure).
+# Independently, the hook requires a matching content-bound native Git review (the protocol's Git review
+# procedure), even under never.
 # Exact prefixes cannot skip Git global options. The independent PreToolUse form guard
 # rejects recognized noncanonical pushes; it never asks, rewrites, or grants permission.
 prefix_rule(

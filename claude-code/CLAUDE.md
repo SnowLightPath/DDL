@@ -28,7 +28,7 @@ The line above imports `design.md` into this file, so the notebook is in context
 
 - `design.md` - Project design document (scopes, principles, validation; Experience, Binding Decisions, Direction, Acceptance Gates when drafted — the protocol’s Notebook feature)
 - `.claude/skills/<name>/SKILL.md` - The DDL command skills and the protocol skill `ddl-protocol` (the frontmatter keeps Claude Code from starting a command on its own; a command runs on `/name`), when DDL is copied into the project; with the user-level install they live in `$HOME/.claude/skills/` and a project copy, when present, takes precedence (the protocol’s runtime guidance)
-- `.claude/skills/ddl-protocol/references/` - Focused protocol feature and runtime guidance, read when needed from the selected protocol
+- `.claude/skills/ddl-protocol/references/` - The protocol's six references (Approval, Parallel work, Notebook, Close, Git review, Command authoring), each with the same eight sections, and under `runtimes/` one host file per host and operation (start, approval, parallel, git) with the mapping, dated observations, and coverage; a command reads the entry and `runtimes/claude-start.md` in Phase 0 and each reference with its host file right before the operation, from the selected protocol
 - `.claude/settings.json`, `.claude/agents/`, `.claude/hooks/` - The Claude Code adapter (the gate hook and its wiring, the `explorer` and `worker` definitions; the protocol’s runtime guidance), when copied into the project; with the user-level install `agents/` and `hooks/` are symlinked under `$HOME/.claude/` and the settings fragment is merged into `$HOME/.claude/settings.json`
 
 ## Detection Targets

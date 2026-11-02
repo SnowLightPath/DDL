@@ -1,25 +1,29 @@
 # Codex: Git review
 
-Read this before [Git review](../git-review.md). Run the installed gate with
-`python3 "$HOME/.codex/hooks/ddl_gate.py" prepare-git-review --runtime codex`,
-passing JSON on stdin. Use the project or development path when appropriate.
-The input has `language` and an `operations` list; each operation names its
-repository `cwd` and exact `command`.
+## Read when
 
-The helper returns `reviewId`, `report`, `question`, and `nativeRequest`.
-Show the ID and report, then pass `nativeRequest` unchanged to the permitted
-`request_user_input_async` interface. End the turn after the receipt and wait
-for the actual reply. The hook matches the request ID, full request, and
-submitted human answer; an unreadable or unprovable result denies Git, even
-under `never`, `bypassPermissions`, or `dontAsk`. Review detail in the gate's
-state directory contains no approval flag. An ordinary `UserPromptSubmit`
-revokes older preparations immediately; a possible matching native submission
-is retained pending full request/result proof.
+Read this before the shared [Git review](../git-review.md) procedure, for every ordinary `git commit` or `git push` (the Close step and `$commit`). It names the helper path, the choice tool and the native push rule in Codex.
 
-The native rule prompts for supported `git push` forms when the session's
-permission policy permits prompting. A separate hook guard rejects recognized
-static forms that miss the prefix; it does not grant or rewrite commands.
-Absolute host Git paths retain native executable resolution.
-Explicit `bypassPermissions` / `dontAsk` hook modes skip that form guard, not
-the STOP or Git review. A no-prompt session cannot show the native prompt;
-the content review still applies. See the shared Git procedure for limits.
+## Mapping
+
+| Concern | Procedure |
+|---|---|
+| Prepare | Run `python3 "$HOME/.codex/hooks/ddl_gate.py" prepare-git-review --runtime codex` with the JSON (`language`, `operations[]` with `cwd` and `command`) on stdin; project copy `.codex/hooks/ddl_gate.py` at the repository root, development source `tools/ddl_gate.py` in this repository. The helper snapshots the staged set and returns `reviewId` (`G-<id>`), `report` (the path of `report.md`), `question` and `nativeRequest`. Show the ID and link the report before asking. Use the shell tool's working directory for the intended repository. |
+| `nativeRequest` | Pass `nativeRequest` unchanged as the arguments of the permitted `request_user_input_async`, keeping its exact title, labels, descriptions and selection mode; end the turn after the receipt and wait for the actual reply. The hook matches the actual call ID to the submitted `UserMessage` reply, the question and the selected action; an unreadable, unsupported or unprovable reply denies the operation, even under `never`, `bypassPermissions` or `dontAsk`. A fabricated receipt or typed approval cannot replace the native answer. |
+| Revocation | An ordinary `UserPromptSubmit` revokes older preparations at once, even before the transcript flushes; a possible matching native submission is preserved pending full request/result proof. Resume or compaction invalidates preparations through the session epoch (`<session>.git-epoch`). Prepare again after such a boundary and after any change to the staged set, message or branch. |
+| Push confirmation | `.codex/rules/ddl.rules` (loaded under project trust): `prefix_rule` on `["git", "push"]` with `decision = "prompt"`, so a supported literal `git push ...` reaches the native prompt when the session's approval policy permits prompting. Independently of STOP, the hook's static form guard rejects recognized push forms that miss that prefix (Git global options, explicit wrappers) with a canonical retry and no rewriting or affirmative allow; retry in the intended working directory only when the options keep the same meaning, otherwise explain the limitation. Absolute host Git paths keep native executable resolution. Explicit `bypassPermissions` / `dontAsk` hook modes skip only this form guard; STOP and the content review still apply. A never-prompting session shows nothing, and the approval in the `$commit` report still applies. |
+| Attribution | Codex adds no attribution; never add AI attribution in the message by hand. |
+
+## Observed
+
+| Fact | Version | Date |
+|---|---|---|
+| The installed binary maps approval policy `never` to hook mode `bypassPermissions` and other policies to `default` (binary inspection, not a captured live payload); `dontAsk` is accepted as the documented explicit no-confirmation mode | Codex 0.163.0 | 2026-11-01 |
+| The Default-mode CLI cleared the async selector at turn completion, so a Git review question through `request_user_input_async` could not be answered on that route; the GUI host of the same chat retained click replies | Codex CLI 0.166.0 | 2026-11-01 |
+
+## Coverage
+
+- The hook denies recognized ordinary `git commit` and `git push` calls that reach the tool hooks without a prepared review matched to the actual native submission and the current Git snapshot (repository, base, staged contents, message, branch; for a push the source commit, resolved remote and destination), even while a STOP is open or native prompts are suppressed. Git read commands keep working.
+- The check covers recognized calls dispatched through the hook, not arbitrary programs, aliases, state-changing Git hooks, concurrent index changes or input to an existing process; it never grants, rewrites or stages. Review files under `<state dir>/git-reviews/<id>/` (`report.md`, `review.json`, patches) carry no approval flag; the submission must be proved from the conversation record.
+- An unprovable recognized review fails closed inside a running handler, while a runtime-level hook failure or timeout can still fail open; verification uses a shorter internal time budget than the hook's `timeout: 10`. Project-local rules and hooks need project trust.
+- Installation diagnostics check unapproved commit/push rejection through both adapters, including OPEN/null records and no-confirmation modes, and deterministic tests execute the configured hook commands in both installation layouts; simulated dispatch proves neither native hook trust nor the interactive approval UI.

@@ -88,6 +88,22 @@
 | directive | ディレクティブ |  | 「命令」とは訳さない。ISA のたとえで instruction を「命令」と訳すのとは区別する |
 | protocol | プロトコル |  | 英字で protocol と書く箇所は「プロトコル」に統一 |
 | protocol lookup | プロトコルの探索先 |  |  |
+| instruction set | 命令セット | 指示セット | ISA のたとえ。directive は「ディレクティブ」のまま。directive の行（「命令」とは訳さない）と整合させる |
+| specification（protocol の） | 仕様 |  | 命令セット仕様 |
+| instruction-set reference | 命令セット仕様 |  | protocol の形式（P16）。「命令セットの参照資料」とは訳さない |
+| entry（protocol の入口。`SKILL.md`） | 入口 | エントリ | 命令一覧と読み込み地図を持つ |
+| reading map | 読み込み地図 | 読み込みマップ |  |
+| reference file / references（protocol の） | 参照資料 |  | 操作ごとの資料（approval.md など）。host file とは区別する |
+| command authoring（参照資料の名） | コマンド作成 |  | 「コマンド作成の参照資料」 |
+| command template | コマンドのテンプレート | 雛形 |  |
+| syntax | 構文 |  | 参照資料の節 Syntax |
+| fields / operands | オペランド |  | SWARM の operand block。参照資料の節 Fields |
+| procedure | 手順 |  | 参照資料の節 Procedure |
+| format（literal string） | 形式 |  | コマンドが書き出す文字列の定義。参照資料の節 Formats |
+| boundary（situation → behavior） | 境界 | 境界線 | 状況と振る舞いの対。参照資料の節 Boundaries |
+| host file / runtime file | ホスト資料 | 実行環境の資料 | `references/runtimes/` の八つの資料。操作ごとに一つ（開始用のホスト資料、並列作業のホスト資料）。Read when、Mapping、Observed、Coverage を持つ |
+| observed（dated fact） | 観測 | 観察 | 日付と版つきの事実。「日付つきの観測の行」 |
+| coverage | 保証範囲 |  | アダプタが執行することとその限界 |
 | phase（固有名: Phase 0 など） | Phase |  |  |
 | phase（一般） | フェーズ |  |  |
 | scope / cross-scope | スコープ / スコープをまたぐ | クロススコープ |  |
@@ -151,6 +167,7 @@
 | sprint / bolt / epic | スプリント / ボルト / エピック |  |  |
 | mob elaboration / mob construction | モブエラボレーション / モブコンストラクション |  |  |
 | runtime table（protocol の） | 実行環境の対応表 |  |  |
+| Mapping（host 資料の節） | 対応表 |  | ツールの名前が現れる唯一の節 |
 | vibe coding | vibe coding |  | 英字のまま |
 | deliverables | 成果物 |  | artifact と同じ語でよい |
 | runtime（実行時の意味。runtime checks） | 実行時 |  | Claude Code や Codex を指す runtime は「実行環境」 |

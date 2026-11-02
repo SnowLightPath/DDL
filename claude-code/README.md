@@ -81,13 +81,15 @@ Preview with `--dry-run`, or remove DDL's links and settings fragment with `bash
 <details>
 <summary>Maintainer details: phases and runtime files</summary>
 
-The command structure is defined by the shared [DDL protocol](./skills/ddl-protocol/SKILL.md):
+The command structure is defined by the shared [DDL protocol](./skills/ddl-protocol/SKILL.md), written as an instruction-set reference. Its entry `SKILL.md` has five sections: Start, Instruction set, Pending STOP, Reading map, and Interruption. The Instruction set table lists the ten directives a command uses (`# header`, `## Usage`, `### Phase`, `+++DETECT`, `+++STOP`, `+++SWARM`, `+++NEVER`, `+++Report`, `+++DDL_PHASE`, `+++DDL_REPORT`) with syntax, count, placement, and rule. Phases follow the roles:
 
 `INIT → SURVEY/READ → WORK → REPORT (+++STOP) → EXECUTE → VERIFY`
 
-`+++DDL_PHASE` marks a mutating phase and `+++DDL_REPORT` heads the report at a STOP. The protocol defines approval, resume, compaction, and worker rules; the adapter supplies mechanical guardrails on dispatched calls rather than complete STOP enforcement.
+`+++DDL_PHASE` marks a mutating phase (recommended in Claude Code, required in Codex) and `+++DDL_REPORT` heads the report at a STOP. Pending STOP and Interruption state the rules while a decision waits and after a compaction or restart; the adapter supplies mechanical guardrails on dispatched calls rather than complete STOP enforcement.
 
-The protocol entry links to focused Approval, Parallel work, Notebook, Close, Git review, and Command authoring guidance. A command reads a feature when it needs it from the same selected protocol; these references are not additional slash commands.
+Six references under `references/` hold the procedures: Approval, Parallel work, Notebook, Close, Git review, and Command authoring, which holds the complete command template. Each has the same eight sections in the same order: Read when, Syntax, Fields, Procedure, Formats, Example, Boundaries, Runtime. Eight host files under `references/runtimes/`, one per host and operation (`claude-start.md`, `claude-approval.md`, `claude-parallel.md`, `claude-git.md`, and the `codex-*` set), have Read when, Mapping, Observed, and Coverage; the Mapping is the only place tool names appear. The start files are named `*-start.md` because Claude Code reads a file named `claude.md` as a nested `CLAUDE.md` on a case-insensitive filesystem.
+
+A command reads the entry and `claude-start.md` in Phase 0, then each reference and the matching host file right before the operation: Approval before a STOP report, Parallel work before fan-out, Notebook before writing `design.md`, Close on entering Close, Git review before a commit or push, Command authoring when writing a command. These are files within the selected protocol, not additional slash commands. `python3 tools/check_ddl.py protocol` prints `PROTOCOL_OK` when the entry table, the fixed sections, the operand and section rows, the literal strings commands write (such as `passed <date>`), the boundary rows, and the dated observations are all present; `tools/test_protocol.py` holds negative cases that must fail, and `python3 tools/check_ddl.py commands` also checks the template.
 
 This directory mirrors a project's `.claude/`: [CLAUDE.md](./CLAUDE.md), [settings.json](./settings.json), command skills, agent definitions, and the gate hook. For source ownership, project overlays, session loading, and verification, use the [maintainer reference](../docs/maintainers/README.md).
 

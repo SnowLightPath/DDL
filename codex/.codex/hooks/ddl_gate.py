@@ -2,7 +2,7 @@
 """DDL gate: the mechanical half of the protocol's +++STOP rule, as a lifecycle hook.
 
 After detecting a report under the heading `+++DDL_REPORT`, the gate denies covered mutating
-calls until submitted human input. The assistant follows protocol section 1.5: a synchronous
+calls until submitted human input. The assistant follows the protocol's Approval procedure: a synchronous
 question waits for the actual answer and can resume approved work in the same turn; an
 asynchronous request receipt ends the turn while awaiting the actual answer. Informational
 reports require no approval by themselves. Whether a human reply approves the current report
@@ -71,10 +71,10 @@ RUNTIMES = ("claude", "codex")
 REPORT = re.compile(r"(?m)^\s*\+\+\+DDL_REPORT\b")
 
 DENY_REASON = ("DDL gate: a +++DDL_REPORT was emitted after the last human message, so this STOP is pending "
-               "(protocol §1.5). End the turn and wait for the user's approval; read-only tools may run only to "
-               "clarify the report.")
-NOTICE = ("DDL gate: a +++DDL_REPORT is awaiting the user's approval. Re-emit the report (protocol §1.5 Summary "
-          "rule) and wait; do not continue the phase.")
+               "(the protocol's Approval procedure). End the turn and wait for the user's approval; read-only "
+               "tools may run only to clarify the report.")
+NOTICE = ("DDL gate: a +++DDL_REPORT is awaiting the user's approval. Re-emit the report (the protocol's Approval "
+          "procedure) and wait; do not continue the phase.")
 DESIGN_HEADER = "# design.md (injected by the DDL adapter; it stays in context, do not re-read)"
 UNREADABLE = ("DDL gate: could not read the conversation record and no marker exists; the +++STOP rule is "
               "enforced by instruction only for this call.")
