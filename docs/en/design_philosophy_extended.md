@@ -846,26 +846,4 @@ Integration patterns:
 - Beck, K. (1999). [*Extreme Programming Explained*](https://www.oreilly.com/library/view/extreme-programming-explained/0201616416/). Addison-Wesley.
 - Meyer, B. (1992). [Applying Design by Contract](https://ieeexplore.ieee.org/document/161279/). *IEEE Computer*, 25(10), 40-51.
 
-
-## Changelog
-
-<details>
-<summary>Read the revision history</summary>
-
-| Date | Change |
-|------|--------|
-| 2026-11-02 | Add the Close stage: Reflect, documentation sync, and validation run inside `/realize` and `/commit` before one Git review; retire the next-command chain after a commit. |
-| 2026-11-01 | Add an independent content-bound Git review: match native submissions to final contents, message, and push targets; retain one approval for compatible ready operations and state the enforcement limits. |
-| 2026-11-01 | Documentation audit: clarify user/project hook trust, review detail before approval, the transition from plan approval to implementation, and SWARM work units; align outward-action scope, emphasis, and terminology. |
-| 2026-11-01 | Batch approval correction: one whole-review recommendation, numbered compatible actions and impacts, and one approve-all/subset-or-revise/hold submission. Limit approval to the displayed ready batch and stated resolutions; retain future STOPs and explicit Binding changes. Group independent clarifications and update Example 4. |
-| 2026-11-01 | Improve GitHub reading flow: render the design example, use native diagrams, and keep source transcripts and copyable templates optional. |
-| 2026-11-01 | Earlier report update: concise prose and visible material risks. The initial one-item-at-a-time interaction was superseded by the batch approval correction above. Record Claude's observed timeout marker and gate check, Codex CLI's unavailable post-turn answer route, and the desktop host's distinct result; keep schema fields separate from tool arguments (§2.5, §3.5, Example 4). |
-| 2026-10-20 | Clarify Binding Decision completeness and advance approval; update adapter enforcement; refine Japanese prose and diagram labels. |
-| 2026-10-18 | Instructions and mechanisms: the harness enforces the mechanical part of +++STOP, the design.md load, the worker roles, and the outward +++NEVER items through per-runtime adapters (§2.5 Instructions and Mechanisms, §3.5, §3.6); a How to Read row; source moved to `claude-code/` and `codex/`, DDL installed in the environment: commands as skills and `ddl-protocol` as the protocol in both runtimes (§2.5 context table), `/resonate` an ordinary command again (§3.1, §7), §7 links to `claude-code/` and `codex/`, §2.4 enforcement cell, §3 intro, references added |
-| 2026-10-18 | Follow-up: one format for `passed` and advance-approval marks (§3.3), `Approved plan` lines under Direction (§3.3, §8, Example 4), what is written down at approval and the project file re-injected after compaction (§2.5), D9 Experience Gap and D7 Validation Failure (§3.3, §3.4), `+++DDL_REPORT` in the STOP rules and Example 4 (§3.5, §4), references aligned |
-| 2026-10-17 | Harness-era revision: harness memory and design.md (§1.1, §1.4), harness engineering and technology choice (§2.5), VALIDATE in the state model (§3.1), harness session state (§3.2), Binding and Direction checks (§3.3, §3.4), G1–G7 IDs (§3.4), STOP semantics and parallel workers (§3.5, §3.6), Example 4, Binding Decisions in §5, §6, §8, template sections (§7), three references; follow-up: `passed` marks and retired Acceptance Gates (§3.3, §3.4, Example 4, §8), no worker started or continued during a STOP and no approval from notifications or other agents (§3.5), worker labels, self-contained prompts, and the read-only and no-nesting instructions in each prompt (§1.4, §3.6), terminology alignment (Codex subagents in §3.6 and §7; D1, D2, … in §7), a notebook named by runtime guidance (§5), Phases in the protocol's role order (§7); notebook named design.md throughout; `Unbound:` lines, approved picks, arguments that would change a Binding Decision, and existing premises (§2.5); gates never dropped (§3.3); every REPORT ending with a STOP gate and gates outside the approved report never approved in advance (§3.5); the lead's fallback without a parallel mechanism (§3.6, §7); `/resonate` marked repository-only (§3.1, §7); approval of a report as a Binding Decision source (§5); How to Read rows for §6–§8; the `/draft` intent (§7); context engineering (§1.4, §2.5, §3.5, §3.6) and its references |
-| 2026-04-25 | VALIDATE support command (§3.1, §7); README-as-design Alternative (§5) |
-| 2026-02-14 | Expand §2.5 to three-way comparison (SDD / AI-DLC / DDL) |
-| 2026-01-04 | Initial version |
-
-</details>
+[Document history on GitHub](https://github.com/SnowLightPath/DDL/commits/main/docs/en/design_philosophy_extended.md)

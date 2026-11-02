@@ -175,14 +175,4 @@ Before recording or sending changes with Git, the agent shows the final diff, ex
 
 **Tool-Assisted Option:** [Claude Code](../../claude-code/) (`/draft`, `/realize`, `/reflect` + support commands) | [OpenAI Codex](../../codex/) (`$draft`, `$realize`, `$reflect` + support skills)
 
-## Changelog
-
-- **2026-11-02:** Close the work in one planned stage: Reflect, documentation sync, and validation run before a single Git review, and no command chain follows the commit.
-- **2026-11-01:** Require a content-bound native Git review for ordinary commits and pushes, while keeping ready operations in one approval.
-- **2026-11-01:** Documentation audit: qualify adapter enforcement, clarify approval scope and Binding Decision wording, and align emphasis across languages.
-- **2026-11-01:** **Batch approval correction.** Review compatible numbered recommendations together through one approve-all, subset/revise, or hold interaction. Approval covers only the displayed current batch and stated resolutions, without per-item pauses or waivers of future gates. Group independent clarifications where possible.
-- **2026-11-01:** Earlier report update: decision reports lead with the recommendation, reason, and consequence; unavailable approval UI stops the command. Its initial one-item-at-a-time interaction was superseded by the batch approval correction above. Improve reading flow, render the decision example, keep copyable Markdown optional, and clarify that informational reports need no approval by themselves.
-- **2026-10-20:** Refine Japanese sentence structure while preserving meaning and section organization.
-- **2026-10-18:** Instructions and mechanisms (In the Harness Era); Tool-Assisted Option links to `claude-code/` and `codex/`.
-- **2026-10-17:** Harness-era background; Binding Decisions, Direction, and Acceptance Gates in Draft, with Acceptance Gates retired once the work is accepted; the human's role at gates; three anti-patterns; removed the Scribe Plugin option. Add report approval as a Binding Decision source and treat technology already in code as an existing premise. Add context-engineering background and one anti-pattern.
-- **2026-01-04:** Initial version.
+[Document history on GitHub](https://github.com/SnowLightPath/DDL/commits/main/docs/en/design_philosophy.md)

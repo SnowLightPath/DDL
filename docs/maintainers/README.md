@@ -109,7 +109,7 @@ The setup suite runs separately from doctor so its install/doctor/uninstall rehe
 
 ## Documentation and translation
 
-Keep the English/Japanese philosophy pairs aligned in meaning, heading structure, examples, and dated changelog entries. User-facing navigation points to the explanations, not the translation machinery.
+Keep the English/Japanese philosophy pairs aligned in meaning, heading structure, and examples. Each document links to its Git history; do not duplicate that history in the text. User-facing navigation points to the explanations, not the translation machinery.
 
 Maintainers and translation agents use the [Japanese terminology reference](../ja/GLOSSARY.md). Its canonical path remains `docs/ja/GLOSSARY.md`. Follow it when maintaining the Japanese documents; operational command and skill instructions remain English except for literal artifact text, examples, and glossary data.
 

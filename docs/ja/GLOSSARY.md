@@ -162,7 +162,7 @@
 | approved picks | 承認された選択 |  |  |
 | STOP semantics | STOP の意味論 |  |  |
 | Changelog / Follow-up / Initial version | 変更履歴 / 追補 / 初版 |  |  |
-| README-as-design Alternative（§5 の見出し） | README-as-design という代替 |  | Changelog でも同じ語 |
+| README-as-design Alternative（§5 の見出し） | README-as-design という代替 |  |  |
 | static / dynamic（ADR の比較） | 静的 / 動的 |  |  |
 | workflow | ワークフロー |  |  |
 | source（Binding Decision の出どころ） | 出どころ | 出典 | 表の見出し Source は英字のまま |
