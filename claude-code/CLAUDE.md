@@ -16,11 +16,11 @@ The line above imports `design.md` into this file, so the notebook is in context
 | Command | Intent |
 |---------|--------|
 | `/draft` | Write the user-side experience first, with the decisions and outlook it depends on |
-| `/realize` | Write code based on design principles and Binding Decisions |
+| `/realize` | Write code based on design principles and Binding Decisions, then close the work with one Git review |
 | `/reflect` | Update documents based on implementation |
 | `/validate` | Run mechanical validation per scope: the Validation block and the mechanical gates in Acceptance Gates |
 | `/resonate` | Sync multilingual docs (en/ja) |
-| `/commit` | Git commit (`/commit remote` also pushes) |
+| `/commit` | Close the work and commit (`/commit remote` also pushes) |
 | `/docs` | Audit and fix documentation |
 | `/refactoring` | Audit and fix code quality |
 
@@ -62,7 +62,7 @@ Every command defines its own D-targets (D1, D2, …). Cross-cutting targets bel
 
 1. Summarize what changed (files, lines, scopes)
 2. List any Detection Targets that fired
-3. Suggest next command if applicable (`/draft` → `/realize` → `/reflect`)
+3. After a Close stage (protocol §1.7), state that nothing remains; otherwise name a next command only when work this command cannot do remains, with the reason (`/draft` ends by naming `/realize`; `/realize` ends with Close)
 
 ## Constraints
 

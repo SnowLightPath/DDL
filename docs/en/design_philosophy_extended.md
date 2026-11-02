@@ -281,7 +281,7 @@ flowchart TD
     Reflect <--> Draft
 ```
 
-The Core Loop drives design evolution. Support Commands maintain quality around it.
+The Core Loop drives design evolution. Support Commands maintain quality around it. The loop closes through a Close stage: Reflect, documentation sync, validation, and one Git review, so that a single commit ends the work.
 
 | State | Entry Condition | Exit Condition |
 |-------|-----------------|----------------|
@@ -293,11 +293,11 @@ The Core Loop drives design evolution. Support Commands maintain quality around 
 |-----------------|---------|
 | VALIDATE | Run mechanical validation per scope as declared in design.md |
 | RESONATE | Synchronize multilingual document versions |
-| COMMIT | Record verified changes to repository |
+| COMMIT | Close the work and record verified changes to repository |
 | DOCS | Audit and fix documentation quality |
 | REFACTORING | Audit and fix code quality |
 
-You can transition from any Core Loop state to any other. No strict ordering. Support Commands can be invoked at any point.
+You can transition from any Core Loop state to any other. No strict ordering, except that work closes through the Close stage before its commit. Support Commands can be invoked at any point.
 
 ### 3.2 Session Context Preservation
 
@@ -365,7 +365,7 @@ One native interaction offers **Approve all**, **Select a subset or revise**, an
 
 Incompatible alternatives cannot be approved together. Present compatible complete candidate plans or leave the unresolved part pending. When the human requests individual selection, prefer one native checklist or grouped form submission. Do not default to serial questions or force typed ID lists. Independent clarification needs should also be grouped where possible.
 
-Ordinary Git commits and pushes have an additional content review. Once the final diff is ready, one native submission can approve the staged contents, exact message, and named push source and destination together. The hook matches the recorded question and submitted answer, then compares the real Git state; opening STOP or suppressing native command prompts does not bypass this check. A changed snapshot, unrelated answer, hold, timeout, missing proof, or resume requires a fresh review. The check covers supported calls reaching the hook; arbitrary programs, aliases, existing-process input, and state changes between checking and execution remain outside a universal guarantee.
+Ordinary Git commits and pushes have an additional content review. Once the final diff is ready, one native submission can approve the staged contents, exact message, and named push source and destination together. The hook matches the recorded question and submitted answer, then compares the real Git state; opening STOP or suppressing native command prompts does not bypass this check. A changed snapshot, unrelated answer, hold, timeout, missing proof, or resume requires a fresh review. The check covers supported calls reaching the hook; arbitrary programs, aliases, existing-process input, and state changes between checking and execution remain outside a universal guarantee. The Close stage (protocol §1.7) brings design.md and the documents up to date before that review; after the commit, the report names what remains, if anything, and suggests no command.
 
 Change proposals follow this path:
 
@@ -730,7 +730,7 @@ Commands implement DDL as Phase-based workflows with Detection Targets, STOP gat
 | Command | Intent |
 |---------|--------|
 | `/draft` | Write the user-side experience first, with the decisions and outlook it depends on |
-| `/realize` | Write code based on design principles and Binding Decisions |
+| `/realize` | Write code based on design principles and Binding Decisions, then close the work with one Git review |
 | `/reflect` | Update documents based on implementation |
 
 **Support Commands** — invokable at any point:
@@ -739,7 +739,7 @@ Commands implement DDL as Phase-based workflows with Detection Targets, STOP gat
 |---------|--------|
 | `/validate` | Run mechanical validation per scope: the Validation block and the mechanical gates in Acceptance Gates |
 | `/resonate` | Synchronize multilingual document versions |
-| `/commit` | Record verified changes to repository |
+| `/commit` | Close the work and record verified changes to repository |
 | `/docs` | Audit and fix documentation quality |
 | `/refactoring` | Audit and fix code quality |
 
@@ -854,6 +854,7 @@ Integration patterns:
 
 | Date | Change |
 |------|--------|
+| 2026-11-02 | Add the Close stage: Reflect, documentation sync, and validation run inside `/realize` and `/commit` before one Git review; retire the next-command chain after a commit. |
 | 2026-11-01 | Add an independent content-bound Git review: match native submissions to final contents, message, and push targets; retain one approval for compatible ready operations and state the enforcement limits. |
 | 2026-11-01 | Documentation audit: clarify user/project hook trust, review detail before approval, the transition from plan approval to implementation, and SWARM work units; align outward-action scope, emphasis, and terminology. |
 | 2026-11-01 | Batch approval correction: one whole-review recommendation, numbered compatible actions and impacts, and one approve-all/subset-or-revise/hold submission. Limit approval to the displayed ready batch and stated resolutions; retain future STOPs and explicit Binding changes. Group independent clarifications and update Example 4. |

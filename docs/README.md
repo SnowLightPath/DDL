@@ -9,7 +9,7 @@ Start with the short explanation of DDL. Read the extended version for the reaso
 
 ## Put it to work
 
-At a required STOP, review the current numbered recommendations together and approve the displayed set in one native interaction. Choosing a subset or requesting changes is optional; approval does not trigger another question for every item.
+At a required STOP, review the current numbered recommendations together and approve the displayed set in one native interaction. Choosing a subset or requesting changes is optional; approval does not trigger another question for every item. Work ends with one Git review of the final diff; no command chain follows a commit.
 
 Choose the setup guide for your tool:
 

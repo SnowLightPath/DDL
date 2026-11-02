@@ -128,6 +128,8 @@
 | progress file | 進捗ファイル |  |  |
 | feature list | 機能リスト |  |  |
 | Core Loop / Support Commands | コアループ / サポートコマンド |  |  |
+| Close（Direction の最後の段階） | Close |  | 英字のまま。「Close 段階」と書く。reflect、docs、resonate、validate と 1 回の Git の確認で作業を終える段階 |
+| close the work | 作業を閉じる |  | Close 段階で作業を終えること |
 | Tool-Assisted Option（短い文書の末尾のラベル） | ツール支援の選択肢 |  | §7 の見出し「選択肢4: ツールの支援」はそのまま |
 | stream / streaming | 書きながら伸びる / ストリーミング |  | 例文の中では状況に合わせる |
 | Distributed Cognition | 分散認知 |  | 見出しでは英語を添える |

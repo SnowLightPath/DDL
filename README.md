@@ -26,6 +26,7 @@ Open your project in the **Codex GUI** or Claude Code and describe the experienc
 | **Draft** | Describe how the result should feel and behave | A design to review before saving |
 | **Realize** | Review the proposed implementation plan | Working code and verification results |
 | **Reflect** | Compare the implementation with the design | Proposed updates to keep them aligned |
+| **Close** | Approve one Git review of the final diff | design.md and documents reflected, one commit, nothing left to do |
 
 > [!NOTE]
 > **Codex GUI is the primary experience.** Codex CLI 0.166.0 Default cannot collect approval through its asynchronous selector after the turn ends.
@@ -45,7 +46,7 @@ Open your project in the **Codex GUI** or Claude Code and describe the experienc
 | Review code quality | `/refactoring` | `$refactoring` |
 | Commit verified changes | `/commit` | `$commit` |
 
-`/commit remote` and `$commit remote` also propose a push. Approval names the files, message, and any remote action it covers. The final diff, exact message, and destination form one clickable Git review. Ordinary commit/push calls without that matching review are refused by the hook, even after another approval has opened STOP. If implementation had not yet produced the final diff, this adds one review at the point the contents are ready.
+`/commit remote` and `$commit remote` also propose a push. Approval names the files, message, and any remote action it covers. The final diff, exact message, and destination form one clickable Git review. Ordinary commit/push calls without that matching review are refused by the hook, even after another approval has opened STOP. If implementation had not yet produced the final diff, this adds one review at the point the contents are ready. `/commit` and `$commit` run the Close scan first, so `design.md` and the documents are current when the review appears; after the commit, no further command is suggested.
 
 ## Review the recommendations together
 

@@ -26,26 +26,26 @@ Open Claude Code in the project, complete its folder-trust prompt when shown, an
 /draft Search with a Retry button
 ```
 
-Review the draft before saving it. Use `/realize` when you are ready to review an implementation plan, then `/reflect` to compare the result with the design.
+Review the draft before saving it. Use `/realize` when you are ready to review an implementation plan; it ends with the Close stage, which reflects the result into the design, brings the documents up to date, validates, and asks for one Git review before committing. `/reflect` remains available on its own.
 
 ## Commands
 
 | Command | Use it to… |
 |---|---|
 | `/draft` | Describe the experience and review the design before saving |
-| `/realize` | Implement an approved plan |
+| `/realize` | Implement an approved plan and close the work with one Git review |
 | `/reflect` | Propose updates that align the design and implementation |
 | `/validate` | Run project checks and mechanical acceptance gates |
 | `/resonate` | Reconcile multilingual documents |
 | `/docs` | Review documentation and propose corrections |
 | `/refactoring` | Review code quality and propose refactors |
-| `/commit` | Commit verified changes; `/commit remote` also proposes a push |
+| `/commit` | Close the work and commit verified changes; `/commit remote` also proposes a push |
 
 `draft` and `realize` accept a feature; `reflect`, `resonate`, `docs`, and `refactoring` accept a path; `validate` accepts a scope. You do not invoke `ddl-protocol` yourself.
 
 ## Before recording or sending changes
 
-The agent shows the final staged diff, exact commit message, and any requested push destination in one Git review. Approve the ready set once through the native choices. A ready commit and its push share that approval; files and languages do not get separate questions.
+The agent shows the final staged diff, exact commit message, and any requested push destination in one Git review. Approve the ready set once through the native choices. A ready commit and its push share that approval; files and languages do not get separate questions. Before that review, the Close stage brings `design.md` and the documents up to date, so the commit is the last step and no command follows it.
 
 The hook independently checks the actual contents and submitted choice before ordinary `git commit` and `git push` calls. A general reply or an earlier implementation approval supplies no Git permission. Changed contents, message, destination, or an unprovable answer stop the operation. Git reads remain available. A native permission policy that shows no command prompt does not skip this content check.
 

@@ -103,7 +103,7 @@ Choices: request one batch approval through protocol §1.5; open item selection 
 
 After applying:
 1. Summarize what changed
-2. Suggest: "Run `$resonate` to sync translations" (if multilingual docs exist)
+2. When an applied change touched a document that has a language counterpart, name that pair and the reason it still needs syncing; standalone, that work is `$resonate`, and inside the Close stage protocol §1.7 covers it
 
 ## Constraints
 

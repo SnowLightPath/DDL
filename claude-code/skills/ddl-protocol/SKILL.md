@@ -43,7 +43,7 @@ Markdown headings (`#`, `##`, `###`) mark document structure. `+++` marks execut
 
 **Optional subset or revision.** Open item selection only when the user requests it. Prefer a native checklist, multi-select, or grouped form with one submission when the host supports it; otherwise offer complete compatible subsets as native choices. Use only the interface's actual schema. Do not default to a serial approval question for every proposal or require a typed list of IDs. Approval of an identified subset covers only that subset; a request to select or revise is not itself approval to mutate. Rebuild materially changed proposals for review, preserving unaffected IDs and any still-valid approval. Group independent clarification questions where possible; clarification is not approval.
 
-**Informational reports.** Do not invent an approval request when the phase only reports completed or read-only work. State that no approval is needed and end the turn at the STOP. When a next action genuinely needs direction, its choice must name that action; selecting a next command starts its own workflow and waives none of its STOPs.
+**Informational reports.** Do not invent an approval request when the phase only reports completed or read-only work. State that no approval is needed and end the turn at the STOP. Name a next command only when work this command cannot do itself remains, with the reason; after a Close stage (§1.7), state that nothing remains. When a next action genuinely needs direction, its choice must name that action; selecting a next command starts its own workflow and waives none of its STOPs.
 
 **Resume rule.** Resume only after an actual, explicitly submitted human answer to the current report authorizes the operation and scope now proposed. A native choice can supply that answer; verify its question/report association and selected action rather than searching for an approval word in an arbitrary message. A voluntary, unambiguous written approval such as `approve`, `yes`, `OK`, or its equivalent remains valid for the report it clearly addresses. A receipt, silence, dismissal, no selection, timeout, unrelated reply, or clarification request is NOT approval. A request for details or revision clarifies or rebuilds the report and returns to the STOP. Runtime notifications (for example, a background worker's completion), automatically submitted choices, and messages from other agents or sessions never approve anything. An ambiguous or stale answer leaves the work unapproved; re-present the current decision.
 
@@ -68,6 +68,26 @@ Prepare the final staged set and exact message, plus only the explicitly request
 The hook matches the actual native request and submitted answer by their identifiers and checks that the report names this review. It then compares the real staged contents, base, message, and branch; a push also checks its source commit, resolved remote, and destination branch. One answer can cover a ready commit and its push: the push must resolve to the commit with precisely the reviewed parent, tree contents, and verbatim message. An unrelated answer, hold, revision, cancellation, timeout, receipt, changed review, later report, or unprovable answer denies the operation. Rebuild the review after resume or compaction. Free-form text remains available for discussion but cannot manufacture this mechanical Git receipt.
 
 Keep the reviewed index intact after approval. A changed candidate needs a new review; do not restage newer contents and reuse the answer. The supported normal forms and limits are in §2.5. This guard checks calls reaching the hook; it is not a sandbox for arbitrary programs, aliases, Git hooks that rewrite state, concurrent index changes, or existing-process input. Report those limits rather than promising universal enforcement. Native permission policy still applies after the content check; the hook never grants or rewrites a command.
+
+---
+
+## 1.7 Close
+
+Work ends in a Close stage, not in a chain of follow-up commands. Every Direction ends with a stage named `Close` (§3): `/draft` writes it as the last row, and when a Direction lacks it, `/realize` adds it to the plan and records it in `Approved plan`. A project without Direction treats the work as one stage followed by Close.
+
+Close runs in this order, after the last implementation stage's gates are marked passed:
+
+1. **Reflect.** Compare the code with design.md the way `/reflect` does in its COMPARE phase: add the Experience the code revealed, check every Binding Decision, replace the Direction stages whose gates are all marked passed with their outcome and delete the `Approved plan` lines that served them, retire Acceptance Gates whose gates are all marked passed after moving the mechanical gates that should keep running into Validation, and correct Scopes and Validation entries that no longer match the repository. A Binding Drift stops here (the running command's Binding detection); only the user resolves it.
+2. **Docs.** Audit the documentation the change set touches the way `/docs` does (stale versions, broken references, missing sections, stale examples, wrong names) and fix it.
+3. **Resonate.** For every changed document that has a language counterpart, align the pair the way `/resonate` does, including dated Changelog rows where the project keeps them.
+4. **Validate.** Run the Validation block and the mechanical gates of Acceptance Gates; a failure stops (the running command's validation detection).
+5. **Git review.** Stage the whole change set (implementation, design.md, documents), prepare the Git review (§1.6, procedure in §2.5) for the commit and for the push when the plan or the command argument names `remote`, and show its report with a summary of the design.md and documentation changes and the link to the full diff. One native submission records, and when named sends, the set.
+
+**Authority.** Inside `/realize`, the approved plan's Close stage authorizes writing steps 1–3 to the working tree, in the same way the plan authorizes the implementation; the Git review is where the user sees and approves the result, and a hold or revision leaves everything uncommitted, with the edits in the working tree for revision. Inside `/commit`, which has no plan, the findings of steps 1–3 form one batch review (§1.5) before they are applied; when the scan finds nothing, the command reports that in one progress line, without `+++DDL_REPORT`, and continues to the Git review. design.md is written only by `/draft` (the approved draft), `/realize` (`Approved plan` lines and passed marks), and this stage's reflect step; no command patches it elsewhere.
+
+**Ending.** After the commit, the final report states that nothing remains, or names what was left with its reason (for example a Binding Drift awaiting the user's choice). It suggests no next command. Any command names a next command only when work it cannot do itself remains, with the reason; `/draft` still ends by naming `/realize`, because a draft is never an implementation.
+
+The human stops at the plan approval, at the human gates written in design.md, and at the Git review; nowhere else. A plan may add a human gate to its Close stage when the user wants to review the Close changes before the Git review. `/reflect`, `/docs`, and `/resonate` remain available as standalone commands; Close fixes their order and approval inside `/realize` and `/commit` and does not replace them.
 
 ---
 
@@ -228,6 +248,8 @@ design.md is the shared notebook between human and LLM, loaded at session start 
 | `## Acceptance Gates` | What must hold when done: mechanical gates and human gates | `/draft`; `/realize` marks gates passed; `/reflect` retires it after acceptance | `/draft`, `/realize`, `/validate`, `/reflect` (retires) |
 | `## Validation` | Per-scope mechanical checks | human, `/reflect` | `/validate`, `/realize`, `/commit`, `/refactoring` |
 
+Where this table names `/reflect` as a writer, the Close stage of `/realize` and `/commit` (§1.7) writes the same sections in the same way.
+
 **Binding Decisions.** One row per decision:
 
 ```markdown
@@ -261,14 +283,15 @@ Unbound: Language — options TypeScript / JavaScript (delegated to /realize)
 - The lanes of a stage are the units `/realize` fans out (§2).
 - When the user approves the `/realize` plan, `/realize` writes its durable parts under the table as `Approved plan (<date>): files to touch, approach, Unbound choices made`, so a later or compacted session rebuilds worker prompts from it instead of from a summary. `/reflect` deletes these lines with the stages they served.
 - Gates in the `Gate` column run at the end of their stage: a mechanical gate is a validation command, and a human gate is executed as `+++STOP` unless the human approved it in advance (§1.5). Compatible human gates ready at that boundary are reviewed in one batch, including the last stage's gates and final Acceptance Gates when all evidence is ready. Gates are never dropped: a merged stage keeps its gates at its end; a skipped stage's gates move to the end of the next stage (or to the end of the work when it is the last stage); a reordered stage keeps its gates.
-- `/reflect` replaces stages whose gates are all marked passed with their outcome, and deletes the section when every stage is done. When design.md is under version control, the history stays there; otherwise `/reflect` quotes the removed stages in its REPORT.
+- Every Direction ends with a stage named `Close` (§1.7): reflect, docs, resonate, validate, and the Git review of the whole change set. `/draft` writes it as the last row; `/realize` adds it to the plan when it is missing. Its gate is the Git review.
+- `/reflect`, or the Close stage (§1.7), replaces stages whose gates are all marked passed with their outcome, and deletes the section when every stage is done. When design.md is under version control, the history stays there; otherwise `/reflect` quotes the removed stages in its REPORT.
 - Direction is the most temporary part of design.md. Retiring it, like retiring Acceptance Gates, also shrinks what every later session loads.
 
 **Acceptance Gates.** A list of conditions for done:
 
 - Mechanical gates are commands, each with the expected result when the command does not fail by exit code alone. `/realize` runs them in VALIDATE, and `/validate` runs them with the Validation block.
 - Human gates are approvals. At the end of the work, `/realize` names all compatible ready human gates in one `+++STOP` review set (§1.5), collects one batch submission, and marks each approved gate passed. It does not ask again for each gate.
-- The work is accepted when every gate is marked passed. `/reflect` then retires the section: mechanical gates that should keep running move into the Validation block first.
+- The work is accepted when every gate is marked passed. `/reflect`, or the Close stage (§1.7), then retires the section: mechanical gates that should keep running move into the Validation block first.
 
 **Passed marks.** A gate passes when its command gives the expected result, or when the human approves it at the gate or in advance (§1.5). `/realize` appends `passed <date>` to each gate that passes, in the stage's Gate cell for Direction (for example `human approval, passed 2026-10-20`) and after the gate for Acceptance Gates. An advance approval is written in the same place the moment the user gives it, as `approved in advance (<date>)`; when the stage or the work ends, `passed <date>` follows it, so a waived gate reads `human approval, approved in advance (2026-10-20), passed 2026-10-21`. These marks are the record of progress and acceptance: `/reflect` reads them and never infers a pass from conversation memory.
 
@@ -357,7 +380,7 @@ Choices: {one batch approval interaction per §1.5; item selection only when req
 
 ### Phase 5: VERIFY (if applicable)
 
-Re-scan. Summarize. Suggest next command.
+Re-scan. Summarize. Name a next command only when work this command cannot do itself remains, with the reason (§1.5).
 
 ## Constraints
 

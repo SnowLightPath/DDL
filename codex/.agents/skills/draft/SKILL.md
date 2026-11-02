@@ -49,7 +49,7 @@ A command run from a user-level install follows the project's own copy when one 
 2. Sort what the user said into the sections of protocol §3, then ask only for what is missing. Experience is always needed; Binding Decisions, Direction, and Acceptance Gates are optional, so ask about them only when the user's words point to them:
    - **Experience** — consumer-side usage with concrete inputs and outputs, including error, empty, and boundary states
    - **Binding Decisions** — a technology the user fixes because the experience depends on it, an external constraint requires it, or the user states a preference for it. Record the Decision, Why it binds, and the Source (the user's words with the date, or the user's approval of the report that listed it; protocol §3). If the user gave no reason, ask once; without an answer, list it as Unbound (protocol §3)
-   - **Direction** — the user's outlook on the path to implementation: stage order, parallel lanes, what to show the user when, and human gates. Non-binding
+   - **Direction** — the user's outlook on the path to implementation: stage order, parallel lanes, what to show the user when, and human gates. Non-binding. A Direction always ends with the Close stage (protocol §1.7): write it as the last row even when the user did not mention it
    - **Acceptance Gates** — what must hold when done: mechanical gates (commands, each with its expected result when exit code alone cannot show failure) and human gates (approvals)
 3. Write consumer-side code / usage examples together, in the language and on the platform the Binding Decisions name. For a library or SDK, the consumer-side language is part of the Experience: ask for it if the user did not name it, and record it as a Binding Decision
 4. Show the technology found in Phase 1, and any decision found only in the harness's automatic memory, as existing premises; either becomes a Binding Decision only when the user gives a reason. When no technology was fixed or delegated, do not invent a technology comparison or an Unbound item merely because implementation will eventually need a choice
@@ -88,7 +88,7 @@ Choices: request one approval for the complete displayed draft through protocol 
 
 **Pre-condition.** Enter this phase only after explicit user approval of its scope at the Phase 3 STOP gate (per §1.5 of the protocol). If the actual answer does not authorize this work, return to Phase 3 and re-present the current decision.
 
-1. Save the approved draft to `design.md`: Experience, Binding Decisions, Direction, and Acceptance Gates under their own headings (omit the sections the draft does not use); principles from D5 go to the principles section. A Binding Decision row without quoted words takes Source `approved $draft report (<date>)`
+1. Save the approved draft to `design.md`: Experience, Binding Decisions, Direction (ending with its Close stage), and Acceptance Gates under their own headings (omit the sections the draft does not use); principles from D5 go to the principles section. A Binding Decision row without quoted words takes Source `approved $draft report (<date>)`
 2. Suggest: "Run `$realize` to implement this experience"
 
 ## Constraints

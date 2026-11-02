@@ -55,6 +55,10 @@ Subset editing is optional and starts only when requested. Use native multi-sele
 
 The native question is the final interaction while waiting at that STOP. A synchronous question waits for the actual submitted answer. On an asynchronous host that keeps the question answerable after turn completion, end the turn after the request receipt and wait for that answer. Respect the tool's permitted purpose and mode; do not switch modes to bypass a restriction. A receipt, cancellation, dismissal, no selection, or timeout is not approval. An answer must authorize the current displayed set or an explicitly selected subset.
 
+## Close stage
+
+Work ends in a Close stage (protocol §1.7). `/realize` runs it after the last implementation stage, and `/commit` runs its scan before the Git review: reflect the code into `design.md`, audit the documentation the change set touches, align language pairs, validate, then prepare one Git review of the whole change set. Inside `/realize` the approved plan authorizes the Close edits, and the Git review is where the user sees them. Inside `/commit` the findings form one batch approval first. After the commit, the report states that nothing remains or names leftovers with reasons; no next command is suggested. `/reflect`, `/docs`, and `/resonate` remain standalone commands.
+
 ## Runtime boundaries
 
 The catch-all matchers inspect tool calls dispatched through the runtime's hooks. While a report awaits human input, the gate permits exact known read tools, human-question tools, input-free polling where supported, and bounded literal shell reads. Unknown tools, worker follow-ups, general scripts, and unsupported shell forms are denied on covered paths. Use display forms such as `cat`, `head`, `tail`, `rg`, or `sed -n '1,10p' file` to clarify a report.
