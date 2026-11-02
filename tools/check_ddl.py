@@ -2,9 +2,10 @@
 """Check maintained DDL structure and documentation, without running a model.
 
 The command check validates each phase and operand block, not aggregate word
-counts. The protocol check (P1-P12 of the instruction-set specification)
+counts. The protocol check (P1-P15 of the instruction-set specification)
 counts the units the protocol must define: sections, table rows, procedure
-steps, literals and keywords; it reads the maintained text only. The
+steps, literals, keywords, byte budgets and duplicated sentences; it reads the
+maintained text only. The
 documentation check preserves the existing language/terminology checks. Model
 loading and human choice delivery need separate live tests.
 """
@@ -22,8 +23,11 @@ PROTOCOL = "claude-code/skills/ddl-protocol"
 REFERENCES = ("approval", "close", "command-authoring", "git-review", "notebook", "parallel-work")
 HOSTS = ("claude-start", "claude-approval", "claude-git", "claude-parallel",
          "codex-start", "codex-approval", "codex-git", "codex-parallel")
+# The author-only examples file: outside the execution paths, home of the command template (P15).
+EXAMPLES = "references/examples.md"
+EXAMPLES_H2 = ("Command template", "Approval report", "Close report", "Git review request", "Notebook tables")
 ENTRY_H2 = ("Start", "Instruction set", "Pending STOP", "Reading map", "Interruption")
-REFERENCE_H2 = ("Read when", "Syntax", "Fields", "Procedure", "Formats", "Example", "Boundaries", "Runtime")
+REFERENCE_H2 = ("Read when", "Syntax", "Fields", "Procedure", "Formats", "Boundaries", "Runtime")
 HOST_H2 = ("Read when", "Mapping", "Observed", "Coverage")
 DIRECTIVES = ("# header", "## Usage", "### Phase", "+++DETECT", "+++STOP", "+++SWARM", "+++NEVER",
               "+++Report", "+++DDL_PHASE", "+++DDL_REPORT")
@@ -89,8 +93,7 @@ BOUNDARIES = {
     "command-authoring": ("project copy", "overlay", "no notebook", "missing reference", "tool name",
                           "domain phase name", "read-only report"),
 }
-START_CONCERNS = ("Invocation", "Protocol lookup", "Runtime guidance", "Session start", "Compaction",
-                  "Notebook loading", "Project copy", "Adapter paths", "+++DDL_PHASE", "+++DDL_REPORT")
+START_CONCERNS = ("Session start", "Compaction", "Notebook loading", "Adapter paths", "+++DDL_PHASE", "+++DDL_REPORT")
 PARALLEL_CONCERNS = ("Team primitive", "type: Explore", "type: general-purpose", "spawn", "Background", "Completion",
                      "Nesting", "Concurrency", "Fallback")
 APPROVAL_CONCERNS = ("Choice tool", "Subset", "Receipt", "Timeout", "Mutating tools", "Human input boundary", "Hook")
@@ -100,10 +103,40 @@ CONCERNS = {"claude-start": START_CONCERNS, "codex-start": START_CONCERNS,
             "claude-approval": APPROVAL_CONCERNS, "codex-approval": APPROVAL_CONCERNS,
             "claude-git": GIT_CONCERNS, "codex-git": GIT_CONCERNS}
 HOST_SHARED = {"approval": "approval.md", "parallel": "parallel-work.md", "git": "git-review.md"}
+# Reading budgets in UTF-8 bytes (P13): each path adds its files to the previous one and is counted per host;
+# file names are the entry or a path under references/ with {host} filled in.
+BUDGET_PATHS = (
+    ("validate", 19000, ("SKILL.md", "runtimes/{host}-start.md", "approval.md", "runtimes/{host}-approval.md")),
+    ("draft", 27000, ("notebook.md",)),
+    ("realize-plan", 36000, ("parallel-work.md", "runtimes/{host}-parallel.md")),
+    ("realize-close", 50000, ("close.md", "git-review.md", "runtimes/{host}-git.md")),
+)
+EXECUTION_LIMIT = 58753
+AUTHOR_ONLY = ("command-authoring",)  # references read by authors only: outside the execution total with examples.md
+INLINE_CODE = re.compile(r"`+[^`\n]*`+")
 
 
 def read(relative):
     return (ROOT / relative).read_text(encoding="utf-8")
+
+
+def protocol_path(name):
+    """The repository path of a protocol file named as the entry (SKILL.md) or relative to references/."""
+    return f"{PROTOCOL}/{name}" if name == "SKILL.md" else f"{PROTOCOL}/references/{name}"
+
+
+def protocol_files():
+    """Every maintained protocol file: the entry, the shared references, examples.md, the host files (P10, P14)."""
+    files = [f"{PROTOCOL}/SKILL.md"] + [f"{PROTOCOL}/references/{n}.md" for n in REFERENCES] + [f"{PROTOCOL}/{EXAMPLES}"]
+    return files + [f"{PROTOCOL}/references/runtimes/{n}.md" for n in HOSTS]
+
+
+def byte_size(relative):
+    """The size of a file in bytes, or None when it is missing (reported by P1, P2, P9 or P15)."""
+    try:
+        return (ROOT / relative).stat().st_size
+    except OSError:
+        return None
 
 
 def visible_lines(text):
@@ -208,7 +241,7 @@ def fenced_blocks(lines):
 
 def links(text):
     """The targets of inline Markdown links outside code spans."""
-    return re.findall(r"\[[^\]]*\]\(\s*<?([^\s)>]+)>?(?:\s+[^)]*)?\)", re.sub(r"`+[^`\n]*`+", "", text))
+    return re.findall(r"\[[^\]]*\]\(\s*<?([^\s)>]+)>?(?:\s+[^)]*)?\)", INLINE_CODE.sub("", text))
 
 
 def local_targets(text, directory):
@@ -250,16 +283,16 @@ def situations(bodies):
 # The authoring template: the single source of the shared Phase 0 lines (R4, P8).
 
 def authoring_template():
-    """(frontmatter name, template text or None, errors): the ````markdown fence under ## Example."""
-    path = f"{PROTOCOL}/references/command-authoring.md"
+    """(frontmatter name, template text or None, errors): the ````markdown fence under ## Command template of examples.md."""
+    path = f"{PROTOCOL}/{EXAMPLES}"
     try:
         text = read(path)
     except OSError:
         return None, None, [f"authoring template: missing {path}"]
-    blocks = [content for token, info, content in fenced_blocks(h2_sections(text)[1].get("Example", []))
+    blocks = [content for token, info, content in fenced_blocks(h2_sections(text)[1].get(EXAMPLES_H2[0], []))
               if token[0] == "`" and len(token) >= 4 and info == "markdown"]
     if not blocks:
-        return None, None, [f"authoring template: {path} needs a ````markdown fence under ## Example"]
+        return None, None, [f"authoring template: {path} needs a ````markdown fence under ## {EXAMPLES_H2[0]}"]
     template = "\n".join(blocks[0]) + "\n"
     name = re.search(r"(?m)^name:\s*(\S+)", template)
     return (name[1] if name else "command-name"), template, []
@@ -412,7 +445,7 @@ def check_commands():
     return errors
 
 
-# Protocol mode: P1-P10 (P11 lives in check_command, P12 in tools/test_protocol.py).
+# Protocol mode: P1-P10 and P13-P15 (P11 lives in check_command, P12 in tools/test_protocol.py).
 
 def check_entry():
     """P1: the entry's sections, the Instruction set table and the Reading map."""
@@ -445,9 +478,10 @@ def check_entry():
     if found is None or header_text(found[0]) != "| Before | Read |":
         err("Reading map table header must be | Before | Read |")
     else:
-        if len(found[1]) < 6:
-            err(f"Reading map needs at least 6 rows, got {len(found[1])}")
+        if len(found[1]) < 7:
+            err(f"Reading map needs at least 7 rows, got {len(found[1])}")
         base = ROOT / PROTOCOL
+        examples = (base / EXAMPLES).resolve()
         for row in found[1]:
             targets = local_targets(row[1], base) if len(row) > 1 else set()
             if not targets:
@@ -455,11 +489,13 @@ def check_entry():
             for target in targets:
                 if not target.is_file() or not target.is_relative_to((base / "references").resolve()):
                     err(f"Reading map row {plain(row[0])!r}: link target is not a file under references/: {target.name}")
+        if not any(examples in local_targets(row[1], base) for row in found[1] if len(row) > 1):
+            err(f"Reading map needs a row whose Read cell links {EXAMPLES}")
     return errors
 
 
 def check_schema(label, text, titles, bodies):
-    """P2: the eight sections of a shared reference, their emptiness rules and the Runtime links."""
+    """P2: the seven sections of a shared reference, their emptiness rules and the Runtime links."""
     errors = []
     err = lambda message: errors.append(f"P2: {label}: {message}")  # noqa: E731
     if titles != list(REFERENCE_H2):
@@ -521,8 +557,8 @@ def check_notebook(text, bodies):
     rows = fields_rows(ident, label, bodies, errors)
     if rows is not None and [plain(row[0]) for row in rows] != list(FIELDS_ROWS["notebook"]):
         errors.append(f"{ident}: {label}: Fields rows must be exactly {list(FIELDS_ROWS['notebook'])} in order")
-    defined = section_text(bodies.get("Formats", [])) + "\n" + section_text(bodies.get("Example", []))
-    errors += literal_errors(ident, label, "Formats/Example", defined, FORMATS["notebook"])
+    defined = section_text(bodies.get("Formats", []))
+    errors += literal_errors(ident, label, "Formats", defined, FORMATS["notebook"])
     for command in NOTEBOOK_WRITERS:
         try:
             uses = read(f"claude-code/skills/{command}/SKILL.md")
@@ -531,7 +567,7 @@ def check_notebook(text, bodies):
             continue
         for mark in NOTEBOOK_MARKS:
             if mark in uses and mark not in defined:
-                errors.append(f"{ident}: {label}: /{command} writes {mark!r} but Formats/Example does not define it")
+                errors.append(f"{ident}: {label}: /{command} writes {mark!r} but Formats does not define it")
     errors += keyword_errors(ident, label, "Boundaries", situations(bodies), BOUNDARIES["notebook"])
     return errors
 
@@ -578,32 +614,6 @@ def check_git_review(text, bodies):
     if count < 4:
         err(f"Procedure needs at least 4 steps, got {count}")
     errors += literal_errors(ident, label, "Formats", section_text(bodies.get("Formats", [])), FORMATS["git-review"])
-    blocks = [content for _, info, content in fenced_blocks(bodies.get("Example", [])) if info == "json"]
-    if not blocks:
-        err("Example needs a ```json fence")
-    else:
-        try:
-            data = json.loads("\n".join(blocks[0]))
-        except ValueError as exc:
-            err(f"Example JSON does not parse: {exc}")
-            data = None
-        if data is not None:
-            if not isinstance(data, dict) or "language" not in data:
-                err("Example JSON needs a language key")
-            operations = data.get("operations") if isinstance(data, dict) else None
-            if not isinstance(operations, list) or not operations:
-                err("Example JSON needs a non-empty operations list")
-            else:
-                commands = []
-                for operation in operations:
-                    if not isinstance(operation, dict) or "cwd" not in operation or "command" not in operation:
-                        err("every Example operation needs cwd and command")
-                        continue
-                    command = operation["command"]
-                    commands.append(" ".join(map(str, command)) if isinstance(command, list) else str(command))
-                for kind in ("git commit", "git push"):
-                    if not any(kind in command for command in commands):
-                        err(f"Example operations need a {kind} operation")
     errors += keyword_errors(ident, label, "Boundaries", situations(bodies), BOUNDARIES["git-review"])
     return errors
 
@@ -691,13 +701,11 @@ def check_runtimes():
 def check_vocabulary():
     """P10: no section signs anywhere; runtime tool names only under references/runtimes/."""
     errors = []
-    files = [f"{PROTOCOL}/SKILL.md"] + [f"{PROTOCOL}/references/{n}.md" for n in REFERENCES]
-    files += [f"{PROTOCOL}/references/runtimes/{n}.md" for n in HOSTS]
-    for path in files:
+    for path in protocol_files():
         try:
             text = read(path)
         except OSError:
-            continue  # reported by P1, P2 or P9
+            continue  # reported by P1, P2, P9 or P15
         label = path[len(PROTOCOL) + 1:]
         if "§" in text:
             errors.append(f"P10: {label}: contains a section sign (§); refer to procedures by name and link")
@@ -705,6 +713,107 @@ def check_vocabulary():
             names = sorted({m[1] for m in TOOL_NAMES.finditer(text)})
             if names:
                 errors.append(f"P10: {label}: runtime tool names belong under references/runtimes/: {', '.join(names)}")
+    return errors
+
+
+def check_examples():
+    """P15: examples.md has the five example sections, each fenced, a parsable Git review request and no shared Phase 0 line outside its template fence."""
+    path = f"{PROTOCOL}/{EXAMPLES}"
+    try:
+        text = read(path)
+    except OSError:
+        return [f"P15: missing {path}"]
+    errors = []
+    err = lambda message: errors.append(f"P15: examples.md: {message}")  # noqa: E731
+    titles, bodies = h2_sections(text)
+    if not re.search(r"(?m)^# \S", "\n".join(visible_lines(text))):
+        err("needs an H1 title")
+    if sorted(titles) != sorted(EXAMPLES_H2):
+        err(f"H2 headings must be exactly {list(EXAMPLES_H2)}, got {titles}")
+    for title in titles:
+        if not fenced_blocks(bodies.get(title, [])):
+            err(f"{title} needs a fenced block")
+    for prefix in SHARED_PREFIXES:
+        if any(line.startswith(prefix) for line in visible_lines(text)):
+            err(f"shared Phase 0 line repeated outside the template fence: {prefix!r}")
+    section = EXAMPLES_H2[3]
+    blocks = [content for _, info, content in fenced_blocks(bodies.get(section, [])) if info == "json"]
+    if not blocks:
+        err(f"{section} needs a ```json fence")
+        return errors
+    try:
+        data = json.loads("\n".join(blocks[0]))
+    except ValueError as exc:
+        err(f"{section} JSON does not parse: {exc}")
+        return errors
+    if not isinstance(data, dict) or "language" not in data:
+        err(f"{section} JSON needs a language key")
+    operations = data.get("operations") if isinstance(data, dict) else None
+    if not isinstance(operations, list) or not operations:
+        err(f"{section} JSON needs a non-empty operations list")
+        return errors
+    commands = []
+    for operation in operations:
+        if not isinstance(operation, dict) or "cwd" not in operation or "command" not in operation:
+            err(f"every {section} operation needs cwd and command")
+            continue
+        command = operation["command"]
+        commands.append(" ".join(map(str, command)) if isinstance(command, list) else str(command))
+    for kind in ("git commit", "git push"):
+        if not any(kind in command for command in commands):
+            err(f"{section} operations need a {kind} operation")
+    return errors
+
+
+def check_budget():
+    """P13: the cumulative byte budgets of the validate, draft, realize-plan and realize-close paths per host, and the execution total."""
+    errors = []
+    for host in ("claude", "codex"):
+        files, total = [], 0
+        for name, limit, additions in BUDGET_PATHS:
+            for file in (addition.format(host=host) for addition in additions):
+                size = byte_size(protocol_path(file))
+                if size is not None:
+                    files.append(file)
+                    total += size
+            if total > limit:
+                errors.append(f"P13: {host} {name}: {total} bytes exceeds {limit} ({' + '.join(files)})")
+    execution = ["SKILL.md"] + [f"{n}.md" for n in REFERENCES if n not in AUTHOR_ONLY]
+    execution += [f"runtimes/{n}.md" for n in HOSTS]
+    sizes = [byte_size(protocol_path(file)) for file in execution]
+    total = sum(size for size in sizes if size is not None)
+    if total > EXECUTION_LIMIT:
+        errors.append(f"P13: execution total: {total} bytes exceeds {EXECUTION_LIMIT}")
+    return errors
+
+
+def sentences(text):
+    """[(line number, normalized sentence)] of the prose outside fences and code spans: split at `.`, `;`, `:` and
+    line ends, reduced to lowercase letters and single spaces, 60 or more characters long (P14)."""
+    result = []
+    for number, line in enumerate(visible_lines(text), 1):
+        for piece in re.split(r"[.;:]", INLINE_CODE.sub("", line)):
+            normalized = " ".join(re.sub(r"[^a-z ]+", " ", piece.lower()).split())
+            if len(normalized) >= 60:
+                result.append((number, normalized))
+    return result
+
+
+def check_duplicates():
+    """P14: no sentence of 60 or more normalized characters appears in two protocol files or twice in one."""
+    errors, places = [], {}
+    for path in protocol_files():
+        try:
+            text = read(path)
+        except OSError:
+            continue  # reported by P1, P2, P9 or P15
+        label = path[len(PROTOCOL) + 1:].removeprefix("references/")  # named as in P13
+        for number, sentence in sentences(text):
+            places.setdefault(sentence, []).append((label, number))
+    for sentence, found in places.items():
+        first = f"{found[0][0]}:{found[0][1]}"
+        for label, number in found[1:]:
+            errors.append(f'P14: duplicate sentence: {first} and {label}:{number}: "{sentence[:60]}"')
     return errors
 
 
@@ -724,6 +833,9 @@ def check_protocol():
         errors += checks[name](text, bodies)
     errors += check_runtimes()
     errors += check_vocabulary()
+    errors += check_examples()
+    errors += check_budget()
+    errors += check_duplicates()
     return errors
 
 

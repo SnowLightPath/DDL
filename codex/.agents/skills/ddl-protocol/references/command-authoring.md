@@ -2,14 +2,10 @@
 
 ## Read when
 
-Read this before creating or changing a DDL command for either host. The
-command supplies its phases, work, detection targets, report contract, and
-local constraints; the protocol supplies the STOP, parallel, notebook, Close,
-and Git semantics through [Approval](approval.md),
-[Parallel work](parallel-work.md), [Notebook](notebook.md), [Close](close.md),
-and [Git review](git-review.md). The entry's Instruction set gives each
-directive's count and placement; this file gives the authoring grammar, the
-template, and the checks.
+Read before creating or changing a DDL command for either host; the command
+supplies its phases, work, detection targets, report contract and constraints,
+and this file supplies the grammar and the checks (the template is in
+[Examples](examples.md)).
 
 ## Syntax
 
@@ -31,7 +27,7 @@ template, and the checks.
 
 ### Phase 0: INIT
 
-<the three shared Phase 0 lines, verbatim from the Example>
+<the three shared Phase 0 lines, verbatim from the template in Examples>
 3. Read `design.md` when it is not already in context — <what to extract>
 4. If no `design.md` → <fallback behavior>
 
@@ -75,15 +71,14 @@ template, and the checks.
 
 ## Procedure
 
-1. Copy the template in Example into `.claude/skills/<name>/SKILL.md` (Claude
-   Code) or `.agents/skills/<name>/SKILL.md` (Codex) and set `name` in the
-   frontmatter to the directory name.
-2. Keep the shared Phase 0 lines verbatim: the project-copy sentence and the
-   numbered lines 1 and 2 are the single source for every command, and the
-   checker compares every command against the template's lines. Edit lines 3
-   and 4 only.
-3. Define the phases, numbered from 0 and consecutive, with the roles in
-   Fields; INIT is first and REPORT carries `+++STOP: always`.
+1. Copy the template in [Examples](examples.md) into
+   `.claude/skills/<name>/SKILL.md` (Claude Code) or
+   `.agents/skills/<name>/SKILL.md` (Codex) and set `name` in the frontmatter
+   to the directory name.
+2. Keep the shared Phase 0 lines (Formats) verbatim and edit lines 3 and 4
+   only; the checker compares every command against the template.
+3. Define the phases, numbered from 0 and consecutive, with the roles and
+   requirements in Fields.
 4. Write the detection targets: one `+++DETECT:` block per phase that needs
    them, `D<n>` lines unique and ascending from D1 across the whole command,
    each trigger operationally verifiable.
@@ -94,12 +89,11 @@ template, and the checks.
    out, by the Syntax and Fields of [Parallel work](parallel-work.md); keep
    `each` self-contained and end it with the report to the lead.
 7. Write `+++Report:` with the labels in Formats, naming the decision,
-   evidence, and consequences this command requires; a read-only report uses
-   `Outcome:` and requests no approval.
+   evidence, and consequences this command requires.
 8. Write `## Constraints` with at least one `+++NEVER:` line; put global
    prohibitions and `G<n>` detections in the guidance file, not in the command.
-9. Place project facts in `design.md` or a `commands/<name>.md` overlay; never
-   name a runtime tool in the command file.
+9. Place project facts in `design.md` or a `commands/<name>.md` overlay
+   (Boundaries), never in the command file.
 10. Run `python3 tools/check_ddl.py commands` (or the project's equivalent) and
     fix every reported line. For Codex, run the generator
     (`tools/sync_mirrors.py` in the DDL repository): it derives the `$name`
@@ -151,135 +145,30 @@ policy:
   `Consequence:`, `Review detail:`, and `Choices:` lines; an informational
   report writes `Outcome:` in place of `Decision:`.
 - Constraint: `+++NEVER:` followed by one prohibition in the imperative.
-- Runtime markers, never written as literal output in a command file:
-  `+++DDL_PHASE: <PhaseName>` is emitted at runtime on the first line of a
-  mutating phase (required in Codex, recommended in long Claude Code
-  sessions), and `+++DDL_REPORT` is emitted before every STOP report.
+- Runtime markers `+++DDL_PHASE: <PhaseName>` and `+++DDL_REPORT`: a command
+  file writes them only inside a rule, never as literal output (entry:
+  Instruction set).
 - Shared Phase 0 lines: the project-copy sentence and numbered lines 1 and 2
-  of the template in Example are the only copy; they appear nowhere else in
-  this file.
-
-## Example
-
-````markdown
----
-name: command-name
-description: One-line intent
-argument-hint: "[arg]"
-disable-model-invocation: true
-metadata:
-  short-description: Short name
----
-
-# command-name
-
-One-line intent.
-
-## Usage
-
-- `/command-name` — default behavior
-- `/command-name <arg>` — behavior with an argument
-
-## Phases
-
-### Phase 0: INIT
-
-A command run from a user-level install follows the project's own copy when one exists (`.claude/skills/<name>/SKILL.md` in Claude Code, `.agents/skills/<name>/SKILL.md` in Codex, or the file the project's instruction file names as the command's source): the project's version is the one that runs.
-
-1. Read the DDL protocol when it is not already in context: the project's copy when present (`.claude/skills/ddl-protocol/SKILL.md` in Claude Code, `.agents/skills/ddl-protocol/SKILL.md` in Codex, or the file the project's instruction file names as the protocol); otherwise the user-level copy (`$HOME/.claude/skills/ddl-protocol/SKILL.md` in Claude Code, `$HOME/.codex/skills/ddl-protocol/SKILL.md` in Codex). Complete its Start procedure before continuing.
-2. Read project-local runtime guidance when it is not already in context (the runtime loads `AGENTS.md` for Codex, and `CLAUDE.md` or `.claude/CLAUDE.md` for Claude Code, at session start), and any applicable command overlay.
-3. Read `design.md` when it is not already in context — extract relevant items
-4. If no `design.md` → fallback behavior
-
-### Phase 1: SURVEY
-
-+++SWARM: 2+ scopes in design.md
-
-```
-  team: command-survey
-  spawn: reader-{scope}
-  type: Explore
-  max: 5
-  batch: auto
-  each: |
-    Scan {scope} for the items this command needs.
-    Report findings to the lead when done.
-  collect: lead merges all scope findings
-```
-
-### Phase 2: WORK
-
-Core activity here.
-
-+++DETECT:
-  D1: name — trigger condition
-  D2: name — trigger condition
-  D3: name — trigger condition
-  D4: name — trigger condition
-  D5: name — trigger condition
-
-### Phase 3: REPORT
-
-+++STOP: always
-
-Emit `+++DDL_REPORT`, then the report below; follow Approval to present it and ask.
-
-+++Report:
-Decision: {approve the complete current review set, select or revise it, or hold}
-Recommendation: {preferred action, its reason, and any material downside or unknown}
-Consequence: {what each selection authorizes or changes}
-Review detail: {the complete evidence this command requires, accessible before approval}
-Choices: {one batch approval interaction through Approval; item selection only when requested}
-
-### Phase 4: EXECUTE
-
-**Pre-condition.** Enter this phase only after explicit user approval of its scope at the Phase 3 STOP gate (per Approval). If the actual answer does not authorize this work, return to Phase 3 and re-present the current decision.
-
-+++SWARM: 2+ approved changes across scopes
-
-```
-  team: command-execute
-  spawn: writer-{scope}
-  type: general-purpose
-  max: 5
-  batch: auto
-  each: |
-    Apply to {scope} the approved changes listed in this prompt, and nothing else.
-    Report completion to the lead when done.
-  collect: lead verifies all changes applied
-```
-
-### Phase 5: VERIFY
-
-Re-scan the changed scopes and summarize. Name a next command only when work this command cannot do itself remains, with the reason.
-
-## Constraints
-
-+++NEVER: prohibition
-+++NEVER: prohibition
-+++NEVER: prohibition
-````
+  of the template in [Examples](examples.md), the only copy; this file never
+  repeats them.
 
 ## Boundaries
 
 | Situation | Behavior |
 |---|---|
-| A project copy of the command exists (`.claude/skills/<name>/SKILL.md`, `.agents/skills/<name>/SKILL.md`, or the file the project's instruction file names) | The project copy runs even when a user-level copy exists and the host lists the user-level skill first; Phase 0 follows the project copy. An older self-contained project copy follows its own rules. |
-| A `commands/<name>.md` overlay exists at the project root | It adds project facts to the command unless it declares itself a full override; read it in Phase 0 line 2 when it applies. |
+| A project copy of the command exists (`.claude/skills/<name>/SKILL.md`, `.agents/skills/<name>/SKILL.md`, or the file the project's instruction file names) | It runs even when a user-level copy exists: Claude Code lists the user-level skill first and Codex lists both, and Phase 0 follows the project copy either way. An older self-contained project copy follows its own rules. |
+| A `commands/<name>.md` overlay exists at the project root | It adds project facts to the command unless it declares itself a full override; Phase 0 line 2 reads it when it applies. |
 | No notebook: `design.md` is absent and the project names no other file | Phase 0 line 4 states the command's fallback: refuse with the reason, or run the reduced behavior the command names. Never invent notebook sections. |
-| Missing reference: a required protocol reference is absent, unreadable, or of uncertain version | Stop the affected operation and say what could not be confirmed; never fill it from another installation. |
-| A runtime tool name would explain a step | Do not write it in the command file; state the meaning, and let the host instructions under `runtimes/` map it. |
-| A domain phase name (SCAN, COMPARE, COMMIT, REVIEW) | Map it to a role in Fields; keep INIT first and REPORT with `+++STOP: always`. A REVIEW phase that carries `+++Report:` counts as REPORT. |
-| The phase makes a read-only report | Emit `+++DDL_REPORT`, write `Outcome:` in place of `Decision:`, state that no approval is needed, and end the turn at the STOP; invent no approval request. |
+| Missing reference: a required protocol reference is absent, unreadable, or of uncertain version | Stop as the entry's Start says. |
+| A runtime tool name would explain a step | State the meaning; the host files under `runtimes/` map it (entry: Start). |
+| A domain phase name (SCAN, COMPARE, COMMIT, REVIEW) | Map it to a role in Fields. |
+| The phase makes a read-only report | Emit `+++DDL_REPORT`, write `Outcome:` in place of `Decision:`, and end the turn at the STOP with no approval request (Approval Boundaries: informational). |
 
 ## Runtime
 
-- Read [Claude Code](runtimes/claude-start.md) for the skill layout
-  (`.claude/skills/<name>/SKILL.md`), the Claude Code frontmatter, and how a
-  command is invoked and loaded.
-- Read [Codex](runtimes/codex-start.md) for the Codex layout
-  (`.agents/skills/<name>/SKILL.md`), its frontmatter with `agents/openai.yaml`,
-  and the generation from the Claude Code file.
-- The checker enforces the command structure mechanically, and the host
-  adapters enforce the pending STOP and the Git review at runtime; every other
-  rule in a command remains an instruction.
+- Read [Claude Code](runtimes/claude-start.md) for the Claude Code adapter
+  paths a command's Phase 0 and the gate rely on; the skill layout is in
+  Procedure 1 and the frontmatter in Formats.
+- Read [Codex](runtimes/codex-start.md) for the Codex adapter paths; the Codex
+  skill is generated from the Claude Code file (Procedure 10), so author the
+  Claude Code form first.

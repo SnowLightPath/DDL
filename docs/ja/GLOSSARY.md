@@ -93,9 +93,10 @@
 | instruction-set reference | 命令セット仕様 |  | protocol の形式（P16）。「命令セットの参照資料」とは訳さない |
 | entry（protocol の入口。`SKILL.md`） | 入口 | エントリ | 命令一覧と読み込み地図を持つ |
 | reading map | 読み込み地図 | 読み込みマップ |  |
-| reference file / references（protocol の） | 参照資料 |  | 操作ごとの資料（approval.md など）。host file とは区別する |
+| reference file / references（protocol の） | 参照資料 |  | 操作ごとの資料（approval.md など）。作者向けの examples.md は「例の資料」と書く。host file とは区別する |
 | command authoring（参照資料の名） | コマンド作成 |  | 「コマンド作成の参照資料」 |
-| command template | コマンドのテンプレート | 雛形 |  |
+| command template | コマンドのテンプレート | 雛形 | examples.md にある |
+| examples file（`references/examples.md`、作者向けの参照資料） | 例の資料 |  | 形式が分からないときとコマンド作成のときにだけ読む。「例N」（Example N）とは別 |
 | syntax | 構文 |  | 参照資料の節 Syntax |
 | fields / operands | オペランド |  | SWARM の operand block。参照資料の節 Fields |
 | procedure | 手順 |  | 参照資料の節 Procedure |

@@ -2,114 +2,69 @@
 
 ## Read when
 
-Read this when a `+++STOP` fires (`always`, or `on D<n>` with that detection triggered) or when a command reaches a human gate written in design.md's Direction or Acceptance Gates. The command's `+++Report:` block supplies what the human must review; this procedure defines how to present it, ask, wait and resume. Passing a STOP never authorizes a commit or push, which need the content-bound [Git review](git-review.md); the marks that record a passed gate are defined in [Notebook](notebook.md).
+Read when a `+++STOP` fires (`always`, or `on D<n>` with that detection triggered) or a command reaches a design.md human gate; the command's `+++Report:` block supplies what the human reviews; this procedure presents it, asks, waits and resumes.
 
 ## Syntax
-
-The two directive forms:
 
 ```
 +++STOP: always
 +++STOP: on D<n>
 ```
 
-The report skeleton emitted at runtime when the STOP fires:
-
-```
-+++DDL_REPORT
-Decision: <the decision needed>
-Recommendation: <the recommended action and its reason>
-Consequence: <what the selection authorizes or changes>
-Review detail: <where the complete evidence is, accessible before approval>
-Choices: <approve all | select a subset or request changes | hold>
-```
-
-`Outcome:` replaces `Decision:` in an informational report (completed or read-only work).
-
 ## Fields
 
 | Form | Fires when |
 |---|---|
-| `always` | The phase is reached. Required at the REPORT phase; the phase after it opens with a `**Pre-condition.**` line and is entered only after approval at this STOP, otherwise the command returns and re-emits the report |
-| `on D<n>` | Detection D<n> of the phase's `+++DETECT:` block has triggered. Triggered detections at the same boundary share one report |
-| design.md human gate | The command reaches a human gate in the `Gate` column of Direction or in Acceptance Gates. It runs as a STOP with the same procedure; a gate marked `approved in advance (<date>)` does not fire |
+| `always` | The phase is reached; the next phase opens only after approval here |
+| `on D<n>` | Detection D<n> of the phase's `+++DETECT:` block has triggered |
+| design.md human gate | A human gate in Direction's `Gate` column or Acceptance Gates is reached; runs as a STOP |
 
 ## Procedure
 
-A STOP is an executable halt, not a label. When it fires, execute these steps in order, with no exception:
+Run these steps in order:
 
-1. **Present.** Emit `+++DDL_REPORT` on its own line, then a short report:
-   - Lead with the decision needed, the recommended action and its reason, and what the selection will authorize or change.
-   - Write the report in the user's language and in plain prose. Include only information that helps this decision; do not manufacture technology choices or status fields to fill a template.
-   - Keep material downsides, unresolved questions and blockers beside the decision. Put supporting inventories, commands, output and rationale in separately accessible detail; make all content the command requires reviewable before approval.
-   - Use a table only when it helps a genuine comparison; a table is never the default report container.
-   - Batch approval is the default: give the current proposals stable IDs, a brief shared purpose, and a concise numbered list of the recommended actions and their material effects. Offer incompatible alternatives as separate complete plans, or leave the unresolved portion pending; never bundle contradictory actions into approve-all.
-   - Name in the same report every design.md human gate whose evidence is ready at this boundary, with its evidence, and every detection that needs a STOP at this boundary. Do not postpone a prerequisite gate to bundle it with a later gate whose evidence is not ready; later boundaries still apply.
-2. **Ask.** Request approval for the complete current review set in one interaction through an available, permitted native choice (the host's choice tool):
-   - Offer three actions and explain each one's consequence: approve all displayed recommendations, select a subset or request changes, hold.
-   - A recommended or preselected choice is not submitted approval. Free-text additions are optional; never require the user to type a selection or a list of IDs.
-   - Open item selection only when the user requests it. Use the interface's actual schema: a native checklist, multi-select or grouped form with one submission where the host supports it, otherwise complete compatible subsets as native choices. Do not default to a serial approval question per proposal.
-   - Rebuild materially changed proposals for review, preserving unaffected IDs and any still-valid approval. Group independent clarification questions where possible; clarification is not approval.
-   - Availability means the question stays answerable throughout the required wait; tool presence or a request receipt alone is not availability. On a host whose interface cannot take a real answer, or where none is permitted for this purpose, state that limitation and that the work remains unapproved, then end the turn. Do not substitute a typed-choice request or switch runtime modes to obtain a forbidden interface.
-3. **Wait and resume.** Make the native question the final tool interaction while waiting at this STOP:
-   - A synchronous interface waits for the actual human answer; a mere receipt (an accepted flag) is not an answer. An asynchronous interface ends the assistant turn after the request is accepted and waits for the actual answer. Call no other tool and start or continue no worker until that input arrives.
-   - A host-required final message after the request contains only the same self-contained report and the pending status, with no new decision or work.
-   - A synchronous human answer is an input boundary even within the same assistant turn; do not ask the user to retype it on another turn.
-   - Resume only after an actual, explicitly submitted human answer to the current report authorizes the operation and scope now proposed. Verify the question/report association and the selected action rather than searching for an approval word in an arbitrary message. A voluntary, unambiguous written approval such as `approve`, `yes`, `OK` or its equivalent remains valid for the report it clearly addresses.
-   - Advance approval applies only to human gates declared in design.md. When the answer names such gates listed in the report, or says explicitly that they need not stop (for example "approve; don't stop at S1 and S4"), those gates do not fire: write `approved in advance (<date>)` after each at once, pass them without ending the turn, and list each with what it would have shown in the command's REPORT. A general approval (`approve`, `OK`, `approve all`) approves the report and waives no gate. Advance approval never covers a STOP written in a command file, an outward-facing action (push, publish, send, deploy), a destructive action, or a gate that was not in the approved report.
-   - Apply only the approved scope. One approve-all authorizes the displayed, mutually compatible recommendations and their stated resolutions; apply that set without asking again per proposal, file, section, language or state. It does not authorize hidden or future items, waive later STOPs, silently change a Binding Decision, or authorize an outward action the reviewed choice did not explicitly name. Mark each approved design.md gate passed without another question, and write every approval down as soon as it is given (Notebook).
+1. **Present.** Emit `+++DDL_REPORT` on its own line, then a short report (Formats):
+   - Lead with the decision, the recommended action and its reason, and what the selection authorizes or changes.
+   - Plain prose, only what helps this decision; invent no technology choice or status field to fill a template.
+   - Material downsides, open questions and blockers stay beside the decision; inventories, commands, output and rationale go into separate detail, reviewable before approval.
+   - Batch approval is the default: stable IDs, a brief shared purpose, a numbered list of recommended actions with their material effects; incompatible alternatives become separate complete plans or the unresolved part stays pending; never bundle contradictory actions into approve-all.
+   - Name every design.md human gate whose evidence is ready, with the evidence, and every detection that needs a STOP here; one submission passes them all, no re-ask per gate. Never postpone a prerequisite gate to bundle it with a later one whose evidence is not ready.
+2. **Ask.** Request approval for the complete current review set in one interaction through an available, permitted native choice with the three actions (Formats):
+   - A recommended or preselected choice is not submitted approval; free text is optional, a typed selection or ID list never required.
+   - Open item selection only on request, in the interface's actual schema: a native checklist, multi-select or grouped form with one submission where the host supports it, else complete compatible subsets as native choices; never a serial question per proposal.
+   - Rebuild materially changed proposals for review, preserving unaffected IDs and still-valid approval.
+3. **Wait and resume.** Make the native question the final tool interaction while waiting:
+   - Synchronous: wait for the actual human answer. Asynchronous: end the turn once the request is accepted; a host-required final message holds only the same report and the pending status.
+   - A synchronous answer is an input boundary even within the same turn; never ask the user to retype it.
+   - Resume only when a submitted answer to the current report authorizes the operation and scope now proposed: verify the question/report association and the selected action, not an approval word; a voluntary, unambiguous written `approve`, `yes` or `OK` stays valid for the report it clearly addresses.
+   - Advance approval covers only design.md human gates listed in the report, when the answer names them or says they need not stop: they do not fire; mark each at once (Formats), pass them without ending the turn, and list each in the REPORT with what it would have shown. A general approval (`approve`, `OK`, `approve all`) waives no gate; never waived: a command-file STOP, an outward action (push, publish, send, deploy), a destructive action, a gate absent from the approved report.
+   - Apply only the approved scope: one approve-all (Formats) needs no further question per proposal, file, section, language or state; it covers no hidden or future item, waives no later STOP, changes no Binding Decision silently and authorizes no outward action the reviewed choice did not name.
 
-Between a fired STOP and that answer, call no tool that mutates the work and start or continue no worker; the native question is the sole interaction exception and grants no work permission, and read-only tools may clarify the report contents before the question or after an actual clarification request, never begin the next phase. This rule overrides the momentum of phase ordering: "I already presented the plan in this turn, I might as well execute" is the exact failure mode a STOP exists to prevent.
+The entry's Pending STOP rule holds between the report and that answer and overrides phase momentum: "I already presented the plan, I might as well execute" is the failure mode a STOP exists to prevent.
 
 ## Formats
 
-- `+++DDL_REPORT` — emitted line-initial, on its own line, before every STOP report, in every runtime.
-- Report labels: `Decision:`, `Recommendation:`, `Consequence:`, `Review detail:`, `Choices:`; `Outcome:` replaces `Decision:` in an informational report. The labels order the content; the report stays prose, with a table only for a genuine comparison.
+- `+++DDL_REPORT` — on its own line before the report (rule: entry Instruction set).
+- Labels in order: `Decision:`, `Recommendation:`, `Consequence:`, `Review detail:`, `Choices:`; `Outcome:` replaces `Decision:` in an informational report. Prose; a table only for a genuine comparison.
 - The report is written in the user's language.
-- The three actions of the choice: `approve all` — apply every displayed compatible recommendation and its stated resolution and pass the gates named in the report; `subset` — select a subset or request changes, which rebuilds the report and returns to the STOP; `hold` — nothing is applied and the work stays unapproved.
-- `approved in advance (<date>)` — written after a design.md human gate at once when the user waives it; `passed <date>` — written when the gate is approved or its evidence is accepted (placement in Notebook).
-
-## Example
-
-```
-+++DDL_REPORT
-Decision: apply the three documentation fixes the Close scan found, or hold.
-Recommendation: approve all. R1–R3 are independent and each restores a name or
-version the change set already uses; nothing else under docs/ changes.
-  R1 README.md — the install section names version 0.7.0 instead of 0.6.0
-  R2 docs/en/extended.md — link to the renamed references/close.md
-  R3 docs/ja/extended.md — the same link in the Japanese counterpart
-Consequence: approve all applies R1–R3 to the working tree; they join the change
-set the Git review will show. Nothing is committed here. Gate S2 (human: the
-three screen states) is ready and named here; approve all passes it.
-Review detail: the three diffs follow this report; `git diff docs/` shows them
-in full; the S2 screenshots are under review/s2/.
-Choices: approve all (R1–R3, pass S2) / select a subset or request changes /
-hold (nothing applied, S2 stays open)
-```
-
-The native question that follows carries the same three actions as its options; the report above is what the submitted answer addresses.
+- The three actions: `approve all` — apply every displayed compatible recommendation with its stated resolution and pass the gates named in the report; `subset` — select a subset or request changes, rebuild the report and return to the STOP; `hold` — apply nothing; the work stays unapproved.
+- `approved in advance (<date>)` — written at once after a waived design.md human gate; `passed <date>` — when the gate is approved (placement: Notebook).
 
 ## Boundaries
 
 | Situation | Behavior |
 |---|---|
-| A receipt is returned (the request was accepted, no answer yet) | Not an answer and not approval. Synchronous: keep waiting. Asynchronous: end the turn; the work stays unapproved until the actual answer arrives |
-| Timeout, automatic submission or an auto-resolved choice | Not approval, even when an option is returned. Verify explicit human submission; re-present the current decision |
-| A conversation summary (compaction) or a restart replaced the report | A summary is not a user message and approves nothing. Rebuild the report from durable state (design.md, git, the files it described), emit it again with steps 1–2, and wait. An approval given after a summary applies only to a report emitted after that summary |
-| A worker notification (for example a background worker's completion) or an automatically submitted choice | Never approves anything; the STOP keeps waiting |
-| A message from another session or another teammate | Never approves anything |
-| Cancel, dismissal or silence | Not approval; the work stays unapproved. Re-present the current decision when the user returns to it |
-| No selection (an empty result) | Not approval, even when the host returns an option. Re-present the current decision |
-| A clarification request, a request for details, or a request to revise | Not approval. Answer with read-only tools or rebuild the report, then return to the STOP. Group independent clarification questions where possible |
-| An ambiguous or stale answer | Leaves the work unapproved; re-present the current decision |
-| Interface unavailable or not permitted for this purpose | State the limitation and that the work remains unapproved, then end the turn. No typed-choice fallback, no runtime mode switch |
-| Informational report (the phase only reports completed or read-only work) | Request no approval; state that none is needed and end the turn at the STOP. Name a next command only when work this command cannot do itself remains, with the reason; after Close, state that nothing remains. When a next action genuinely needs direction, its choice names that action; selecting a next command starts its own workflow and waives none of its STOPs |
-| Advance approval named in the answer | As step 3 says: only design.md human gates listed in the report; write `approved in advance (<date>)` at once and list what each would have shown. General approval waives no gate; a command STOP, an outward or destructive action and an unlisted gate are never waived |
-| An interrupted STOP (a restart interrupted the wait) | Cannot be resumed from the summary: run the command again from the phase that emitted the STOP, skipping the stages whose gates are marked passed. Write what the user approved as soon as it is approved: the draft to design.md, the passed gate to its mark, the delegated choice to Binding Decisions, the advance approval to the gate it waives, the approved `/realize` plan to Direction |
+| A receipt (accepted, no answer), a timeout or automatic submission, a worker notification, a message from another session or teammate, cancel, dismissal or silence, no selection, an ambiguous or stale answer | Not approval, even with an option returned; the work stays unapproved: keep waiting (synchronous) or end the turn (asynchronous); re-present the decision when the user returns |
+| A conversation summary (compaction) or a restart replaced the report | Approves nothing: rebuild it (the entry's Interruption) and rerun steps 1–2; an approval after a summary covers only a report emitted after it |
+| A clarification, details or revision request | Not approval: answer with read-only tools or rebuild the report, then return to the STOP; group independent questions |
+| Interface unavailable or not permitted for this purpose (available: answerable throughout the wait, not mere tool presence or a receipt) | State the limitation and that the work stays unapproved, then end the turn; no typed-choice fallback, no runtime mode switch |
+| Informational report (completed or read-only work) | Request no approval: say none is needed, end the turn at the STOP. Name a next command only when work this command cannot do remains, with the reason; after Close, state that nothing remains. A next action needing direction is named in the choice; a selected next command starts its own workflow and waives none of its STOPs |
+| Advance approval named in the answer | Step 3: only listed design.md human gates, marked at once (Formats) |
+| An interrupted STOP (a restart cut the wait) | Not resumable: rerun the command from the phase that emitted the STOP, skipping stages whose gates are marked passed. Write each approval at once where it lives: the draft and the approved `/realize` plan to design.md, a passed or waived gate to its mark, a delegated choice to Binding Decisions |
 
 ## Runtime
 
-- Read the selected host's choice procedure next: [Claude Code](runtimes/claude-approval.md) or [Codex](runtimes/codex-approval.md). It names the choice tool, its subset schema, what a receipt and a timeout look like, the mutating tools, and the hook wiring.
-- Where the adapter is installed, its gate hook enforces the pending-STOP denial on covered calls: after a line-initial `+++DDL_REPORT` and until the next human input, a catch-all matcher permits only the known safe reads, the host's human-question tool, input-free polling and bounded literal shell display forms (`cat`, `head`, `tail`, `rg`, `sed -n '1,10p' file`); general `sed`/`awk` programs, environment overrides, expansions, unknown options and unknown tools are denied. A question or its receipt does not clear the pending state; unknown syntax is a policy denial.
-- Limits: an internal hook error warns and fails open, and an asynchronously written transcript can let a same-turn continuation escape. The hook recognizes input boundaries, not semantic approval: the assistant still checks the selected action, scope, timeout and report association. A worker is read-only only where the adapter removes its writing tools, nowhere by guarantee. Everywhere, the rule holds as an instruction.
+- Read the host's choice procedure next: [Claude Code](runtimes/claude-approval.md) or [Codex](runtimes/codex-approval.md).
+- Gate coverage (one script, both hosts): after a line-initial `+++DDL_REPORT` until the next human input, a catch-all matcher permits only known safe reads, the host's question tool, input-free polling and bounded literal shell display forms (`cat`, `head`, `tail`, `rg`, `sed -n '1,10p' file`); general `sed`/`awk` programs, environment overrides, expansions, unknown options and tools are denied; a question or its receipt does not clear the pending state; unknown syntax is a policy denial. It covers calls the host dispatches to the hook, not a running process, a hook-bypassing transport or a hosted operation, and is no sandbox.
+- Limits: an internal hook error warns and fails open; an asynchronously written transcript can let a same-turn continuation escape (the Stop and UserPromptSubmit markers are the fallback); the hook sees an input boundary, not an answer's meaning, so action, scope, timeout and report association stay the assistant's judgment (step 3); simulated test dispatch proves neither the live choice interface nor the hook's trust.
+- Wiring, both hosts: PreToolUse with `matcher: "*"`, Stop, UserPromptSubmit and SessionStart (startup, resume, compact, fork, clear), each `timeout: 10`; state in `$TMPDIR/ddl-gate` (or `DDL_GATE_STATE_DIR`) as `<session>.pending`, `.warned` and `.git-epoch`.
