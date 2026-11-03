@@ -28,3 +28,4 @@ Read before a STOP or a design.md human gate, with the Approval operation; it na
 
 - The hook classifies only the calls Codex dispatches through the tool hooks.
 - The CLI route that clears the selector is not approval-capable; the GUI click reply is one host on one day and does not generalize.
+- Scope: outside a DDL project, one whose instruction file between the working directory and the repository root or `$HOME` carries the `→ DDL-PROTOCOL` line, each event of the hook returns at once.

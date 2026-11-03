@@ -43,11 +43,15 @@ Review the draft before saving it. Use `/realize` when you are ready to review a
 
 `draft` and `realize` accept a feature; `reflect`, `resonate`, `docs`, and `refactoring` accept a path; `validate` accepts a scope. You do not invoke `ddl-protocol` yourself.
 
+## Scope
+
+The hook acts only in a DDL project: one whose instruction file (`CLAUDE.md`, `.claude/CLAUDE.md`, or `AGENTS.md`, searched from the working directory up to the repository root or `$HOME`) contains the line `→ DDL-PROTOCOL`. The template above carries that line; the presence of `design.md` decides nothing. In any other project the hook returns at once on every event: no STOP state, no Git review, and `git commit` and `git push` run as usual. The decision is cached for the session and recomputed at each prompt and session start. `python3 .claude/hooks/ddl_gate.py status` (the same file sits under `$HOME/.claude/hooks/` with the environment install) prints one line saying whether the current directory is a DDL project and which file and line decided; `bash DDL/bin/doctor.sh --claude` prints the same line.
+
 ## Before recording or sending changes
 
 The agent shows the final staged diff, exact commit message, and any requested push destination in one Git review. Approve the ready set once through the native choices. A ready commit and its push share that approval; files and languages do not get separate questions. Before that review, the Close stage brings `design.md` and the documents up to date, so the commit is the last step and no command follows it.
 
-The hook independently checks the actual contents and submitted choice before ordinary `git commit` and `git push` calls. A general reply or an earlier implementation approval supplies no Git permission. Changed contents, message, destination, or an unprovable answer stop the Git action. Git reads remain available. A native permission policy that shows no command prompt does not skip this content check.
+The hook independently checks the actual contents and submitted choice before ordinary `git commit` and `git push` calls. A general reply or an earlier implementation approval supplies no Git permission. Changed contents, message, destination, or an unprovable answer stop the Git action. Git reads remain available. A native permission policy that shows no command prompt does not skip this content check. Inside a DDL project the hook itself asks natively before the reviewed push; DDL installs no separate `git push` permission rule, and the hook's behavior under modes that bypass permissions is unverified.
 
 ## Decision points
 
@@ -88,9 +92,9 @@ hosts/claude/
 ├── start.md           Phase 0 after the entry: paths, hook events, markers
 ├── approval.md        the choice tool, its timeout, mutating tools, permitted calls
 ├── parallel-work.md   type, spawn, background, completion on Claude subagents
-├── git-review.md      the helper path, the native request, the push rule
+├── git-review.md      the helper path, the native request, the hook's ask for the reviewed push
 ├── guidance.md        the instruction-file template, deployed as .claude/CLAUDE.md
-├── settings.json      the adapter: hook wiring, spawn depth 1, the git push ask rule, attribution off
+├── settings.json      the adapter: hook wiring, plus spawn depth 1 and attribution off, which stay global in the merged user-level settings
 ├── agents/            explorer.md and worker.md
 └── README.md          this guide (not deployed)
 ```
@@ -106,31 +110,29 @@ dist/claude/.claude/              → a project's .claude/
 └── skills/
     ├── <name>/SKILL.md           the eight commands, from skills/<name>/SKILL.md, byte for byte
     └── ddl-protocol/
-        ├── SKILL.md              entry: Start, the instruction set (ten directives), Pending STOP, Reading map, Interruption
-        ├── approval.md           a STOP report or human gate: present, ask, wait, resume
-        ├── parallel-work.md      a +++SWARM of two or more units: roles, prompts, fallback
+        ├── SKILL.md              entry: Start, the instruction set (ten directives), Pending STOP, Reading map, Interruption,
+        │                         and Host, folded from hosts/claude/start.md
+        ├── approval.md           a STOP report or human gate: present, ask, wait, resume; Implementation folded from hosts/claude/approval.md
+        ├── parallel-work.md      a +++SWARM of two or more units: roles, prompts, fallback; Implementation folded from hosts/claude/parallel-work.md
         ├── notebook.md           reading and writing design.md: sections, marks, retirement
         ├── close.md              the Close stage: reflect, docs, resonate, validate, one Git review
-        ├── git-review.md         the content review before any ordinary commit or push
-        ├── command-authoring.md  writing a command: grammar, checks, the template (Example)
-        └── hosts/claude/         this host's four implementations, from hosts/claude/, byte for byte
-            ├── start.md
-            ├── approval.md
-            ├── parallel-work.md
-            └── git-review.md
+        ├── git-review.md         the content review before any ordinary commit or push; Implementation folded from hosts/claude/git-review.md
+        └── command-authoring.md  writing a command: grammar, checks, the template (Example)
 ```
 
-The command structure is defined by the shared [DDL protocol](../../protocol/SKILL.md), written as an instruction-set reference. Its entry `SKILL.md` has five sections: Start, Instruction set, Pending STOP, Reading map, and Interruption. The Instruction set table lists the ten directives a command uses (`# header`, `## Usage`, `### Phase`, `+++DETECT`, `+++STOP`, `+++SWARM`, `+++NEVER`, `+++Report`, `+++DDL_PHASE`, `+++DDL_REPORT`) with syntax, count, placement, and rule. Phases follow the roles:
+The installed protocol has no `hosts/` directory: the generator folds this host's four implementations into the entry and the operations, and the other host's implementations are absent.
+
+The command structure is defined by the shared [DDL protocol](../../protocol/SKILL.md), written as an instruction-set reference. Its entry `SKILL.md` has five sections: Start, Instruction set, Pending STOP, Reading map, and Interruption; the generated entry adds a Host section, folded from `hosts/claude/start.md`. The Instruction set table lists the ten directives a command uses (`# header`, `## Usage`, `### Phase`, `+++DETECT`, `+++STOP`, `+++SWARM`, `+++NEVER`, `+++Report`, `+++DDL_PHASE`, `+++DDL_REPORT`) with syntax, count, placement, and rule. Phases follow the roles:
 
 `INIT → SURVEY/READ → WORK → REPORT (+++STOP) → EXECUTE → VERIFY`
 
 `+++DDL_PHASE` marks a mutating phase (recommended in Claude, required in Codex) and `+++DDL_REPORT` heads the report at a STOP. Pending STOP and Interruption state the rules while a decision waits and after a compaction or restart; the adapter supplies mechanical guardrails on dispatched calls rather than complete STOP enforcement.
 
-Six operations beside the entry hold the rules: Approval, Parallel work, Notebook, Close, Git review, and Command authoring. Each has the same eight sections in the same order: Read when, Syntax, Operands, Operation, Formats, Example, Exceptions, Implementation; the Example holds one short worked example, and the Example of Command authoring is the complete command template. The four implementations under `hosts/claude/` have Read when, Mapping, Observed, and Coverage: `start.md` for the entry's Start and one for each operation with host-specific differences (`approval.md`, `parallel-work.md`, `git-review.md`), named after it; Close reads Git review's, and Notebook and Command authoring need only `start.md`, already read. Tool names appear only in the implementations under `hosts/`. Implementations refer to operations by name and carry no links. In the source, the Reading map names the implementation through `{host}` placeholders; the generated entry names one implementation per row, and the generated protocol holds only this host's four. No file under `hosts/claude/` is named `claude.md`, which Claude reads as a nested `CLAUDE.md` on a case-insensitive filesystem; the instruction-file template is therefore `guidance.md`, and no file in the protocol may ever be named `claude.md` or `CLAUDE.md`.
+Six operations beside the entry hold the rules: Approval, Parallel work, Notebook, Close, Git review, and Command authoring. Each has the same eight sections in the same order: Read when, Syntax, Operands, Operation, Formats, Example, Exceptions, Implementation; the Example holds one short worked example, and the Example of Command authoring is the complete command template. The four implementations under `hosts/claude/` have Read when, Mapping, Observed, and Coverage: `start.md` for the entry's Start and one for each operation with host-specific differences (`approval.md`, `parallel-work.md`, `git-review.md`), named after it; Close reads Git review's, and Notebook and Command authoring need only `start.md`, already read. Tool names appear only in the implementations under `hosts/`. Implementations refer to operations by name and carry no links. In the source, the Reading map names the implementation through `{host}` placeholders; the generated skill folds this host's four into the files that read them, `start.md` as the entry's Host section and `approval.md`, `parallel-work.md`, and `git-review.md` as the Implementation section (Mapping, Observed, Coverage) of the operation of the same name, so each generated Reading map row points at an `#implementation` or `#host` fragment. No file under `hosts/claude/` is named `claude.md`, which Claude reads as a nested `CLAUDE.md` on a case-insensitive filesystem; the instruction-file template is therefore `guidance.md`, and no file in the protocol may ever be named `claude.md` or `CLAUDE.md`.
 
-A command reads the entry and `hosts/claude/start.md` in Phase 0, then each operation and the implementation its Reading map row names right before the action: Approval before a STOP report, Parallel work before fan-out, Notebook before writing `design.md`, Close on entering Close, Git review before a commit or push, and Command authoring when writing a command. These are files within the selected protocol, not additional slash commands.
+A command reads one file in Phase 0, the entry with its Host section, and one file before each action, the operation with its Implementation section: Approval before a STOP report, Parallel work before fan-out, Notebook before writing `design.md`, Close on entering Close, Git review before a commit or push, and Command authoring when writing a command. These are files within the selected protocol, not additional slash commands.
 
-Checks: `python3 tools/check_ddl.py source` prints `SOURCE_OK` when the maintained skills, protocol, implementations, and templates have their required structure (the entry table, the fixed sections, the operand and section rows, the literal strings commands write such as `passed <date>`, the exception rows, the dated observations, no tool name outside `hosts/`, no sentence of 60 characters or more twice, and the template in the Example of `command-authoring.md`); `python3 tools/check_ddl.py dist` prints `DIST_OK` when the generated layouts match, each host's protocol holds only its own implementations, and the files read on each path and in total stay within their byte budgets; `python3 tools/check_ddl.py docs` prints `DOCUMENTS_OK` for the documents; `tools/test_protocol.py` holds negative cases that must fail.
+Checks: `python3 tools/check_ddl.py source` prints `SOURCE_OK` when the maintained skills, protocol, implementations, and templates have their required structure (the entry table, the fixed sections, the operand and section rows, the literal strings commands write such as `passed <date>`, the exception rows, the dated observations, no tool name outside `hosts/`, no sentence of 60 characters or more twice, and the template in the Example of `command-authoring.md`); `python3 tools/check_ddl.py dist` prints `DIST_OK` when the generated layouts match, each host's protocol folds only its own implementations into the entry and the operations and holds no `hosts/` directory, and the files read on each path and in total stay within their byte budgets; `python3 tools/check_ddl.py docs` prints `DOCUMENTS_OK` for the documents; `tools/test_protocol.py` holds negative cases that must fail.
 
 For source ownership, project overlays, session loading, and verification, use the [maintainer reference](../../docs/maintainers/README.md).
 

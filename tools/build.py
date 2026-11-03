@@ -18,20 +18,27 @@ Generated (dist/, untracked; `python3 tools/build.py`):
   dist/claude/.claude/<adapter path>                           hosts/claude/<adapter path>, byte for byte
   dist/claude/.claude/hooks/ddl_gate.py                        tools/ddl_gate.py
   dist/claude/.claude/skills/<name>/SKILL.md                   skills/<name>/SKILL.md, byte for byte
-  dist/claude/.claude/skills/ddl-protocol/SKILL.md             protocol/SKILL.md with {host} = claude, {Host} = Claude
-  dist/claude/.claude/skills/ddl-protocol/<operation>.md       protocol/<operation>.md, rendered the same way
-  dist/claude/.claude/skills/ddl-protocol/hosts/claude/<implementation>.md
-                                                               hosts/claude/<implementation>.md, byte for byte
+  dist/claude/.claude/skills/ddl-protocol/SKILL.md             protocol/SKILL.md with hosts/claude/start.md folded in
+                                                               as its `## Host` section, {host} = claude, {Host} = Claude
+  dist/claude/.claude/skills/ddl-protocol/<operation>.md       protocol/<operation>.md, rendered the same way; approval,
+                                                               parallel-work and git-review carry hosts/claude/<operation>.md
+                                                               folded into their `## Implementation`
   dist/codex/AGENTS.md                                         hosts/codex/guidance.md
   dist/codex/.codex/<adapter path>                             hosts/codex/<adapter path>, byte for byte
   dist/codex/.codex/hooks/ddl_gate.py                          tools/ddl_gate.py
   dist/codex/.agents/skills/<name>/SKILL.md                    skills/<name>/SKILL.md in the Codex form
   dist/codex/.agents/skills/<name>/agents/openai.yaml          no implicit invocation
-  dist/codex/.agents/skills/ddl-protocol/SKILL.md              protocol/SKILL.md with {host} = codex, {Host} = Codex,
+  dist/codex/.agents/skills/ddl-protocol/SKILL.md              protocol/SKILL.md folded and rendered for codex / Codex,
                                                                in the Codex form, plus agents/openai.yaml
-  dist/codex/.agents/skills/ddl-protocol/<operation>.md        protocol/<operation>.md, rendered the same way
-  dist/codex/.agents/skills/ddl-protocol/hosts/codex/<implementation>.md
-                                                               hosts/codex/<implementation>.md, byte for byte
+  dist/codex/.agents/skills/ddl-protocol/<operation>.md        protocol/<operation>.md, folded and rendered the same way
+
+One file per action: an installed protocol has no hosts/ directory. The fold (fold()) drops an implementation's
+H1 and `## Read when`, demotes `## Mapping`, `## Observed` and `## Coverage` to H3 and appends them under the
+operation's `## Implementation` (its last section) or, for the entry, under a new `## Host` section after
+`## Interruption`. The links to hosts/{host}/<implementation>.md are then pointed at the folded sections
+(relink()): `#host` or `SKILL.md#host` for start, `#implementation` in the operation that folds the
+implementation and `<operation>.md#implementation` elsewhere. The order is fold, relink, render, and for Codex
+to_codex.
 
 Rules:
   - The Codex form of a command SKILL.md keeps name, description, and metadata.short-description from the
@@ -43,7 +50,8 @@ Rules:
     the source has one); its body is only rendered, not even `/cmd` -> `$cmd`. The operations have no
     frontmatter and are only rendered.
   - Rendering replaces the literal `{host}` with the host name and `{Host}` with its capitalised form;
-    no other brace is touched. A host's deployed protocol holds only that host's four implementations.
+    no other brace is touched. A host's deployed protocol holds only that host's four implementations,
+    folded in; the link rewriting replaces exact tokens and never formats the text.
   - agents/openai.yaml is the same fixed text for every command skill, with the skill's name; the protocol
     gets a comment saying it is read in Phase 0 and never invoked.
   - Symlinks are refused, in the sources and in the generated paths (not followed, not removed).
@@ -51,7 +59,8 @@ Rules:
 Errors (exit 1 with a message): a required source is missing (a command, the entry, an operation, an
 implementation, guidance.md, or the gate); a skill has no frontmatter, a frontmatter name different from its
 directory name, or no description; a command has no metadata.short-description; an adapter file collides
-with a generated one (hosts/<host>/hooks/ddl_gate.py).
+with a generated one (hosts/<host>/hooks/ddl_gate.py); an implementation has a section other than Read when,
+Mapping, Observed and Coverage; a folded operation's last section is not `## Implementation`.
 
 Usage:
   python3 tools/build.py [REPO] [--check] [--out DIR]
@@ -70,6 +79,10 @@ COMMANDS = ["draft", "realize", "reflect", "validate", "commit", "docs", "refact
 PROTOCOL = "ddl-protocol"
 OPERATIONS = ["approval", "parallel-work", "notebook", "close", "git-review", "command-authoring"]
 IMPLEMENTATIONS = ["start", "approval", "parallel-work", "git-review"]
+FOLDED = ["Mapping", "Observed", "Coverage"]  # the implementation sections folded in, in this order; the rest is dropped
+DROPPED = ["Read when"]
+HOST_SECTION = "Host"  # the entry's folded section (start); the operations fold under their last section
+IMPLEMENTATION_SECTION = "Implementation"
 GUIDANCE = "guidance.md"
 NOT_DEPLOYED = ["README.md"]
 GATE_SOURCE = "tools/ddl_gate.py"
@@ -83,9 +96,10 @@ HOSTS = {
 OPENAI_POLICY = ("policy:\n"
                  "  allow_implicit_invocation: false\n")
 OPENAI_YAML = ("# DDL: a skill runs when the user invokes ${name}; Codex does not start it on its own "
-               "(the host's implementations are under hosts/codex/ in the protocol skill).\n" + OPENAI_POLICY)
+               "(the host's implementations are folded into the entry and the operations of the protocol skill).\n"
+               + OPENAI_POLICY)
 OPENAI_YAML_PROTOCOL = ("# DDL: the protocol skill; the command skills read it in Phase 0, nobody invokes $ddl-protocol, and Codex "
-                        "does not start it on its own (the host's implementations are under hosts/codex/ in the protocol skill).\n"
+                        "does not start it on its own (the host's implementations are folded into the entry and the operations).\n"
                         + OPENAI_POLICY)
 
 # Notebook Formats literals keep their "/" in both hosts: design.md records them as the protocol spells them.
@@ -144,6 +158,45 @@ def render(text, host):
     return text.replace("{host}", host).replace("{Host}", HOSTS[host]["Host"])
 
 
+def fold(text, implementation, heading=None):
+    """text with the implementation's Mapping, Observed and Coverage sections appended as H3 sections: under the
+    text's last H2, which must be `## Implementation` (heading None), or under a new `## <heading>` section
+    added after the end of the text. The implementation's H1 and its `## Read when` are dropped; any other
+    section is an error. A missing section is folded as missing (check_ddl.py dist reports it)."""
+    parts = {}
+    for chunk in implementation.split("\n## ")[1:]:
+        title, _, body = chunk.partition("\n")
+        title = title.strip()
+        if title in FOLDED:
+            parts[title] = f"### {title}\n\n{body.strip(chr(10))}\n"
+        elif title not in DROPPED:
+            raise SystemExit(f"implementation section ## {title}: not foldable (expected {', '.join(DROPPED + FOLDED)})")
+    folded = "\n".join(parts[title] for title in FOLDED if title in parts)
+    if heading is None:
+        last = re.findall(r"(?m)^## (.+?)\s*$", text)
+        if not last or last[-1] != IMPLEMENTATION_SECTION:
+            raise SystemExit(f"last section is {'## ' + last[-1] if last else 'missing'}, "
+                             f"not ## {IMPLEMENTATION_SECTION} (the implementation folds under it)")
+        return text.rstrip("\n") + "\n\n" + folded
+    return text.rstrip("\n") + f"\n\n## {heading}\n\n" + folded
+
+
+def relink(text, name):
+    """The links of a protocol file (name: SKILL.md or <operation>.md) to hosts/{host}/<implementation>.md pointed
+    at the folded sections: start lives in the entry's `## Host`, the others under `## Implementation` of
+    their operation. Exact token replacement, never a format."""
+    for implementation in IMPLEMENTATIONS:
+        token = "(hosts/{host}/" + implementation + ".md)"
+        if implementation == "start":
+            target = "#host" if name == "SKILL.md" else "SKILL.md#host"
+        elif name == f"{implementation}.md":
+            target = "#implementation"
+        else:
+            target = f"{implementation}.md#implementation"
+        text = text.replace(token, f"({target})")
+    return text
+
+
 def hidden(rel):
     return any(part.startswith(".") or part == "__pycache__" for part in rel.parts)
 
@@ -177,8 +230,7 @@ def generate(repo):
         if not host_dir.is_dir():
             raise SystemExit(f"hosts/{host}/: missing")
         implementations = [f"{name}.md" for name in IMPLEMENTATIONS]
-        for name in implementations:
-            require(repo, f"hosts/{host}/{name}")
+        folded = {name: require(repo, f"hosts/{host}/{name}.md").decode("utf-8") for name in IMPLEMENTATIONS}
         out[spec["guidance"]] = require(repo, f"hosts/{host}/{GUIDANCE}")
         for path in sorted(host_dir.rglob("*")):
             rel = path.relative_to(host_dir)
@@ -203,16 +255,23 @@ def generate(repo):
             else:
                 out[f"{skill}/SKILL.md"] = text.encode("utf-8")
         protocol = f"{spec['skills']}/{PROTOCOL}"
-        rendered = render(entry, host)
+        try:
+            rendered = render(relink(fold(entry, folded["start"], HOST_SECTION), "SKILL.md"), host)
+        except SystemExit as exc:
+            raise SystemExit(f"protocol/SKILL.md with hosts/{host}/start.md: {exc}") from None
         if host == "codex":
             out[f"{protocol}/SKILL.md"] = to_codex(PROTOCOL, rendered).encode("utf-8")
             out[f"{protocol}/agents/openai.yaml"] = OPENAI_YAML_PROTOCOL.encode("utf-8")
         else:
             out[f"{protocol}/SKILL.md"] = rendered.encode("utf-8")
         for name, text in operations.items():
-            out[f"{protocol}/{name}"] = render(text, host).encode("utf-8")
-        for name in implementations:
-            out[f"{protocol}/hosts/{host}/{name}"] = require(repo, f"hosts/{host}/{name}")
+            stem = name.removesuffix(".md")
+            if stem in folded and stem != "start":
+                try:
+                    text = fold(text, folded[stem])
+                except SystemExit as exc:
+                    raise SystemExit(f"protocol/{name} with hosts/{host}/{name}: {exc}") from None
+            out[f"{protocol}/{name}"] = render(relink(text, name), host).encode("utf-8")
     return out
 
 

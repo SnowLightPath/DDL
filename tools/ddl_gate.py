@@ -16,14 +16,24 @@ Usage (the same command serves Claude Code and Codex CLI; the hook payload JSON 
   python3 tools/ddl_gate.py user-prompt-submit --runtime claude|codex
   python3 tools/ddl_gate.py session-start      --runtime claude|codex
   python3 tools/ddl_gate.py prepare-git-review --runtime claude|codex
+  python3 tools/ddl_gate.py status [--cwd DIR]
 
 The preparation command reads JSON {language: en|ja, operations: [{cwd, command}, ...]} on stdin.
 It snapshots the staged changes and push targets, writes review detail in the private state
 directory, and returns the report path and native question. It cannot create approval.
 
+Scope: the hook acts only in a DDL project, one whose instruction file (CLAUDE.md, .claude/CLAUDE.md
+or AGENTS.md in the event's `cwd` or a parent, up to the directory holding `.git` and below $HOME)
+contains the line `→ DDL-PROTOCOL` (`->` is accepted). Elsewhere every event returns at once, before
+any transcript, marker or Git read. The decision is cached as `<state dir>/<session_id>.project`:
+pre-tool-use and stop reuse it while `cwd` and the instruction file's mtime are unchanged;
+user-prompt-submit and session-start recompute it. `status` prints the decision for a directory.
+Only json, os and sys are imported up front; the other modules load on first use in a DDL project.
+
 Decisions (JSON on stdout; the exit status is always 0):
   pre-tool-use        CLOSED and the tool may mutate -> permissionDecision "deny";
-                      ordinary commit/push also needs a matching native content review while OPEN
+                      ordinary commit/push also needs a matching native content review while OPEN;
+                      claude answers a reviewed ordinary push with "ask" (native confirmation)
                       codex also denies unsupported push forms in confirmation-enabled modes
   stop                writes the marker file when the turn ended with a report; prints nothing
   user-prompt-submit  removes the marker (a human spoke); prints nothing
@@ -52,23 +62,51 @@ Runtime-level hook failures/timeouts can still fail open; the content check uses
 budget to leave headroom beneath the adapter timeout. Review directories are private; their JSON
 is preparation data, not an approval flag. Native request/result proof is checked on every call.
 """
-import hashlib
+from __future__ import annotations
+
 import json
 import os
-import pathlib
-import re
-import secrets
-import shlex
-import shutil
-import subprocess
 import sys
-import time
-import urllib.parse
-from typing import Optional, Tuple
+
+
+class _Lazy:
+    """A standard-library module bound on first attribute access.
+
+    The non-DDL path returns before touching any of them, so it pays for json, os and sys only; the
+    first use in a DDL project imports the module and rebinds the global name to it."""
+    __slots__ = ("_name", "_alias")
+
+    def __init__(self, name, alias=None):
+        self._name, self._alias = name, alias or name
+
+    def __getattr__(self, attr):
+        module = __import__(self._name)
+        for part in self._name.split(".")[1:]:
+            module = getattr(module, part)
+        globals()[self._alias] = module
+        return getattr(module, attr)
+
+
+class _Pattern:
+    """A regular expression compiled on first use, which then rebinds the global name to the pattern."""
+    __slots__ = ("_alias", "_source")
+
+    def __init__(self, alias, source):
+        self._alias, self._source = alias, source
+
+    def __getattr__(self, attr):
+        pattern = re.compile(self._source)
+        globals()[self._alias] = pattern
+        return getattr(pattern, attr)
+
+
+hashlib, pathlib, re, secrets, shlex, shutil, subprocess, time = (
+    _Lazy(name) for name in ("hashlib", "pathlib", "re", "secrets", "shlex", "shutil", "subprocess", "time"))
+urlparse = _Lazy("urllib.parse", "urlparse")
 
 EVENTS = ("pre-tool-use", "session-start", "stop", "user-prompt-submit")
 RUNTIMES = ("claude", "codex")
-REPORT = re.compile(r"(?m)^\s*\+\+\+DDL_REPORT\b")
+REPORT = _Pattern("REPORT", r"(?m)^\s*\+\+\+DDL_REPORT\b")
 
 DENY_REASON = ("DDL gate: a +++DDL_REPORT was emitted after the last human message, so this STOP is pending "
                "(the protocol's Approval operation). End the turn and wait for the user's approval; read-only "
@@ -96,15 +134,16 @@ PUSH_FORM_REASON = ("DDL gate: this Git push form does not reliably reach Codex'
                     "discard required options; explain the limitation instead. No command was rewritten.")
 NOT_HUMAN_PREFIXES = ("Another Claude session sent a message", "<task-notification>", "<system-reminder>",
                       "<local-command", "<command-name>", "[Request interrupted")
-ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
-REDIRECT = re.compile(r">>?")
+ASSIGNMENT = _Pattern("ASSIGNMENT", r"[A-Za-z_][A-Za-z0-9_]*=")
+REDIRECT = _Pattern("REDIRECT", r">>?")
 # A whole token that is a harmless redirect (`2>&1`, `2>/dev/null`, `<in`) or a bare operator (`>`, `2>>`, `<`).
-REDIR_TOKEN = re.compile(r"(\d*|&)>>?(&\d+|/dev/null)?$|\d*<\S*$")
+REDIR_TOKEN = _Pattern("REDIR_TOKEN", r"(\d*|&)>>?(&\d+|/dev/null)?$|\d*<\S*$")
 
-GIT_REVIEW_TAG = re.compile(r"\[G-([0-9a-f]{16})\]$")
+GIT_REVIEW_TAG = _Pattern("GIT_REVIEW_TAG", r"\[G-([0-9a-f]{16})\]$")
 GIT_REVIEW_REASON = ("DDL Git review: this commit or push needs a submitted native choice for its exact "
                      "contents, message, and destination. Prepare a Git review with ddl_gate.py "
                      "prepare-git-review, show its report and question, and wait for the actual answer. ")
+PUSH_ASK_REASON = "DDL Git review: confirm the reviewed push natively."
 GIT_PROTECTED = {"commit", "push", "commit-tree", "send-pack"}
 # Leave headroom beneath the adapters' ten-second hook timeout. A timed-out runtime hook may fail open.
 GIT_REVIEW_BUDGET_SECONDS = 4
@@ -314,9 +353,9 @@ def commit_snapshot(cwd, args):
 
 
 def display_remote(url):
-    parsed = urllib.parse.urlsplit(url)
+    parsed = urlparse.urlsplit(url)
     if parsed.scheme and parsed.netloc and "@" in parsed.netloc:
-        return urllib.parse.urlunsplit(parsed._replace(netloc=parsed.netloc.rsplit("@", 1)[1]))
+        return urlparse.urlunsplit(parsed._replace(netloc=parsed.netloc.rsplit("@", 1)[1]))
     return url
 
 
@@ -615,6 +654,8 @@ def git_review_guard(runtime, payload):
         return deny(GIT_REVIEW_REASON + str(exc))
     finally:
         _git_review_deadline = None
+    if runtime == "claude" and current["kind"] == "push":
+        return permission("ask", PUSH_ASK_REASON)  # the reviewed push is still confirmed natively
     return None  # retain the host's native permission policy; never grant permission
 
 
@@ -727,7 +768,7 @@ def is_human_prompt_claude(entry) -> bool:
     return bool(text) and not text.startswith(NOT_HUMAN_PREFIXES)
 
 
-def record_state_claude(path) -> Optional[bool]:
+def record_state_claude(path) -> bool | None:
     """CLOSED (True), OPEN (False), or None when the record is unreadable."""
     stats = {"lines": 0, "parsed": 0}
     try:
@@ -754,7 +795,7 @@ def codex_text(payload) -> str:
     return ""
 
 
-def record_state_codex(path, turn_id=None) -> Optional[bool]:
+def record_state_codex(path, turn_id=None) -> bool | None:
     """Same contract as record_state_claude, for a Codex rollout file.
 
     Only `item_completed`/UserMessage and `task_started` mark the human's turn: user-role messages also
@@ -787,15 +828,122 @@ def record_state_codex(path, turn_id=None) -> Optional[bool]:
 
 # --- marker files -----------------------------------------------------------------------------
 
-def session_file(session_id, suffix) -> pathlib.Path:
+def state_directory() -> str:
     base = os.environ.get("DDL_GATE_STATE_DIR") or os.path.join(os.environ.get("TMPDIR") or "/tmp", "ddl-gate")
-    pathlib.Path(base).mkdir(parents=True, exist_ok=True)
-    name = re.sub(r"[^A-Za-z0-9._-]", "_", str(session_id or "")) or "unknown"
-    return pathlib.Path(base) / (name + suffix)
+    os.makedirs(base, exist_ok=True)
+    return base
+
+
+def state_name(session_id) -> str:
+    """The session id reduced to [A-Za-z0-9._-], the stem of its state file names."""
+    name = "".join(c if c.isascii() and (c.isalnum() or c in "._-") else "_" for c in str(session_id or ""))
+    return name or "unknown"
+
+
+def session_file(session_id, suffix) -> pathlib.Path:
+    return pathlib.Path(state_directory()) / (state_name(session_id) + suffix)
 
 
 def marker_path(session_id) -> pathlib.Path:
     return session_file(session_id, ".pending")
+
+
+# --- project detection ------------------------------------------------------------------------
+
+MARKER = "→ DDL-PROTOCOL"
+MARKERS = (MARKER, "-> DDL-PROTOCOL")
+INSTRUCTION_FILES = ("CLAUDE.md", ".claude/CLAUDE.md", "AGENTS.md")
+
+
+def instruction_directories(cwd):
+    """`cwd` and its parents up to the directory holding `.git`; $HOME itself and anything above are excluded."""
+    home = os.path.normpath(os.path.expanduser("~"))
+    here = os.path.normpath(os.path.abspath(cwd))
+    while here != home:
+        yield here
+        if os.path.exists(os.path.join(here, ".git")):
+            return
+        parent = os.path.dirname(here)
+        if parent == here:
+            return
+        here = parent
+
+
+def marker_line(path):
+    """The number of the first line that is the DDL marker (surrounding whitespace allowed), or None."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            for number, line in enumerate(fh, 1):
+                if line.strip() in MARKERS:
+                    return number
+    except OSError:
+        pass
+    return None
+
+
+def project_decision(cwd) -> dict:
+    """Whether `cwd` lies in a DDL project: cwd, ddl, source (the instruction file), line and mtime."""
+    decision = {"cwd": cwd, "ddl": False, "source": None, "line": None, "mtime": None}
+    if not isinstance(cwd, str) or not cwd:
+        return decision
+    for directory in instruction_directories(cwd):
+        for name in INSTRUCTION_FILES:
+            path = os.path.join(directory, name)
+            line = marker_line(path)
+            if line is not None:
+                decision.update(ddl=True, source=path, line=line, mtime=os.stat(path).st_mtime)
+                return decision
+    return decision
+
+
+def session_project(payload, refresh=False) -> dict:
+    """The project decision for the event's `cwd`, cached per session as `<session_id>.project`.
+
+    pre-tool-use and stop reuse the cache while `cwd` matches and the instruction file's mtime is
+    unchanged (one stat); user-prompt-submit and session-start pass `refresh`. The cache is a
+    convenience: an unusable state directory leaves the decision to a fresh search."""
+    cwd = payload.get("cwd") or os.getcwd()
+    try:
+        path = os.path.join(state_directory(), state_name(payload.get("session_id")) + ".project")
+    except OSError:
+        return project_decision(cwd)
+    if not refresh:
+        try:
+            with open(path, encoding="utf-8") as fh:
+                cached = json.load(fh)
+            if cached["cwd"] == cwd and (cached["ddl"] is False or
+                                         os.stat(cached["source"]).st_mtime == cached["mtime"]):
+                return cached
+        except (OSError, ValueError, TypeError, KeyError):
+            pass
+    decision = project_decision(cwd)
+    try:
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(decision, fh)
+    except OSError:
+        pass
+    return decision
+
+
+def project_status(argv) -> int:
+    """`status [--cwd DIR]`: one line saying whether DIR (default: the current directory) is a DDL project."""
+    cwd, rest = os.getcwd(), list(argv)
+    while rest:
+        arg = rest.pop(0)
+        if arg == "--cwd" and rest:
+            cwd = rest.pop(0)
+        elif arg.startswith("--cwd="):
+            cwd = arg.split("=", 1)[1]
+        else:
+            print("usage: ddl_gate.py status [--cwd DIR]", file=sys.stderr)
+            return 2
+    decision = project_decision(cwd)
+    if decision["ddl"]:
+        print("DDL project: yes ({}:{})".format(decision["source"], decision["line"]))
+    else:
+        searched = list(instruction_directories(cwd))
+        print('DDL project: no (no "{}" line up to {})'.format(MARKER, searched[-1] if searched else cwd))
+    return 0
 
 
 # --- shell allowlist --------------------------------------------------------------------------
@@ -1063,7 +1211,7 @@ def program_is_read_only(prog, args) -> bool:
     return prog in READ_ONLY_PROGRAMS
 
 
-def shell_is_read_only(cmd) -> Tuple[bool, str]:
+def shell_is_read_only(cmd) -> tuple[bool, str]:
     """(True, "") when every segment of the command only reads; else (False, the offending segment)."""
     if not isinstance(cmd, str):
         return False, repr(cmd)
@@ -1093,7 +1241,7 @@ def shell_is_read_only(cmd) -> Tuple[bool, str]:
     return True, ""
 
 
-def shell_command(tool_input) -> Optional[str]:
+def shell_command(tool_input) -> str | None:
     """The command text of a shell tool call, or None when the input carries none.
 
     Codex's `shell` tool sends argv; its usual shape is ["bash", "-lc", "<script>"], which is unwrapped
@@ -1114,7 +1262,7 @@ def shell_command(tool_input) -> Optional[str]:
     return cmd if isinstance(cmd, str) else None
 
 
-def is_mutating(runtime, tool_name, tool_input) -> Tuple[bool, str]:
+def is_mutating(runtime, tool_name, tool_input) -> tuple[bool, str]:
     """(True, offending shell segment or "") when the call may change state; unknown tools count as mutating."""
     if tool_name in SAFE_TOOLS.get(runtime, set()):
         return False, ""
@@ -1231,14 +1379,18 @@ def push_guard(runtime, payload):
     return None
 
 
-def deny(reason):
-    return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+def permission(decision, reason):
+    return {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": decision,
                                    "permissionDecisionReason": reason}}
+
+
+def deny(reason):
+    return permission("deny", reason)
 
 
 # --- events -----------------------------------------------------------------------------------
 
-def record_state(runtime, payload) -> Optional[bool]:
+def record_state(runtime, payload) -> bool | None:
     path = payload.get("transcript_path")
     if not isinstance(path, str) or not path:
         return None
@@ -1247,7 +1399,7 @@ def record_state(runtime, payload) -> Optional[bool]:
     return record_state_claude(path)
 
 
-def pending_state(runtime, payload) -> Optional[bool]:
+def pending_state(runtime, payload) -> bool | None:
     """Combine record and marker. Codex: its record format is unstable, so a marker is trusted even over
     an OPEN record. Claude: the record is authoritative whenever it is readable."""
     state = record_state(runtime, payload)
@@ -1258,6 +1410,8 @@ def pending_state(runtime, payload) -> Optional[bool]:
 
 
 def handle_pre_tool_use(runtime, payload):
+    if not session_project(payload)["ddl"]:
+        return None
     git_review = git_review_guard(runtime, payload)
     try:
         state = pending_state(runtime, payload)
@@ -1284,6 +1438,8 @@ def handle_pre_tool_use(runtime, payload):
 
 
 def handle_stop(runtime, payload):
+    if not session_project(payload)["ddl"]:
+        return None
     # The last message is the cheap signal; the record catches a report emitted earlier in the same turn.
     closed = has_report(payload.get("last_assistant_message")) or record_state(runtime, payload) is True
     if closed:
@@ -1292,6 +1448,8 @@ def handle_stop(runtime, payload):
 
 
 def handle_user_prompt_submit(runtime, payload):
+    if not session_project(payload, refresh=True)["ddl"]:
+        return None
     marker_path(payload.get("session_id")).unlink(missing_ok=True)
     # Revoke older Git preparations immediately, even if the new prompt has not reached the
     # asynchronous transcript yet. A possible matching native submission is not itself a grant:
@@ -1312,7 +1470,7 @@ def handle_user_prompt_submit(runtime, payload):
     return None
 
 
-def find_design_md(cwd) -> Optional[pathlib.Path]:
+def find_design_md(cwd) -> pathlib.Path | None:
     """design.md in cwd or a parent, stopping at the repository root (`.git`) or at $HOME."""
     if not cwd:
         return None
@@ -1332,6 +1490,8 @@ def find_design_md(cwd) -> Optional[pathlib.Path]:
 
 
 def handle_session_start(runtime, payload):
+    if not session_project(payload, refresh=True)["ddl"]:
+        return None
     parts = []
     if payload.get("source") in ("compact", "resume", "fork", "clear"):
         session_file(payload.get("session_id"), ".git-epoch").write_text(str(time.time()))
@@ -1379,6 +1539,8 @@ def emit(obj):
 
 
 def main(argv) -> int:
+    if argv and argv[0] == "status":
+        return project_status(argv[1:])
     if argv and argv[0] == "prepare-git-review":
         try:
             _, runtime, problem = parse_args(["session-start", *argv[1:]])

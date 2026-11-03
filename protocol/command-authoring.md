@@ -266,17 +266,17 @@ Re-scan the changed scopes and summarize. Name a next command only when work thi
 
 | Situation | Behavior |
 |---|---|
-| A project copy of the command exists (`.claude/skills/<name>/SKILL.md`, `.agents/skills/<name>/SKILL.md`, or the file the project's instruction file names) | It runs (the Phase 0 sentence), whatever order the host lists the two copies in (host lookup: `hosts/{host}/start.md` Coverage). An older self-contained project copy follows its own rules. |
+| A project copy of the command exists (`.claude/skills/<name>/SKILL.md`, `.agents/skills/<name>/SKILL.md`, or the file the project's instruction file names) | It runs (the Phase 0 sentence), whatever order the host lists the two copies in (host lookup: the start implementation's Coverage). An older self-contained project copy follows its own rules. |
 | A `commands/<name>.md` overlay exists at the project root | It adds project facts to the command unless it declares itself a full override; Phase 0 line 2 reads it when it applies. |
 | No notebook: `design.md` is absent and the project names no other file | Phase 0 line 4 states the command's fallback: refuse with the reason, or run the reduced behavior the command names. Never invent notebook sections. |
 | Missing file: a required protocol file is absent, unreadable, or of uncertain version | Stop as the entry's Start says. |
-| A host tool name would explain a step | State the meaning; the implementations under `hosts/` map it (entry: Start). |
+| A host tool name would explain a step | State the meaning; the host's implementation maps it (entry: Start). |
 | A domain phase name (SCAN, COMPARE, COMMIT, REVIEW) | Map it to a role in Operands. |
 | The phase makes a read-only report | Emit `+++DDL_REPORT`, write `Outcome:` in place of `Decision:`, and end the turn at the STOP with no approval request (Approval Exceptions: informational). |
 
 ## Implementation
 
-- Read the implementation next: [{Host}](hosts/{host}/start.md), for the
+- The host's start implementation, [{Host}](hosts/{host}/start.md), names the
   adapter paths a command's Phase 0 and the gate rely on; the project skill
   path is in Operation step 1 and the frontmatter in Formats.
 - In the DDL repository, `tools/build.py` renders both hosts' layouts from the

@@ -82,7 +82,7 @@ Choices: approve all (R1–R3, pass S2) / subset or changes / hold
 
 ## Implementation
 
-- Read the implementation next: [{Host}](hosts/{host}/approval.md).
+- The host's implementation: [{Host}](hosts/{host}/approval.md), folded into this section in the installed skill.
 - Gate coverage (one script, both hosts): after a line-initial `+++DDL_REPORT` until the next human input, a catch-all matcher permits only known safe reads, the host's question tool, input-free polling and bounded literal shell read forms (`cat`, `head`, `tail`, `grep`, `rg`, `wc`, `ls`, `find`, `stat`, `sed -n '1,10p' file`, read-only `git` subcommands: `status`, `diff`, `log`, `show`, `branch`, `ls-files`, `rev-parse`, `blame`); general `sed`/`awk` programs, environment overrides, expansions, unknown options and tools are denied; a question or its receipt does not clear the pending state; unknown syntax is a policy denial. It covers calls the host dispatches to the hook, not a running process, a hook-bypassing transport or a hosted operation, and is no sandbox.
 - Limits: an internal hook error warns and fails open; an asynchronously written transcript can let a same-turn continuation escape (the Stop and UserPromptSubmit markers are the fallback); the hook sees an input boundary, not an answer's meaning, so action, scope, timeout and report association stay the assistant's judgment (step 3); simulated test dispatch proves neither the live choice interface nor the hook's trust.
 - Wiring, both hosts: PreToolUse with `matcher: "*"`, Stop, UserPromptSubmit and SessionStart (startup, resume, compact, fork, clear), each `timeout: 10`; state in `$TMPDIR/ddl-gate` (or `DDL_GATE_STATE_DIR`) as `<session>.pending`, `.warned` and `.git-epoch`.

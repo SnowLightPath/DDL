@@ -90,4 +90,4 @@ The READ fan-out of `/realize`, resolved:
 
 ## Implementation
 
-Read the implementation before step 1: [{Host}](hosts/{host}/parallel-work.md); it maps `type` onto the host's agent types and the adapter's `explorer` and `worker` roles. Read-only is enforced only where the adapter removes a worker's tools; where it cannot narrow a worker's permissions, the prompt contract alone holds. `each` and `collect` state the actual work; this operation authorizes nothing beyond an approved scope.
+The host's implementation, [{Host}](hosts/{host}/parallel-work.md), is folded into this section in the installed skill; it maps `type` onto the host's agent types and the adapter's `explorer` and `worker` roles. Read-only is enforced only where the adapter removes a worker's tools; where it cannot narrow a worker's permissions, the prompt contract alone holds. `each` and `collect` state the actual work; this operation authorizes nothing beyond an approved scope.

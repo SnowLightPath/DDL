@@ -7,7 +7,7 @@
 
 ## Notebook
 
-`design.md` is injected at session start and after a compaction by the adapter's SessionStart hook (Codex adapter, the protocol’s implementation `hosts/codex/start.md`), so the notebook is in context without a read; when the hooks are not trusted, read `design.md` if it exists. A project whose notebook is another file (the protocol’s Notebook operation) names it here.
+`design.md` is injected at session start and after a compaction by the adapter's SessionStart hook (Codex adapter; the Host section of the protocol entry), so the notebook is in context without a read; when the hooks are not trusted, read `design.md` if it exists. A project whose notebook is another file (the protocol’s Notebook operation) names it here.
 
 ## Skills
 
@@ -25,9 +25,9 @@
 ## Structure
 
 - `design.md` - Project design document (scopes, principles, validation; Experience, Binding Decisions, Direction, Acceptance Gates when drafted — the protocol’s Notebook operation)
-- `.agents/skills/<name>/SKILL.md` with `agents/openai.yaml` - The DDL skills and the protocol skill `ddl-protocol`, when DDL is copied into the project (`openai.yaml` keeps Codex from starting a skill on its own; a skill runs on `$name`); with the user-level install they live in `$HOME/.codex/skills/` and a project copy, when present, takes precedence (the protocol’s implementation under `hosts/codex/`)
-- `.agents/skills/ddl-protocol/` - The protocol skill a project receives: the entry `SKILL.md` with the instruction set and the reading map, its six operations flat beside it (Approval, Parallel work, Notebook, Close, Git review, Command authoring), each with the same eight sections and one short example (the complete command template is the Example of Command authoring), and under `hosts/codex/` this host's four implementations, with the mapping, dated observations, and coverage: `start.md` for the entry's Start and one for each operation with host-specific differences (`approval.md`, `parallel-work.md`, `git-review.md`), named after it; Close reads Git review's, and Notebook and Command authoring need only `start.md`; a skill reads the entry and `hosts/codex/start.md` in Phase 0 and each operation with the implementation its Reading map row names right before the action, from the selected protocol
-- `.codex/` - The Codex adapter: `config.toml`, `agents/` (`explorer`, `worker`), `hooks.json` with `hooks/ddl_gate.py`, `rules/ddl.rules` (the protocol’s implementation under `hosts/codex/`), when copied into the project; with the user-level install `agents/`, `hooks/ddl_gate.py`, and `rules/ddl.rules` are symlinked under `$HOME/.codex/`, the hooks are merged into `$HOME/.codex/hooks.json`, and the `config.toml` cap is set by hand
+- `.agents/skills/<name>/SKILL.md` with `agents/openai.yaml` - The DDL skills and the protocol skill `ddl-protocol`, when DDL is copied into the project (`openai.yaml` keeps Codex from starting a skill on its own; a skill runs on `$name`); with the user-level install they live in `$HOME/.codex/skills/` and a project copy, when present, takes precedence (the Host section of the protocol entry)
+- `.agents/skills/ddl-protocol/` - The protocol skill a project receives: the entry `SKILL.md` with the instruction set, the reading map, and this host's start implementation in its Host section, and its six operations flat beside it (Approval, Parallel work, Notebook, Close, Git review, Command authoring), each with the same eight sections and one short example (the complete command template is the Example of Command authoring) and each carrying this host's implementation in its Implementation section, with the mapping, dated observations, and coverage; a skill reads the entry in Phase 0 and one operation before each action, from the selected protocol
+- `.codex/` - The Codex adapter: `config.toml`, `agents/` (`explorer`, `worker`), `hooks.json` with `hooks/ddl_gate.py`, `rules/ddl.rules` (the Host section of the protocol entry), when copied into the project; with the user-level install `agents/`, `hooks/ddl_gate.py`, and `rules/ddl.rules` are symlinked under `$HOME/.codex/`, the hooks are merged into `$HOME/.codex/hooks.json`, and the `config.toml` cap is set by hand
 
 ## Detection Targets
 
@@ -67,7 +67,7 @@ Every skill defines its own D-targets (D1, D2, …). Cross-cutting targets below
 
 +++NEVER: Hardcode paths or commands — scopes and validation come from design.md
 +++NEVER: Auto-proceed past a +++STOP
-+++NEVER: Spawn agents when a SWARM has fewer than 2 units (scopes, Direction lanes, files, document pairs, approved changes; the protocol’s Parallel work operation) — for 2+, follow +++SWARM semantics (mandatory when condition is true; only the lead fans out; the host mapping in `hosts/codex/parallel-work.md`)
++++NEVER: Spawn agents when a SWARM has fewer than 2 units (scopes, Direction lanes, files, document pairs, approved changes; the protocol’s Parallel work operation) — for 2+, follow +++SWARM semantics (mandatory when condition is true; only the lead fans out; the host mapping in the Parallel work operation's Implementation section)
 +++NEVER: Add AI attribution to commits or generated code
 +++NEVER: Skip emitting +++DDL_PHASE before mutation — Codex's execution-forward bias must be visibly checkpointed
 +++NEVER: Output a +++STOP gate without +++DDL_REPORT and the decision report required by the protocol’s Approval operation

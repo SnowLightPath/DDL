@@ -3,12 +3,15 @@
 
 Unit tests import the module (shell allowlist, tool classification, the Claude human-prompt test,
 the record readers). End-to-end tests run the hook as a subprocess with `python3 -I`, a private
-state directory, and the hand-written transcript fixtures under tools/fixtures/.
+state directory, and the hand-written transcript fixtures under tools/fixtures/. Every project the
+gate is expected to act in is a disposable directory carrying an instruction file with the
+`→ DDL-PROTOCOL` line, never this repository's own files.
 
 Usage:
   python3 tools/test_ddl_gate.py
   python3 -I tools/test_ddl_gate.py
 """
+import atexit
 import json
 import os
 import pathlib
@@ -34,10 +37,26 @@ EVENT_NAMES = {"pre-tool-use": "PreToolUse", "session-start": "SessionStart", "s
                "user-prompt-submit": "UserPromptSubmit"}
 REPORT_TEXT = "+++DDL_REPORT\n\n## Realize report\n\nAwaiting approval."
 SEGMENT_SUFFIX = " Shell segment is not read-only: `{}`."
+MARKER_LINE = "→ DDL-PROTOCOL"
 
 
 def fixture(name):
     return str(FIXTURES / name)
+
+
+def mark_project(root, name=".claude/CLAUDE.md", line=MARKER_LINE):
+    """Write an instruction file whose marker line (line 3) makes `root` a DDL project."""
+    path = pathlib.Path(root) / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("# Project\n\n" + line + "\n", encoding="utf-8")
+    return path
+
+
+# The default project of a payload: a DDL project whose `.git` bounds the instruction-file search.
+PROJECT = pathlib.Path(tempfile.mkdtemp(prefix="ddl-gate-project-"))
+atexit.register(shutil.rmtree, str(PROJECT), True)
+(PROJECT / ".git").mkdir()
+mark_project(PROJECT)
 
 
 def payload(runtime, event="pre-tool-use", transcript=None, session="sess", cwd=None, **extra):
@@ -45,7 +64,7 @@ def payload(runtime, event="pre-tool-use", transcript=None, session="sess", cwd=
     data = json.loads((FIXTURES / "payload_pre_tool_use_{}.json".format(runtime)).read_text())
     data["session_id"] = session
     data["transcript_path"] = transcript
-    data["cwd"] = cwd or str(TOOLS)
+    data["cwd"] = cwd or str(PROJECT)
     data["hook_event_name"] = EVENT_NAMES[event]
     if event != "pre-tool-use":
         for key in ("tool_name", "tool_input", "tool_use_id"):
@@ -486,12 +505,14 @@ class GateTest(unittest.TestCase):
     def marker(self, session):
         return pathlib.Path(self.state) / (session + ".pending")
 
-    def project(self, design=True, git=False, sub=None):
+    def project(self, design=True, git=False, sub=None, marker=True):
         """A temp project dir; `.git` bounds the design.md search so the test dir's parents never count."""
         root = pathlib.Path(self.tmp) / "proj"
         root.mkdir()
         if git:
             (root / ".git").mkdir()
+        if marker:
+            mark_project(root)
         if design:
             (root / "design.md").write_text("# design.md\n\n## Scopes\n\n- tools\n")
         cwd = root / sub if sub else root
@@ -707,6 +728,8 @@ class AdapterDispatchTest(GateTest):
         self.subdir = self.root / "src" / "pkg"
         self.subdir.mkdir(parents=True)
         (self.root / "design.md").write_text("# Isolated adapter fixture\n", encoding="utf-8")
+        mark_project(self.root)
+        mark_project(self.root, "AGENTS.md")
         for directory in (".claude", ".codex"):
             hooks = self.root / directory / "hooks"
             hooks.mkdir(parents=True)
@@ -996,6 +1019,16 @@ class SessionStartTest(GateTest):
     def test_search_stops_at_git_root(self):
         root, cwd = self.project(design=True, sub="inner")
         (root / "inner" / ".git").mkdir()  # a nested repository root hides the outer design.md
+        mark_project(root / "inner", "CLAUDE.md")  # the inner project is DDL by its own instruction file
+        self.assert_allowed(self.run_gate("session-start", "codex", payload("codex", "session-start", None, cwd=cwd, source="startup")))
+
+    def test_codex_injects_nothing_without_the_marker_or_without_design(self):
+        root, cwd = self.project(git=True, marker=False)
+        for source in ("startup", "resume"):
+            self.assert_allowed(self.run_gate("session-start", "codex", payload("codex", "session-start", fixture("codex_closed_in_turn.jsonl"),
+                                                                                cwd=cwd, source=source)))
+        shutil.rmtree(root)
+        root, cwd = self.project(design=False, git=True)
         self.assert_allowed(self.run_gate("session-start", "codex", payload("codex", "session-start", None, cwd=cwd, source="startup")))
 
 
@@ -1023,6 +1056,7 @@ class GitReviewTest(GateTest):
         subprocess.run(["git", "init", "--bare", "-q", str(self.remote)], check=True, capture_output=True, env=self.git_env)
         self.git("remote", "add", "origin", str(self.remote))
         self.transcript = pathlib.Path(self.tmp) / "native.jsonl"
+        mark_project(self.repo)
 
     def git(self, *args):
         proc = subprocess.run(["git", "-C", str(self.repo), *args], capture_output=True, text=True, env=self.git_env)
@@ -1076,6 +1110,14 @@ class GitReviewTest(GateTest):
         out = json.loads(proc.stdout)["hookSpecificOutput"]
         self.assertEqual(out["permissionDecision"], "deny")
         return out["permissionDecisionReason"]
+
+    def pushed(self, runtime, proc):
+        """A matched push passes: Codex leaves the native policy alone, Claude asks for the native confirmation."""
+        if runtime == "codex":
+            return self.assert_allowed(proc)
+        out = json.loads(proc.stdout)["hookSpecificOutput"]
+        self.assertEqual((out["hookEventName"], out["permissionDecision"]), ("PreToolUse", "ask"))
+        self.assertEqual(out["permissionDecisionReason"], ddl_gate.PUSH_ASK_REASON)
 
     def test_missing_review_is_denied_in_both_runtimes_and_all_permission_modes(self):
         for runtime in ("claude", "codex"):
@@ -1198,7 +1240,7 @@ class GitReviewTest(GateTest):
         for runtime in ("claude", "codex"):
             review = self.prepare(runtime, ["git push origin main"])
             self.record(runtime, review)
-            self.assert_allowed(self.check(runtime, "git push origin main"))
+            self.pushed(runtime, self.check(runtime, "git push origin main"))
             self.blocked(self.check(runtime, "git push origin main:refs/heads/other"))
             self.git("remote", "set-url", "origin", str(self.remote) + "-other")
             self.blocked(self.check(runtime, "git push origin main"))
@@ -1213,9 +1255,19 @@ class GitReviewTest(GateTest):
             self.blocked(self.check(runtime, "git push origin main"))  # the planned commit does not exist yet
             self.git("commit", "--cleanup=verbatim", "-F", str(self.message))
             self.blocked(self.check(runtime))  # an approval cannot create a second, different commit
-            self.assert_allowed(self.check(runtime, "git push origin main"))
+            self.pushed(runtime, self.check(runtime, "git push origin main"))
             self.git("push", "origin", "main")
-            self.assert_allowed(self.check(runtime, "git push origin main"))  # an idempotent retry sends no new content
+            self.pushed(runtime, self.check(runtime, "git push origin main"))  # an idempotent retry sends no new content
+
+    def test_claude_reviewed_push_asks_for_the_native_confirmation(self):
+        review = self.prepare("claude", [self.command, "git push origin main"])
+        self.record("claude", review)
+        self.assert_allowed(self.check("claude"))  # a reviewed commit keeps the host's own policy
+        self.git("commit", "--cleanup=verbatim", "-F", str(self.message))
+        for mode in ("default", "acceptEdits", "bypassPermissions", "dontAsk"):
+            with self.subTest(mode=mode):  # the hook asks in every mode; what the host does with it is its own
+                self.pushed("claude", self.check("claude", "git push origin main", permission_mode=mode))
+        self.assertIn("DDL Git review", self.blocked(self.check("claude", "git push origin main:refs/heads/other")))
 
     def test_push_rejects_commit_created_with_different_message_or_tree(self):
         review = self.prepare("codex", [self.command, "git push origin main"])
@@ -1247,7 +1299,7 @@ class GitReviewTest(GateTest):
         self.assert_allowed(self.check("codex", "git push origin main"))
 
     def test_compatible_repositories_share_one_native_answer(self):
-        other = pathlib.Path(self.tmp) / "another repo";other.mkdir()
+        other = pathlib.Path(self.tmp) / "another repo";other.mkdir();mark_project(other, "AGENTS.md")
         for args in (["init", "-q", "-b", "main"], ["add", "other.txt"]):
             (other / "other.txt").write_text("second repository\n")
             proc = subprocess.run(["git", "-C", str(other), *args], capture_output=True, env=self.git_env)
@@ -1341,6 +1393,7 @@ class GitReviewTest(GateTest):
     def test_workdir_and_literal_git_C_resolve_the_repository(self):
         review = self.prepare("codex")
         self.record("codex", review)
+        mark_project(self.tmp, "CLAUDE.md")  # the session's cwd decides the project, the tool's workdir the repository
         data = payload("codex", cwd=self.tmp, transcript=str(self.transcript), tool_name="exec_command",
                        tool_input={"cmd": self.command, "workdir": str(self.repo)})
         self.assert_allowed(self.run_gate("pre-tool-use", "codex", data))
@@ -1397,6 +1450,148 @@ class GitReviewTest(GateTest):
                                   input=json.dumps(data), capture_output=True, text=True, env=env)
             self.assertEqual(proc.returncode, 2)
             self.assertIn("DDL Git review", proc.stderr)
+
+
+class ProjectScopeTest(GateTest):
+    """The gate acts only where an instruction file carries the `→ DDL-PROTOCOL` line."""
+
+    def plain(self, name="plain"):
+        """A repository with design.md but no instruction file: not a DDL project."""
+        root = pathlib.Path(self.tmp) / name
+        (root / ".git").mkdir(parents=True)
+        (root / "design.md").write_text("# design.md\n", encoding="utf-8")
+        return root
+
+    def state_files(self):
+        return sorted(p.name for p in pathlib.Path(self.state).iterdir()) if os.path.isdir(self.state) else []
+
+    def test_every_event_returns_at_once_outside_a_ddl_project(self):
+        root, seen = str(self.plain()), []
+        for runtime in ("claude", "codex"):
+            with self.subTest(runtime=runtime):
+                closed, session = fixture(runtime + "_closed_in_turn.jsonl"), runtime + "-plain"
+                seen.append(session + ".project")
+                self.assert_allowed(self.run_gate("stop", runtime, payload(runtime, "stop", closed, session, root,
+                                                                           last_assistant_message=REPORT_TEXT)))
+                self.assertFalse(self.marker(session).exists())
+                for data in (payload(runtime, transcript=closed, session=session, cwd=root),
+                             bash("git commit -m x", runtime, closed, session=session, cwd=root),
+                             bash("git push origin main", runtime, None, session=session, cwd=root),
+                             bash("git -C /repo push origin main", runtime, None, session=session, cwd=root),
+                             payload(runtime, transcript=None, session=session, cwd=root)):
+                    self.assert_allowed(self.run_gate("pre-tool-use", runtime, data))
+                for source in ("startup", "compact", "resume"):
+                    self.assert_allowed(self.run_gate("session-start", runtime, payload(runtime, "session-start", closed,
+                                                                                        session, root, source=source)))
+                self.assert_allowed(self.run_gate("user-prompt-submit", runtime, payload(runtime, "user-prompt-submit",
+                                                                                         closed, session, root, prompt="go")))
+                self.assertEqual(self.state_files(), sorted(seen))  # no .pending, .warned or .git-epoch
+
+    def test_marker_line_alone_makes_a_ddl_project(self):
+        root, cwd = self.project(design=False, git=True)
+        for runtime in ("claude", "codex"):
+            with self.subTest(runtime=runtime):
+                closed, session = fixture(runtime + "_closed_in_turn.jsonl"), runtime + "-bare"
+                proc = self.run_gate("pre-tool-use", runtime, bash("git commit -m x", runtime, fixture(runtime + "_open.jsonl"),
+                                                                   session=session, cwd=cwd))
+                self.assertIn("DDL Git review", json.loads(proc.stdout)["hookSpecificOutput"]["permissionDecisionReason"])
+                self.run_gate("stop", runtime, payload(runtime, "stop", None, session, cwd, last_assistant_message=REPORT_TEXT))
+                self.assertTrue(self.marker(session).exists())
+                self.assert_denied(self.run_gate("pre-tool-use", runtime, payload(runtime, transcript=closed, session=session, cwd=cwd)))
+                self.run_gate("user-prompt-submit", runtime, payload(runtime, "user-prompt-submit", closed, session, cwd, prompt="go"))
+                self.assertFalse(self.marker(session).exists())
+
+    def test_project_decision_recognizes_each_instruction_file_and_arrow(self):
+        for name, line in (("CLAUDE.md", "→ DDL-PROTOCOL"), (".claude/CLAUDE.md", "  -> DDL-PROTOCOL\t"), ("AGENTS.md", "→ DDL-PROTOCOL")):
+            with self.subTest(name=name, line=line):
+                root = pathlib.Path(self.tmp) / name.replace("/", "_")
+                (root / ".git").mkdir(parents=True)
+                source = mark_project(root, name, line)
+                (root / "src").mkdir()
+                decision = ddl_gate.project_decision(str(root / "src"))
+                self.assertEqual(decision, {"cwd": str(root / "src"), "ddl": True, "source": str(source), "line": 3,
+                                            "mtime": source.stat().st_mtime})
+        for line in ("the → DDL-PROTOCOL line", "| → DDL-PROTOCOL |", "→ DDL-PROTOCOL-SKILL", "DDL-PROTOCOL"):
+            with self.subTest(line=line):
+                root = pathlib.Path(self.tmp) / "prose"
+                shutil.rmtree(root, True)
+                (root / ".git").mkdir(parents=True)
+                mark_project(root, "CLAUDE.md", line)
+                self.assertFalse(ddl_gate.project_decision(str(root))["ddl"])
+        for cwd in (None, "", 42):
+            self.assertFalse(ddl_gate.project_decision(cwd)["ddl"])
+
+    def test_search_stops_below_home_and_at_the_repository_root(self):
+        home = pathlib.Path(self.tmp) / "home"
+        mark_project(home, "CLAUDE.md")
+        (home / "work" / "repo" / ".git").mkdir(parents=True)
+        (home / "work" / "repo" / "src").mkdir()
+        mark_project(home / "work", "AGENTS.md")
+        with mock.patch.dict(os.environ, {"HOME": str(home)}):
+            self.assertFalse(ddl_gate.project_decision(str(home))["ddl"])  # $HOME itself never counts
+            self.assertTrue(ddl_gate.project_decision(str(home / "work"))["ddl"])
+            self.assertFalse(ddl_gate.project_decision(str(home / "work" / "repo" / "src"))["ddl"])  # `.git` bounds it
+            (home / "work" / "repo" / "src" / "sub").mkdir()
+            mark_project(home / "work" / "repo")
+            self.assertTrue(ddl_gate.project_decision(str(home / "work" / "repo" / "src" / "sub"))["ddl"])
+
+    def test_cache_is_reused_by_pre_tool_use_and_refreshed_by_a_prompt(self):
+        root, cwd = self.project(design=False, git=True)
+        source, closed = root / ".claude" / "CLAUDE.md", fixture("claude_closed_in_turn.jsonl")
+        pre = payload("claude", transcript=closed, session="cache", cwd=cwd)
+        self.assert_denied(self.run_gate("pre-tool-use", "claude", pre))
+        cache = pathlib.Path(self.state) / "cache.project"
+        self.assertEqual(json.loads(cache.read_text()), {"cwd": cwd, "ddl": True, "source": str(source), "line": 3,
+                                                         "mtime": source.stat().st_mtime})
+        stat = source.stat()
+        source.write_text("# no marker any more\n")
+        os.utime(source, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+        self.assert_denied(self.run_gate("pre-tool-use", "claude", pre))  # same cwd and mtime: reused unread
+        self.run_gate("user-prompt-submit", "claude", payload("claude", "user-prompt-submit", closed, "cache", cwd, prompt="go"))
+        self.assertFalse(json.loads(cache.read_text())["ddl"])  # a prompt recomputes
+        self.assert_allowed(self.run_gate("pre-tool-use", "claude", pre))
+        mark_project(root)  # the file changed, but a non-DDL decision is reused until the next prompt or session start
+        self.assert_allowed(self.run_gate("pre-tool-use", "claude", pre))
+        self.run_gate("session-start", "claude", payload("claude", "session-start", closed, "cache", cwd, source="startup"))
+        self.assert_denied(self.run_gate("pre-tool-use", "claude", pre))
+        source.write_text("# removed again\n")
+        os.utime(source, ns=(stat.st_atime_ns, stat.st_mtime_ns + 5_000_000_000))
+        self.assert_allowed(self.run_gate("pre-tool-use", "claude", pre))  # a changed mtime recomputes
+        other = payload("claude", transcript=closed, session="cache", cwd=str(self.plain()))
+        self.assert_allowed(self.run_gate("pre-tool-use", "claude", other))  # another cwd recomputes too
+        self.assertEqual(json.loads(cache.read_text())["cwd"], other["cwd"])
+
+    def test_status_prints_the_decision(self):
+        root, cwd = self.project(design=False, git=True, sub="src")
+        plain = self.plain()
+        yes = "DDL project: yes ({}:3)\n".format(root / ".claude" / "CLAUDE.md")
+        yes_real = "DDL project: yes ({}:3)\n".format(root.resolve() / ".claude" / "CLAUDE.md")  # os.getcwd() is resolved
+        no = 'DDL project: no (no "→ DDL-PROTOCOL" line up to {})\n'.format(plain)
+        for argv, directory, expected in (([], cwd, yes_real), (["--cwd", cwd], self.tmp, yes), (["--cwd=" + str(plain)], cwd, no),
+                                          (["--cwd", str(plain / "src" / "deep")], cwd, no)):
+            with self.subTest(argv=argv):
+                proc = subprocess.run([sys.executable, "-I", GATE, "status", *argv], cwd=directory, capture_output=True, text=True)
+                self.assertEqual((proc.returncode, proc.stdout, proc.stderr), (0, expected, ""))
+        proc = subprocess.run([sys.executable, "-I", GATE, "status", "--bogus"], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("usage", proc.stderr)
+
+    def test_non_ddl_path_loads_no_heavy_module(self):
+        root = str(self.plain())
+        heavy = {"subprocess", "hashlib", "shlex", "shutil", "secrets", "pathlib", "urllib", "urllib.parse", "typing"}
+        for runtime in ("claude", "codex"):
+            for event in ("pre-tool-use", "stop", "user-prompt-submit", "session-start"):
+                with self.subTest(runtime=runtime, event=event):
+                    data = payload(runtime, event, fixture(runtime + "_closed_in_turn.jsonl"), "lean", root, source="startup",
+                                   last_assistant_message=REPORT_TEXT, prompt="go")
+                    proc = subprocess.run([sys.executable, "-I", "-X", "importtime", GATE, event, "--runtime", runtime],
+                                          input=json.dumps(data), capture_output=True, text=True,
+                                          env=dict(os.environ, DDL_GATE_STATE_DIR=self.state))
+                    self.assertEqual((proc.returncode, proc.stdout), (0, ""))
+                    loaded = {line.rsplit("|", 1)[1].strip() for line in proc.stderr.splitlines() if line.startswith("import time:")}
+                    self.assertTrue(loaded, proc.stderr)
+                    # json itself imports re, so re is the one heavier module the non-DDL path cannot avoid.
+                    self.assertEqual(loaded & heavy, set())
 
 
 class FailOpenTest(GateTest):

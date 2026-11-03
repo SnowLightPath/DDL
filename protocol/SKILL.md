@@ -15,8 +15,9 @@ in phases; this protocol holds the shared rules.
 2. A missing, unreadable or version-uncertain protocol file stops the
    affected operation: say what is unconfirmed, never fill it from another
    installation.
-3. Read the host's start implementation, [{Host}](hosts/{host}/start.md);
-   another host uses its documented capabilities. Never invent a tool.
+3. Read the host's start implementation, [{Host}](hosts/{host}/start.md)
+   (in the installed skill the entry's Host section); another host uses its
+   documented capabilities. Never invent a tool.
 4. Only implementations and the adapter name tools; commands and operations
    state meaning.
 
@@ -24,7 +25,8 @@ in phases; this protocol holds the shared rules.
 
 Commands are programs and this protocol is their instruction set: the
 processor (the LLM) runs each `+++` directive by the operation defined here,
-and the host harness implements the processor as described under `hosts/`.
+and the host harness implements the processor as described in the host
+implementations.
 
 | Directive | Syntax | Count | Placement | Rule |
 |---|---|---|---|---|
@@ -36,7 +38,7 @@ and the host harness implements the processor as described under `hosts/`.
 | `+++SWARM` | `+++SWARM: <condition>` then a fenced operand block (Parallel work Syntax) | 0+ | phase body | Fan `each` out to workers, one per unit or batch. The condition counts scopes in `design.md` or the units the command names; Scale decides inline, skip and batches. |
 | `+++NEVER` | `+++NEVER: <prohibition in the imperative>` | 1+ | command `## Constraints`; global in the guidance file | Binds this command, or every command from the guidance file; refuse the prohibited action in every phase. |
 | `+++Report` | `+++Report:` then labeled lines (labels: Approval Formats) | 0+ | body of a phase with `+++STOP: always` (REPORT, or a REVIEW filling its role: Command authoring Operands) | Content contract at a STOP: the command says what the user reviews; Approval says how to present and ask. |
-| `+++DDL_PHASE` | `+++DDL_PHASE: <PhaseName>` | 0+ | output | Output marker on the first line of a mutating phase, paired with its heading; `hosts/{host}/start.md` says whether it is required. |
+| `+++DDL_PHASE` | `+++DDL_PHASE: <PhaseName>` | 0+ | output | Output marker on the first line of a mutating phase, paired with its heading; the host's start implementation says whether it is required. |
 | `+++DDL_REPORT` | `+++DDL_REPORT` alone on a line, then the report | 0+ | output | Output heading before the decision report at every STOP, in every host. |
 
 - Markdown headings mark document structure and are never instructions.
@@ -65,8 +67,8 @@ and the host harness implements the processor as described under `hosts/`.
 | [Git review](git-review.md) | An ordinary commit or push, in any command | [{Host}](hosts/{host}/git-review.md) |
 | [Command authoring](command-authoring.md) | Creating or changing a command | [{Host}](hosts/{host}/start.md) (at Start) |
 
-Read the operation before the action, then its implementation for the current
-host.
+Read the operation before the action; once installed it carries the host's
+implementation (Implementation).
 
 ## Interruption
 

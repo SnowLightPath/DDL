@@ -224,6 +224,7 @@ class SetupTest(unittest.TestCase):
         project = self.base / "project"
         nested = project / "src/pkg"
         nested.mkdir(parents=True)
+        (project / "CLAUDE.md").write_text("→ DDL-PROTOCOL\n")  # the gate acts only in a DDL project
         for runtime in RUNTIMES:
             with self.subTest(runtime=runtime):
                 self.lifecycle(runtime, self.read_settings(runtime), project, nested)
@@ -232,6 +233,7 @@ class SetupTest(unittest.TestCase):
         project = self.base / "project with spaces"
         nested = project / "src/pkg"
         nested.mkdir(parents=True)
+        (project / "CLAUDE.md").write_text("→ DDL-PROTOCOL\n")  # the gate acts only in a DDL project
         subprocess.run(["git", "init", "--quiet", str(project)], env=self.env, check=True, capture_output=True)
         for rt in RUNTIMES.values():
             instruction = project / rt["instruction"]

@@ -69,7 +69,7 @@ The helper's input for one commit and its push; one answer records the commit an
 
 ## Implementation
 
-Read the implementation next: [{Host}](hosts/{host}/git-review.md). Hook coverage (one script, both hosts):
+The host's implementation: [{Host}](hosts/{host}/git-review.md), folded into this section in the installed skill. Hook coverage (one script, both hosts):
 
 - Matches request and answer by identifier, compares the complete request (labels, descriptions, selection mode), checks that the report names this review, and compares the real staged contents, base, message and branch; for a push also source commit, resolved remote and destination branch.
 - Denies a recognized unreviewed commit or push, also under no-prompt permission modes where the implementation says so; Git reads keep working, the native permission policy still applies after the content check, and the hook never grants, rewrites or stages a command.

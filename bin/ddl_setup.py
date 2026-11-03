@@ -13,8 +13,9 @@ come from `hosts/<host>/guidance.md`).
   install    build dist/, create or repoint the symlinks, and merge the fragment (idempotent; existing
              settings are kept, DDL's own entries are replaced so a path change takes effect)
   doctor     build dist/, check every link and merged entry, probe configured push hooks in a
-             temporary home, run the gate's tests, and check the Codex native push rule separately;
-             prints `N OK, M not OK` and exits 1 when M > 0
+             temporary home, run the gate's tests, check the Codex native push rule separately, and
+             say whether the current directory is a DDL project; prints `N OK, M not OK` and exits 1
+             when M > 0
   uninstall  remove the links that point at DDL and the merged entries (an entry is removed only
              when its value is the one DDL wrote); a settings file left empty is removed; no backup
              is written on uninstall; needs no dist/ (the fragment is generated in memory when its
@@ -346,6 +347,14 @@ def install_project(args, report):
                 out.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(path, out)
             report.good(f"copy {out}")
+        # An older copy carried the host implementations as files under the protocol skill; the generated
+        # skill folds them into the entry and the operations, so the stale directory would shadow nothing
+        # but confuse a reader.
+        for stale in sorted(target.glob("**/ddl-protocol/hosts")):
+            if stale.is_dir():
+                if not report.dry_run:
+                    shutil.rmtree(stale)
+                report.good(f"remove {stale} (stale implementations, now folded into the skill)")
     report.info("project copy done: the hook commands use $CLAUDE_PROJECT_DIR / the repository root; "
                 "trust the folder (Claude Code) or the project and its hooks (Codex)")
     return 0
@@ -391,6 +400,10 @@ def doctor_git_hooks(key, base, settings, report):
         gate = isolated / RUNTIMES[key]["home"] / "hooks/ddl_gate.py"
         gate.parent.mkdir(parents=True)
         gate.symlink_to(base / "hooks/ddl_gate.py")
+        # The gate acts only in a DDL project: one below the temporary home with the marker line.
+        project = isolated / "project"
+        project.mkdir()
+        (project / "CLAUDE.md").write_text("→ DDL-PROTOCOL\n", encoding="utf-8")
         env = dict(os.environ, HOME=str(isolated), CODEX_HOME=str(isolated / ".codex"),
                    CLAUDE_PROJECT_DIR=str(isolated), DDL_GATE_STATE_DIR=str(isolated / "state"))
         transcript = isolated / "open.jsonl"
@@ -410,12 +423,12 @@ def doctor_git_hooks(key, base, settings, report):
             probes += [("git -C /tmp push", str(transcript), "default"), ("git -C /tmp push", None, "default")]
         for index, (command, record, mode) in enumerate(probes):
             payload = {"session_id": f"doctor-{index}", "turn_id": "doctor", "transcript_path": record,
-                       "cwd": str(isolated), "hook_event_name": "PreToolUse", "permission_mode": mode,
+                       "cwd": str(project), "hook_event_name": "PreToolUse", "permission_mode": mode,
                        "tool_name": "Bash", "tool_input": {"command": command}}
             name = (f"{RUNTIMES[key]['label']} installed PreToolUse: {command} "
                     f"({'OPEN' if record else 'null'} transcript, {mode})")
             try:
-                outputs = configured_hook_outputs(settings, "PreToolUse", payload, env, isolated)
+                outputs = configured_hook_outputs(settings, "PreToolUse", payload, env, project)
                 decisions = [specific.get("permissionDecision") if isinstance(specific, dict) else None
                              for specific in (out.get("hookSpecificOutput") for out in outputs)]
                 valid = decisions == ["deny"] and all("DDL Git review:" in out.get("hookSpecificOutput", {}).get(
@@ -490,6 +503,9 @@ def cmd_doctor(args, report):
             if not (config.exists() and "max_concurrent_threads_per_session" in config.read_text()):
                 report.info(f"{pretty(config)} does not set [agents] max_concurrent_threads_per_session (optional; SWARM uses max: 5)")
     print("== gate")
+    status = subprocess.run([sys.executable, "-I", str(ROOT / "tools/ddl_gate.py"), "status", "--cwd", os.getcwd()],
+                            capture_output=True, text=True)
+    report.info(status.stdout.strip() or f"DDL project: unknown ({status.stderr.strip() or status.returncode})")
     test = ROOT / "tools/test_ddl_gate.py"
     out = subprocess.run([sys.executable, "-I", str(test)], capture_output=True, text=True, cwd=ROOT)
     last = (out.stderr.strip().splitlines() or ["(no output)"])[-1]

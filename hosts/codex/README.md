@@ -47,6 +47,10 @@ Review the draft before saving it. Use `$realize` when you are ready to review a
 
 `draft` and `realize` accept a feature; `reflect`, `resonate`, `docs`, and `refactoring` accept a path; `validate` accepts a scope. `ddl-protocol` may appear in the skill list; the command skills read it, and you do not invoke it yourself.
 
+## Scope
+
+The hook acts only in a DDL project: one whose instruction file (`AGENTS.md`, `CLAUDE.md`, or `.claude/CLAUDE.md`, searched from the working directory up to the repository root or `$HOME`) contains the line `→ DDL-PROTOCOL`. The template above carries that line; the presence of `design.md` decides nothing. In any other project the hook returns at once on every event: no STOP state, no Git review, no `design.md` injection at session start, and `git commit` and `git push` run as usual. The decision is cached for the session and recomputed at each prompt and session start. `python3 .codex/hooks/ddl_gate.py status` (the same file sits under `$HOME/.codex/hooks/` with the environment install) prints one line saying whether the current directory is a DDL project and which file and line decided; `bash DDL/bin/doctor.sh --codex` prints the same line.
+
 ## Before recording or sending changes
 
 The agent shows the final staged diff, exact commit message, and any requested push destination in one Git review. Approve the ready set once through the native choices. A ready commit and its push share that approval; files and languages do not get separate questions. Before that review, the Close stage brings `design.md` and the documents up to date, so the commit is the last step and no skill follows it.
@@ -135,32 +139,30 @@ dist/codex/                       → a project's root
     ├── <name>/SKILL.md           the eight skills, from skills/<name>/SKILL.md with /name turned into $name
     ├── <name>/agents/openai.yaml no implicit invocation, generated for every skill
     └── ddl-protocol/
-        ├── SKILL.md              entry: Start, the instruction set (ten directives), Pending STOP, Reading map, Interruption
+        ├── SKILL.md              entry: Start, the instruction set (ten directives), Pending STOP, Reading map, Interruption,
+        │                         and Host, folded from hosts/codex/start.md
         ├── agents/openai.yaml    read in Phase 0, never invoked
-        ├── approval.md           a STOP report or human gate: present, ask, wait, resume
-        ├── parallel-work.md      a +++SWARM of two or more units: roles, prompts, fallback
+        ├── approval.md           a STOP report or human gate: present, ask, wait, resume; Implementation folded from hosts/codex/approval.md
+        ├── parallel-work.md      a +++SWARM of two or more units: roles, prompts, fallback; Implementation folded from hosts/codex/parallel-work.md
         ├── notebook.md           reading and writing design.md: sections, marks, retirement
         ├── close.md              the Close stage: reflect, docs, resonate, validate, one Git review
-        ├── git-review.md         the content review before any ordinary commit or push
-        ├── command-authoring.md  writing a skill: grammar, checks, the template (Example)
-        └── hosts/codex/          this host's four implementations, from hosts/codex/, byte for byte
-            ├── start.md
-            ├── approval.md
-            ├── parallel-work.md
-            └── git-review.md
+        ├── git-review.md         the content review before any ordinary commit or push; Implementation folded from hosts/codex/git-review.md
+        └── command-authoring.md  writing a skill: grammar, checks, the template (Example)
 ```
 
-The skill structure is defined by the shared [DDL protocol](../../protocol/SKILL.md), written as an instruction-set reference and rendered for Codex by the generator. Its entry `SKILL.md` has five sections: Start, Instruction set, Pending STOP, Reading map, and Interruption. The Instruction set table lists the ten directives a skill uses (`# header`, `## Usage`, `### Phase`, `+++DETECT`, `+++STOP`, `+++SWARM`, `+++NEVER`, `+++Report`, `+++DDL_PHASE`, `+++DDL_REPORT`) with syntax, count, placement, and rule. Phases follow the roles:
+The installed protocol has no `hosts/` directory: the generator folds this host's four implementations into the entry and the operations, and the other host's implementations are absent.
+
+The skill structure is defined by the shared [DDL protocol](../../protocol/SKILL.md), written as an instruction-set reference and rendered for Codex by the generator. Its entry `SKILL.md` has five sections: Start, Instruction set, Pending STOP, Reading map, and Interruption; the generated entry adds a Host section, folded from `hosts/codex/start.md`. The Instruction set table lists the ten directives a skill uses (`# header`, `## Usage`, `### Phase`, `+++DETECT`, `+++STOP`, `+++SWARM`, `+++NEVER`, `+++Report`, `+++DDL_PHASE`, `+++DDL_REPORT`) with syntax, count, placement, and rule. Phases follow the roles:
 
 `INIT → SURVEY/READ → WORK → REPORT (+++STOP) → EXECUTE → VERIFY`
 
 `+++DDL_PHASE` is required before a mutating phase (recommended in Claude) and `+++DDL_REPORT` heads the report at a STOP. Pending STOP and Interruption state the rules while a decision waits and after a compaction or restart; the adapter supplies mechanical guardrails on dispatched calls rather than complete STOP enforcement.
 
-Six operations beside the entry hold the rules: Approval, Parallel work, Notebook, Close, Git review, and Command authoring. Each has the same eight sections in the same order: Read when, Syntax, Operands, Operation, Formats, Example, Exceptions, Implementation; the Example holds one short worked example, and the Example of Command authoring is the complete command template. The four implementations under `hosts/codex/` have Read when, Mapping, Observed, and Coverage: `start.md` for the entry's Start and one for each operation with host-specific differences (`approval.md`, `parallel-work.md`, `git-review.md`), named after it; Close reads Git review's, and Notebook and Command authoring need only `start.md`, already read. Tool names appear only in the implementations under `hosts/`. Implementations refer to operations by name and carry no links. In the source, the Reading map names the implementation through `{host}` placeholders; the generated entry names one implementation per row, and the generated protocol holds only this host's four. No file under `hosts/codex/` or `hosts/claude/` is named `claude.md`, which Claude reads as a nested `CLAUDE.md` on a case-insensitive filesystem; the instruction-file template is therefore `guidance.md`, and no file in the protocol may ever be named `claude.md` or `CLAUDE.md`.
+Six operations beside the entry hold the rules: Approval, Parallel work, Notebook, Close, Git review, and Command authoring. Each has the same eight sections in the same order: Read when, Syntax, Operands, Operation, Formats, Example, Exceptions, Implementation; the Example holds one short worked example, and the Example of Command authoring is the complete command template. The four implementations under `hosts/codex/` have Read when, Mapping, Observed, and Coverage: `start.md` for the entry's Start and one for each operation with host-specific differences (`approval.md`, `parallel-work.md`, `git-review.md`), named after it; Close reads Git review's, and Notebook and Command authoring need only `start.md`, already read. Tool names appear only in the implementations under `hosts/`. Implementations refer to operations by name and carry no links. In the source, the Reading map names the implementation through `{host}` placeholders; the generated skill folds this host's four into the files that read them, `start.md` as the entry's Host section and `approval.md`, `parallel-work.md`, and `git-review.md` as the Implementation section (Mapping, Observed, Coverage) of the operation of the same name, so each generated Reading map row points at an `#implementation` or `#host` fragment. No file under `hosts/codex/` or `hosts/claude/` is named `claude.md`, which Claude reads as a nested `CLAUDE.md` on a case-insensitive filesystem; the instruction-file template is therefore `guidance.md`, and no file in the protocol may ever be named `claude.md` or `CLAUDE.md`.
 
-A skill reads the entry and `hosts/codex/start.md` in Phase 0, then each operation and the implementation its Reading map row names right before the action: Approval before a STOP report, Parallel work before fan-out, Notebook before writing `design.md`, Close on entering Close, Git review before a commit or push, and Command authoring when writing a skill. These are files within the selected protocol, not additional `$` commands.
+A skill reads one file in Phase 0, the entry with its Host section, and one file before each action, the operation with its Implementation section: Approval before a STOP report, Parallel work before fan-out, Notebook before writing `design.md`, Close on entering Close, Git review before a commit or push, and Command authoring when writing a skill. These are files within the selected protocol, not additional `$` commands.
 
-Checks: `python3 tools/check_ddl.py source` prints `SOURCE_OK` when the maintained skills, protocol, implementations, and templates have their required structure (the entry table, the fixed sections, the operand and section rows, the literal strings skills write such as `passed <date>`, the exception rows, the dated observations, no tool name outside `hosts/`, no sentence of 60 characters or more twice, and the template in the Example of `command-authoring.md`); `python3 tools/check_ddl.py dist` prints `DIST_OK` when the generated layouts match, each host's protocol holds only its own implementations, and the files read on each path and in total stay within their byte budgets; `python3 tools/check_ddl.py docs` prints `DOCUMENTS_OK` for the documents; `tools/test_protocol.py` holds negative cases that must fail.
+Checks: `python3 tools/check_ddl.py source` prints `SOURCE_OK` when the maintained skills, protocol, implementations, and templates have their required structure (the entry table, the fixed sections, the operand and section rows, the literal strings skills write such as `passed <date>`, the exception rows, the dated observations, no tool name outside `hosts/`, no sentence of 60 characters or more twice, and the template in the Example of `command-authoring.md`); `python3 tools/check_ddl.py dist` prints `DIST_OK` when the generated layouts match, each host's protocol folds only its own implementations into the entry and the operations and holds no `hosts/` directory, and the files read on each path and in total stay within their byte budgets; `python3 tools/check_ddl.py docs` prints `DOCUMENTS_OK` for the documents; `tools/test_protocol.py` holds negative cases that must fail.
 
 For source ownership, configuration, session loading, and verification, use the [maintainer reference](../../docs/maintainers/README.md).
 

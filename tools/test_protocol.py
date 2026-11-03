@@ -3,9 +3,11 @@
 
 Link checks (P12) cover ordinary inline Markdown links, not all Markdown syntax; a `#fragment`
 must name a heading of the target file by its GitHub slug. They run over the trees tools/build.py
-generates for each host and over the source protocol with its {host} placeholders rendered. The
+generates for each host (one file per action: the implementations folded into the entry's Host
+section and the operations' Implementation sections, linked by fragment) and over the source
+protocol with its {host} placeholders rendered and its hosts/<host>/ files beside it. The
 structure checks run against a minimal conforming source tree (skills/, protocol/, hosts/) and
-fourteen mutations of it (negative tests), so each check is shown to fail on the unit it counts.
+fifteen mutations of it (negative tests), so each check is shown to fail on the unit it counts.
 Installation checks build dist/ in a fixture repository and exercise the installer with disposable
 homes and projects; they do not claim that either host loaded a skill, trusted a hook or displayed
 a native UI.
@@ -430,26 +432,49 @@ class ProtocolTest(unittest.TestCase):
 
     def test_build_generates_both_host_layouts(self):
         """generate(): byte-copied Claude commands, Codex twins with $name and openai.yaml, one rendered protocol per
-        host with only that host's implementations, the instruction files and the gate copies; write() puts them under dist/."""
+        host with that host's implementations folded in (one file per action, no hosts/ directory), the instruction
+        files and the gate copies; write() puts them under dist/."""
         build = build_module("generate", "write")
         write_protocol_fixture(self.repo)
         files = generated_files(build, self.repo)
         for host in HOST_NAMES:
             with self.subTest(host=host):
                 protocol = check_ddl.DIST_PROTOCOL[host]
+                title = check_ddl.HOST_TITLES[host]
                 entry = files[f"{protocol}/SKILL.md"].decode("utf-8")
-                self.assertIn(f"hosts/{host}/start.md", entry)
+                self.assertNotIn("hosts/", entry)
                 for placeholder in check_ddl.PLACEHOLDERS:
                     self.assertNotIn(placeholder, entry)
+                # The start implementation becomes the entry's last section, Host, with its Mapping rows.
+                self.assertTrue(entry.rstrip().endswith("- Internal errors warn and fail open."), entry[-200:])
+                host_section = entry[entry.index("\n## Host\n"):]
+                self.assertEqual(re.findall(r"(?m)^#+ .*$", host_section),
+                                 ["## Host", "### Mapping", "### Observed", "### Coverage"])
+                self.assertNotIn(f"# {title}: start", entry)
+                self.assertNotIn("Read when", host_section)
+                for concern in check_ddl.CONCERNS["start"]:
+                    self.assertIn(f"| {concern} | The host tool. |", host_section)
+                self.assertIn(f"[{title}](#host)", entry)
+                self.assertIn(f"[{title}](approval.md#implementation)", entry)
+                self.assertIn(f"Git review's: [{title}](git-review.md#implementation)", entry)
                 for operation in check_ddl.OPERATIONS:
                     self.assertIn(f"{protocol}/{operation}.md", files)
-                    self.assertNotIn("{host}", files[f"{protocol}/{operation}.md"].decode("utf-8"))
-                for operation in HOST_OPERATIONS:
-                    self.assertIn(f"{protocol}/hosts/{host}/{operation}.md", files)
-                    self.assertEqual(files[f"{protocol}/hosts/{host}/{operation}.md"],
-                                     (self.repo / "hosts" / host / f"{operation}.md").read_bytes())
-                other = [h for h in HOST_NAMES if h != host][0]
-                self.assertEqual([key for key in files if key.startswith(f"{protocol}/hosts/{other}/")], [])
+                    text = files[f"{protocol}/{operation}.md"].decode("utf-8")
+                    self.assertNotIn("{host}", text)
+                    self.assertNotIn("hosts/", text)
+                    if operation in HOST_OPERATIONS:
+                        self.assertIn(f"[{title}](#implementation)", text)
+                        folded = text[text.index("\n## Implementation\n"):]
+                        self.assertEqual(re.findall(r"(?m)^#+ .*$", folded),
+                                         ["## Implementation", "### Mapping", "### Observed", "### Coverage"])
+                        for concern in check_ddl.CONCERNS[operation]:
+                            self.assertIn(f"| {concern} | The host tool. |", folded)
+                    else:
+                        self.assertNotIn("### Mapping", text)
+                self.assertIn(f"[{title}](SKILL.md#host)", files[f"{protocol}/notebook.md"].decode("utf-8"))
+                self.assertIn(f"[{title}](SKILL.md#host)", files[f"{protocol}/command-authoring.md"].decode("utf-8"))
+                self.assertIn(f"[{title}](git-review.md#implementation)", files[f"{protocol}/close.md"].decode("utf-8"))
+                self.assertEqual([key for key in files if "/hosts/" in key], [])
                 self.assertEqual(files[check_ddl.DIST_GATE[host]], (self.repo / "tools/ddl_gate.py").read_bytes())
                 self.assertEqual(files[check_ddl.DIST_GUIDE[host]], (self.repo / "hosts" / host / "guidance.md").read_bytes())
         source = (self.repo / "skills/draft/SKILL.md").read_bytes()
@@ -478,7 +503,14 @@ class ProtocolTest(unittest.TestCase):
         write_tree(files, self.base / "dist")
         for host in HOST_NAMES:
             with self.subTest(host=host, tree="dist"):
-                self.assertEqual(local_link_errors(self.base / "dist" / check_ddl.DIST_PROTOCOL[host]), [])
+                bundle = self.base / "dist" / check_ddl.DIST_PROTOCOL[host]
+                self.assertEqual(local_link_errors(bundle), [])
+                # The walker resolved the fragments the fold introduces: the entry's Host and the Implementation
+                # sections, linked from the entry, the operations and within the folded operations themselves.
+                self.assertIn("(#host)", (bundle / "SKILL.md").read_text(encoding="utf-8"))
+                self.assertIn("(#implementation)", (bundle / "approval.md").read_text(encoding="utf-8"))
+                self.assertEqual(sorted(p.name for p in bundle.rglob("*.md")),
+                                 sorted(["SKILL.md"] + [f"{n}.md" for n in check_ddl.OPERATIONS]))
 
     def test_current_resources_survive_project_installation(self):
         build = build_module("write")
@@ -500,10 +532,11 @@ class ProtocolTest(unittest.TestCase):
     def test_existing_installer_delivers_resources_in_both_layouts(self):
         """The installer links the generated dist/ of a fixture repository into disposable homes and copies it into
         a project, keeping user files and leaving the READMEs out."""
-        build = build_module("write")
+        build = build_module("generate", "write")
         write_protocol_fixture(self.repo)
         shutil.copy(ROOT / "tools/build.py", self.repo / "tools/build.py")
         build.write(self.repo)
+        files = generated_files(build, self.repo)
         # The installer expects all of its configured files; create synthetic stand-ins for any the build left out.
         for runtime in ddl_setup.RUNTIMES.values():
             for rel, source in runtime["links"].items():
@@ -533,19 +566,27 @@ class ProtocolTest(unittest.TestCase):
             self.assertEqual(ddl_setup.cmd_install(args, ddl_setup.Report()), 0)
             for host, directory in (("claude", ".claude"), ("codex", ".codex")):
                 installed = home / directory / "skills/ddl-protocol"
-                self.assertEqual((installed / "hosts" / host / "start.md").read_text(), host_text(host, "start"))
-                self.assertIn(f"hosts/{host}/start.md", (installed / "SKILL.md").read_text())
-                other = [h for h in HOST_NAMES if h != host][0]
-                self.assertFalse((installed / "hosts" / other).exists())
+                entry = (installed / "SKILL.md").read_text()
+                # The installed entry carries the host's start implementation folded in as its Host section.
+                self.assertEqual(entry.encode("utf-8"), files[f"{check_ddl.DIST_PROTOCOL[host]}/SKILL.md"])
+                self.assertIn("\n## Host\n\n### Mapping\n", entry)
+                self.assertIn("| Session start | The host tool. |", entry)
+                self.assertIn(f"[{check_ddl.HOST_TITLES[host]}](#host)", entry)
+                self.assertNotIn("hosts/", entry)
+                self.assertFalse((installed / "hosts").exists())
                 self.assertEqual((home / directory / "hooks/ddl_gate.py").read_text(), "# fixture gate\n")
             args.project = str(project)
             self.assertEqual(ddl_setup.cmd_install(args, ddl_setup.Report()), 0)
             self.assertEqual(ddl_setup.cmd_install(args, ddl_setup.Report()), 0)
             for host, bundle in (("claude", project / ".claude/skills/ddl-protocol"),
                                  ("codex", project / ".agents/skills/ddl-protocol")):
-                self.assertEqual((bundle / "hosts" / host / "approval.md").read_text(), host_text(host, "approval"))
-                self.assertEqual((bundle / "approval.md").read_text(),
-                                 check_ddl.render((self.repo / "protocol/approval.md").read_text(), host))
+                approval = (bundle / "approval.md").read_text()
+                self.assertEqual(approval.encode("utf-8"), files[f"{check_ddl.DIST_PROTOCOL[host]}/approval.md"])
+                self.assertTrue(approval.startswith(check_ddl.render((self.repo / "protocol/approval.md").read_text(), host)
+                                                    .replace("(hosts/" + host + "/approval.md)", "(#implementation)").rstrip("\n")))
+                self.assertIn("\n## Implementation\n\nRead [" + check_ddl.HOST_TITLES[host] + "](#implementation) next.\n\n### Mapping\n", approval)
+                self.assertIn("| Choice tool | The host tool. |", approval)
+                self.assertFalse((bundle / "hosts").exists())
             self.assertEqual((project / ".claude/CLAUDE.md").read_text(), (self.repo / "hosts/claude/guidance.md").read_text())
             self.assertEqual((project / "AGENTS.md").read_text(), (self.repo / "hosts/codex/guidance.md").read_text())
             self.assertFalse((project / ".claude/README.md").exists())
@@ -708,8 +749,26 @@ class ProtocolTest(unittest.TestCase):
             self.assertEqual(check_ddl.check_protocol(), [])
             errors = check_ddl.check_dist()
             self.assert_check(errors, "P13", "claude validate:", "codex validate:", "bytes exceeds 20000",
-                              "SKILL.md + hosts/claude/start.md + approval.md + hosts/claude/approval.md")
+                              "(SKILL.md + approval.md)")
             self.assertFalse([e for e in errors if not e.startswith("P13:")], errors)
+
+    def test_p9_rejects_folded_entry_without_mapping(self):
+        """The generated entry's Host section must carry the start Mapping: a start implementation without one
+        folds into a Host section that the dist check rejects (the source check reports the same file)."""
+        write_protocol_fixture(self.repo)
+        start = self.repo / "hosts/claude/start.md"
+        text = start.read_text(encoding="utf-8")
+        start.write_text(text[:text.index("## Mapping\n")] + text[text.index("## Observed\n"):], encoding="utf-8")
+        build = build_module("generate")
+        entry = generated_files(build, self.repo)[f"{check_ddl.DIST_PROTOCOL['claude']}/SKILL.md"].decode("utf-8")
+        self.assertIn("\n## Host\n\n### Observed\n", entry)
+        self.assertNotIn("### Mapping", entry)
+        with mock.patch.object(check_ddl, "ROOT", self.repo):
+            self.assert_check(check_ddl.check_protocol(), "P9", "hosts/claude/start.md: Mapping table header must be")
+            errors = check_ddl.check_dist()
+            self.assert_check(errors, "P9", "dist claude: SKILL.md: Host: H3 sections must be ['Mapping', 'Observed', 'Coverage'], got ['Observed', 'Coverage']",
+                              "dist claude: SKILL.md: Host: Mapping table header must be | Concern | Implementation |")
+            self.assertFalse([e for e in errors if not e.startswith("P9: dist claude: SKILL.md: Host:")], errors)
 
     def test_p14_rejects_sentence_duplicated_into_second_file(self):
         bundle = write_protocol_fixture(self.repo)

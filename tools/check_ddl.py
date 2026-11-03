@@ -8,10 +8,14 @@ Three modes, one line of output on success:
                         template in both forms: P8), the protocol source (the entry P1, the six operations P2-P8,
                         the implementations under hosts/<host>/ P9, the vocabulary P10, duplicated sentences P14),
                         the guidance twins hosts/<host>/guidance.md and the adapter files under hosts/
-  dist    DIST_OK       the trees tools/build.py generates, in memory: every link resolves inside each host's
-                        protocol and no {host} placeholder remains (P12), the command twins and the instruction
-                        files pass the source checks, the gate copies equal tools/ddl_gate.py, the byte budgets
-                        per host (P13), and dist/ on disk, when present, equals the generated trees
+  dist    DIST_OK       the trees tools/build.py generates, in memory: each host's protocol is one file per
+                        action (the entry and the six operations, no hosts/ path or link), every link and
+                        `#fragment` resolves inside it and no {host} placeholder remains (P12), the folded
+                        implementations sit in the entry's Host section and the Implementation sections of
+                        approval, parallel-work and git-review (P9 on the generated files), the command twins
+                        and the instruction files pass the source checks, the gate copies equal
+                        tools/ddl_gate.py, the byte budgets per host (P13), and dist/ on disk, when present,
+                        equals the generated trees
   docs    DOCUMENTS_OK  the philosophy documents, the glossary, the READMEs and the names of earlier layouts
 
 The checks count the units the protocol must define: sections, table rows, operation steps, literals, keywords,
@@ -131,15 +135,20 @@ GIT_CONCERNS = ("Prepare", "nativeRequest", "Revocation", "Push confirmation", "
 CONCERNS = {"start": START_CONCERNS, "parallel-work": PARALLEL_CONCERNS, "approval": APPROVAL_CONCERNS,
             "git-review": GIT_CONCERNS}
 # Reading budgets in UTF-8 bytes (P13): each path adds its files to the previous one and is counted per host on
-# the generated tree; file names are paths under the installed skill directory with {host} filled in.
+# the generated tree; file names are the files of the installed skill directory, the host's implementations
+# folded into them (start in SKILL.md, the others in the operation of the same name).
 BUDGET_PATHS = (
-    ("validate", 20000, ("SKILL.md", "hosts/{host}/start.md", "approval.md", "hosts/{host}/approval.md")),
+    ("validate", 20000, ("SKILL.md", "approval.md")),
     ("draft", 29000, ("notebook.md",)),
-    ("realize-plan", 38000, ("parallel-work.md", "hosts/{host}/parallel-work.md")),
-    ("realize-close", 52000, ("close.md", "git-review.md", "hosts/{host}/git-review.md")),
+    ("realize-plan", 38000, ("parallel-work.md",)),
+    ("realize-close", 52000, ("close.md", "git-review.md")),
 )
 EXECUTION_LIMIT = 62000
 AUTHOR_ONLY = ("command-authoring",)  # operations read by authors only: outside the execution total
+# The folded implementations in the generated skill (P9 on dist): the file, the H2 section and the H3 sections.
+FOLDED_H3 = ("Mapping", "Observed", "Coverage")
+FOLDED_INTO = {"start": ("SKILL.md", "Host"), "approval": ("approval.md", "Implementation"),
+               "parallel-work": ("parallel-work.md", "Implementation"), "git-review": ("git-review.md", "Implementation")}
 INLINE_CODE = re.compile(r"`+[^`\n]*`+")
 NOTES = []  # remarks printed on stderr that are not errors (a skipped optional check)
 _BUILD = {}
@@ -213,17 +222,42 @@ def visible_lines(text):
 
 # Markdown units: H2 sections, tables, numbered steps, bullets, fences, links.
 
-def h2_sections(text):
-    """([titles], {title: raw body lines}) for the H2 headings outside fences."""
+def sections(text, level):
+    """([titles], {title: raw body lines}) for the headings of one level outside fences."""
     titles, bodies, current = [], {}, []
     for raw, seen in zip(text.splitlines(), visible_lines(text)):
-        heading = re.match(r"^## (.+?)\s*$", seen)
+        heading = re.match(r"^" + "#" * level + r" (.+?)\s*$", seen)
         if heading:
             titles.append(heading[1])
             current = bodies.setdefault(heading[1], [])
         else:
             current.append(raw)
     return titles, bodies
+
+
+def h2_sections(text):
+    """([titles], {title: raw body lines}) for the H2 headings outside fences."""
+    return sections(text, 2)
+
+
+def h3_sections(lines):
+    """([titles], {title: raw body lines}) for the H3 headings of one section's body lines, outside fences."""
+    return sections("\n".join(lines), 3)
+
+
+def heading_slugs(text):
+    """The GitHub anchors of the headings outside fences: lowercase, punctuation dropped except `-` and `_`,
+    spaces to `-`, a repeated slug suffixed with its count."""
+    seen, slugs = {}, set()
+    for line in visible_lines(text):
+        heading = re.match(r"^#{1,6}\s+(.*?)\s*#*\s*$", line)
+        if not heading:
+            continue
+        slug = re.sub(r"[^\w\- ]", "", heading[1].strip().lower()).replace(" ", "-")
+        count = seen.get(slug, 0)
+        seen[slug] = count + 1
+        slugs.add(slug if count == 0 else f"{slug}-{count}")
+    return slugs
 
 
 def h1_title(text):
@@ -820,6 +854,35 @@ def check_command_authoring(text, bodies):
     return errors
 
 
+def implementation_body_errors(operation, bodies):
+    """The messages (without a prefix) for the Mapping, Observed and Coverage sections of one implementation of
+    the operation: the Mapping header and the operation's concerns, dated Observed rows, two Coverage bullets.
+    Shared by the source implementations (H2 bodies, P9) and their folded copies in the generated skill (H3)."""
+    messages = []
+    found = table(bodies.get("Mapping", []))
+    if found is None or header_text(found[0]) != MAPPING_HEADER:
+        messages.append(f"Mapping table header must be {MAPPING_HEADER}")
+    else:
+        lower = [row[0].lower() for row in found[1]]
+        messages += [f"Mapping needs a row whose first cell mentions {k!r}" for k in CONCERNS[operation]
+                     if not any(k.lower() in cell for cell in lower)]
+    found = table(bodies.get("Observed", []))
+    if found is None or header_text(found[0]) != "| Fact | Version | Date |":
+        messages.append("Observed table header must be | Fact | Version | Date |")
+    elif not found[1]:
+        messages.append("Observed needs at least one row")
+    else:
+        for number, row in enumerate(found[1], 1):
+            if len(row) < 3 or not row[1]:
+                messages.append(f"Observed row {number} needs a non-empty Version")
+            date = row[2] if len(row) > 2 else ""
+            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
+                messages.append(f"Observed row {number} needs a YYYY-MM-DD Date, got {date!r}")
+    if len(bullets(bodies.get("Coverage", []))) < 2:
+        messages.append("Coverage needs at least two bullets")
+    return messages
+
+
 def check_implementations():
     """P9 (and the P2 heading rule) for the eight implementations hosts/<host>/<operation>.md: four sections, the
     host's title, the Mapping concerns, dated Observed rows, Coverage bullets, operations named and never linked."""
@@ -841,25 +904,8 @@ def check_implementations():
             err("needs an H1 title")
         elif not title.startswith(f"{HOST_TITLES[host]}: "):
             err(f"H1 must be '# {HOST_TITLES[host]}: {operation.replace('-', ' ')}', got '# {title}'")
-        found = table(bodies.get("Mapping", []))
-        if found is None or header_text(found[0]) != MAPPING_HEADER:
-            err(f"Mapping table header must be {MAPPING_HEADER}")
-        else:
-            errors += keyword_errors("P9", label, "Mapping", [row[0] for row in found[1]], CONCERNS[operation])
-        found = table(bodies.get("Observed", []))
-        if found is None or header_text(found[0]) != "| Fact | Version | Date |":
-            err("Observed table header must be | Fact | Version | Date |")
-        elif not found[1]:
-            err("Observed needs at least one row")
-        else:
-            for number, row in enumerate(found[1], 1):
-                if len(row) < 3 or not row[1]:
-                    err(f"Observed row {number} needs a non-empty Version")
-                date = row[2] if len(row) > 2 else ""
-                if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
-                    err(f"Observed row {number} needs a YYYY-MM-DD Date, got {date!r}")
-        if len(bullets(bodies.get("Coverage", []))) < 2:
-            err("Coverage needs at least two bullets")
+        for message in implementation_body_errors(operation, bodies):
+            err(message)
         for link in links("\n".join(visible_lines(text))):
             err(f"implementations hold no links; refer to operations by name: {link}")
         read_when = section_text(bodies.get("Read when", [])).lower()
@@ -888,17 +934,17 @@ def check_vocabulary():
 
 def check_budget(host, sizes):
     """P13 for one host's generated protocol tree: the cumulative byte budgets of the validate, draft, realize-plan
-    and realize-close paths and the execution total; sizes maps paths under the skill directory to byte counts."""
+    and realize-close paths and the execution total (the entry and the five operations a run can read, the
+    implementations folded in); sizes maps the files of the skill directory to byte counts."""
     errors, files, total = [], [], 0
     for name, limit, additions in BUDGET_PATHS:
-        for file in (addition.format(host=host) for addition in additions):
+        for file in additions:
             if file in sizes:
                 files.append(file)
                 total += sizes[file]
         if total > limit:
             errors.append(f"P13: {host} {name}: {total} bytes exceeds {limit} ({' + '.join(files)})")
     execution = ["SKILL.md"] + [f"{n}.md" for n in OPERATIONS if n not in AUTHOR_ONLY]
-    execution += [f"hosts/{host}/{n}.md" for n in HOST_OPERATIONS]
     total = sum(sizes.get(file, 0) for file in execution)
     if total > EXECUTION_LIMIT:
         errors.append(f"P13: {host} execution total: {total} bytes exceeds {EXECUTION_LIMIT}")
@@ -998,35 +1044,69 @@ def decoded(data):
 
 
 def check_dist_protocol(host, tree):
-    """P12 on one host's generated protocol: the expected files, only that host's implementations, every link
-    resolving inside the tree, no placeholder; then the P13 budgets."""
+    """P12 on one host's generated protocol: the entry and the six operations and nothing under hosts/, every link
+    resolving inside the tree and every `#fragment` to a heading of its target, no link to hosts/; then P9 on the
+    folded implementations and the P13 budgets."""
     errors = []
     prefix = DIST_PROTOCOL[host] + "/"
     err = lambda message: errors.append(f"P12: dist {host}: {message}")  # noqa: E731
     protocol = {key[len(prefix):]: data for key, data in tree.items() if key.startswith(prefix)}
-    expected = ["SKILL.md"] + [f"{n}.md" for n in OPERATIONS] + [f"hosts/{host}/{n}.md" for n in HOST_OPERATIONS]
+    expected = ["SKILL.md"] + [f"{n}.md" for n in OPERATIONS]
     for name in expected:
         if name not in protocol:
             err(f"missing {prefix}{name}")
     for name in sorted(protocol):
-        if name.startswith("hosts/") and not name.startswith(f"hosts/{host}/"):
-            err(f"another host's implementation generated: {prefix}{name}")
-    for name, data in sorted(protocol.items()):
-        if not name.endswith(".md"):
-            continue
-        text = decoded(data)
+        if "hosts/" in name:
+            err(f"implementation file generated (the implementations are folded in): {prefix}{name}")
+    texts = {name: decoded(data) for name, data in protocol.items() if name.endswith(".md")}
+    slugs = {}
+    for name, text in sorted(texts.items()):
         if text is None:
             err(f"{prefix}{name}: not UTF-8")
             continue
         directory = str(PurePosixPath(name).parent)
         for link in links("\n".join(visible_lines(text))):
-            path = link.split("#")[0]
-            if not path or path.startswith("/") or re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", path):
+            path, _, fragment = link.partition("#")
+            if path.startswith("/") or re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", path):
                 continue
-            target = resolve_link("" if directory == "." else directory, path)
+            if "hosts/" in link:
+                err(f"{prefix}{name}: link to hosts/ (the implementations are folded in): {link}")
+                continue
+            target = name if not path else resolve_link("" if directory == "." else directory, path)
             if target is None or target not in protocol:
                 err(f"{prefix}{name}: link does not resolve inside the generated protocol: {link}")
+                continue
+            if fragment and texts.get(target) is not None:
+                if target not in slugs:
+                    slugs[target] = heading_slugs(texts[target])
+                if fragment not in slugs[target]:
+                    err(f"{prefix}{name}: link fragment names no heading of {target}: {link}")
+    errors += check_folded(host, prefix, texts)
     errors += check_budget(host, {name: len(data) for name, data in protocol.items()})
+    return errors
+
+
+def check_folded(host, prefix, texts):
+    """P9 on one host's generated protocol: the entry's H2 sections end with Host, each operation keeps its
+    eight, and the folded implementations (the entry's Host, the Implementation of approval, parallel-work and
+    git-review) carry the H3 sections Mapping, Observed and Coverage with the same content rules as the source."""
+    errors = []
+    for operation, (name, section) in FOLDED_INTO.items():
+        label = f"P9: dist {host}: {name}"
+        text = texts.get(name)
+        if text is None:
+            continue  # missing or not UTF-8: reported by P12
+        titles, bodies = h2_sections(text)
+        expected = list(ENTRY_H2) + ["Host"] if name == "SKILL.md" else list(OPERATION_H2)
+        if titles != expected:
+            errors.append(f"{label}: H2 headings must be {expected}, got {titles}")
+        if section not in bodies:
+            errors.append(f"{label}: needs a ## {section} section with the folded {operation} implementation")
+            continue
+        h3_titles, h3_bodies = h3_sections(bodies[section])
+        if h3_titles != list(FOLDED_H3):
+            errors.append(f"{label}: {section}: H3 sections must be {list(FOLDED_H3)}, got {h3_titles}")
+        errors += [f"{label}: {section}: {m}" for m in implementation_body_errors(operation, h3_bodies)]
     return errors
 
 
@@ -1142,13 +1222,14 @@ def check_docs():
     paths += sorted((ROOT / "docs").rglob("*.md"))
     if (ROOT / LOCAL_GUIDE).is_file():
         paths.append(ROOT / LOCAL_GUIDE)
-    # Names of the trees before the hosts/ layout and before the generated dist/ are obsolete in every document
-    # (the tokens are split so that this file does not match a search for them). `codex/` alone stays valid:
-    # hosts/codex/ is the host's directory and dist/codex/ the generated layout.
+    # Names of the trees before the hosts/ layout, before the generated dist/ and before the fold (the installed
+    # protocol's implementations directory) are obsolete in every document (the tokens are split so that this
+    # file does not match a search for them). `codex/` alone stays valid: hosts/codex/ is the host's directory
+    # and dist/codex/ the generated layout; the source `hosts/<host>/` stays valid everywhere.
     obsolete = ("DESIGN" + ".md", "examples" + "/", ".codex/commands", ".claude/commands",
                 "DDL-PROTOCOL-SKILL", "Codex Runtime Contract", "dog" + "food", "EXECUTE → VALIDATE",
                 "references" + "/", "runtimes" + "/", "-start" + ".md", "examples" + ".md",
-                "claude-code" + "/", "sync_" + "mirrors", "hosts/claude" + "-code")
+                "claude-code" + "/", "sync_" + "mirrors", "hosts/claude" + "-code", "ddl-protocol/" + "hosts")
     obsolete_codex = re.compile(r"(?<!hosts/)(?<!dist/)codex/(\.agents|README|AGENTS)")
     for path in paths:
         try:

@@ -27,3 +27,4 @@ Read with the Approval operation before a STOP or a design.md human gate; it nam
 
 - The hook classifies only the calls Claude dispatches through PreToolUse.
 - Human input is recognized from the named `AskUserQuestion` result fields and the approved-plan record, nothing else in the transcript.
+- Scope: the hook acts only in a DDL project, recognized by the `→ DDL-PROTOCOL` line of the instruction file found from the working directory up to the repository root or `$HOME`; elsewhere every event returns at once.

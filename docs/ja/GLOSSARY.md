@@ -6,7 +6,7 @@
 
 ## 翻訳・編集の方針
 
-- 節の名前とディレクティブは英語のまま書く。Experience、Binding Decisions、Direction、Acceptance Gates、Validation、Scopes、Principles、Intent、Detection Targets、`+++STOP`、`+++SWARM`、`+++NEVER`、`+++DDL_REPORT`、D1 や G7 の名前、`passed` や `Unbound:` のような印は訳さない。操作と実装の節の名前（Read when、Syntax、Operands、Operation、Formats、Example、Exceptions、Implementation、Mapping、Observed、Coverage）は節を指すときは英語のまま書き、内容を述べるときは表の訳語で書く。
+- 節の名前とディレクティブは英語のまま書く。Experience、Binding Decisions、Direction、Acceptance Gates、Validation、Scopes、Principles、Intent、Detection Targets、`+++STOP`、`+++SWARM`、`+++NEVER`、`+++DDL_REPORT`、D1 や G7 の名前、`passed` や `Unbound:` のような印は訳さない。操作と実装の節の名前（Read when、Syntax、Operands、Operation、Formats、Example、Exceptions、Implementation、Mapping、Observed、Coverage）と入口の節 Host は節を指すときは英語のまま書き、内容を述べるときは表の訳語で書く。
 - 固有名詞と文献は原文のまま書く。人名（Clark & Chalmers、Nonaka & Takeuchi など）、組織と製品（Anthropic、OpenAI、Claude Code、Codex、Spec Kit、Kiro、Tessl、Next.js）、方法論の略語（SECI、DocDD、ADR、TDD、DbC、SDD、AI-DLC、MCP）、ファイル名と識別子（design.md、CLAUDE.md、AGENTS.md、`.claude/settings.json`、`explorer`、`worker`）はそのまま。参考文献の節は英語のままにする。
 - 見出しは日本語に訳す。ただし節の名前（Experience など）と固有名詞を含む見出しはそのまま残す。訳した見出しの例: In the Harness Era は「ハーネス時代」、Background: The Session Discontinuity Problem は「背景: セッションの断絶という問題」、Core Principle は「中核の原則」、Roles: Human and LLM は「役割: 人間と LLM」、Stay Flexible は「柔軟に」、Anti-Patterns は「アンチパターン」、Summary は「まとめ」、Option 1: Pure Discipline は「選択肢1: 規律だけ」、STOP Gates は「STOP ゲート」。見出しの数と階層は英語版と一致させる（V35）。
 - em-dash（—）は使わない。読点、括弧、コロンで書く。コード、表、引用、見出しの構造は英語版に合わせる。
@@ -92,9 +92,9 @@
 | instruction（ISA のたとえ。`+++` ディレクティブ一つ一つ） | 命令 |  | ISA。directive は「ディレクティブ」のまま。規則としての instruction は「指示」の行に従う |
 | specification（protocol の） | 仕様 |  | 命令セット仕様 |
 | instruction-set reference | 命令セット仕様 |  | protocol の形式（P16）。「命令セットの参照資料」とは訳さない |
-| protocol tree | プロトコルの木 |  | 入口、操作、`hosts/` の実装の三段。「各ホストが受け取るプロトコルの木」 |
-| tier（protocol の木の三段） | 段 |  | 「三段からなる」。Direction の stage は「段階」 |
-| entry（protocol の入口。`SKILL.md`） | 入口 | エントリ | 命令セット（十の命令の表）と読み込み地図を持つ。読み込み地図は操作、読む場面、実装の 3 列 |
+| protocol tree | プロトコルの木 |  | 入口と操作の二段。実装は導入時に畳み込む。「各ホストが受け取るプロトコルの木」 |
+| tier（protocol の木の二段） | 段 |  | 「二段からなる」。Direction の stage は「段階」 |
+| entry（protocol の入口。`SKILL.md`） | 入口 | エントリ | 命令セット（十の命令の表）と読み込み地図を持つ。読み込み地図は操作、読む場面、実装の 3 列であり、導入されたスキルでは実装の列が操作の Implementation 節か入口の Host 節を指す |
 | reading map | 読み込み地図 | 読み込みマップ |  |
 | operation（protocol の操作。入口の隣の 6 本） | 操作 | 参照資料、例の資料 | approval.md、parallel-work.md、notebook.md、close.md、git-review.md、command-authoring.md。各操作は短い例を一つ持ち、別の例集は無い。節の名前 Operation（動作）とは区別する。Git の action や「外に出る操作」のような一般の「操作」は文脈で区別し、protocol の 6 本を指すときだけ「操作」を節やファイルの種類の名前として使う |
 | command authoring（操作の名） | コマンド作成 |  | 「コマンド作成の操作」。コマンドのテンプレートはその Example にある |
@@ -108,10 +108,13 @@
 | example（操作の節 Example） | 例 |  | 各操作に短い例が一つ。節の名前 Example は英字のまま。「例N」（Example N）とは別 |
 | Exceptions（操作の節） | 例外 |  | 動作が決めない状況と振る舞いの対 |
 | boundary（一般の境界） | 境界 | 境界線 | 入力の境界など。操作の節は Exceptions（例外） |
-| Implementation（操作の節） | 実装 |  | 操作の 8 番目の節。`hosts/` の実装（ファイル）とは文脈で区別する |
-| `hosts/`（protocol の実装を置くディレクトリ） | `hosts/` |  | ディレクトリ名は英字のまま。中の 8 本は次の行の「実装」 |
-| implementation（`hosts/` の 8 本） | 実装 | 実行環境の資料、ホスト資料 | `hosts/claude/` と `hosts/codex/` の八つ。ホストごとに 4 本であり、導入されたプロトコルは自分のホストの 4 本だけを持つ。`start.md` は Start で読み、`approval.md`、`parallel-work.md`、`git-review.md` は同じ名前の操作とともに読む。Read when、Mapping、Observed、Coverage を持つ。節の名前の近くでは「`hosts/` の実装」と書く。`hosts/` は英字のまま。旧称 host file、runtime file は使わない |
-| the host's `start.md` | ホストの `start.md` |  | Phase 0 で入口とともに読む実装。「起動資料」とは訳さない |
+| Implementation（操作の節） | 実装 |  | 操作の 8 番目の節。導入されたスキルではホストの実装（Mapping、Observed、Coverage）がここに畳み込まれる。`hosts/` の実装（ファイル）とは文脈で区別する |
+| `hosts/`（protocol の実装を置くディレクトリ） | `hosts/` |  | ディレクトリ名は英字のまま。正本にだけあり、導入されたプロトコルには無い。中の 8 本は次の行の「実装」 |
+| implementation（`hosts/` の 8 本） | 実装 | 実行環境の資料、ホスト資料 | `hosts/claude/` と `hosts/codex/` の八つ。ホストごとに 4 本であり、導入されたプロトコルに `hosts/` は無く、自分のホストの 4 本を入口と操作に畳み込んで持つ。`start.md` は入口の Host 節に、`approval.md`、`parallel-work.md`、`git-review.md` は同じ名前の操作の Implementation 節に入る。Read when、Mapping、Observed、Coverage を持つ。節の名前の近くでは「`hosts/` の実装」と書く。`hosts/` は英字のまま。旧称 host file、runtime file は使わない |
+| the host's `start.md` | ホストの `start.md` |  | 正本では Phase 0 で入口とともに読む実装。導入されたスキルでは入口の Host 節に畳み込まれる。「起動資料」とは訳さない |
+| Host（入口の節） | Host |  | 導入されたスキルの入口にある節。ホストの `start.md` を畳み込んだもの。節を指すときは英字のまま、内容を述べるときは「ホストの実装」 |
+| fold / folded | 畳み込む / 畳み込まれた |  | 導入時にホストの実装を入口の Host 節と操作の Implementation 節に入れること。「統合する」「取り込む」とは訳さない |
+| DDL project / project detection | DDL のプロジェクト / プロジェクトの判定 |  | 指示ファイル（CLAUDE.md、`.claude/CLAUDE.md`、AGENTS.md）の `→ DDL-PROTOCOL` の行で判定する。design.md の有無では判定しない。ゲートの hook はこのプロジェクトでだけ働く |
 | host（`claude`、`codex`） | ホスト |  | `hosts/` の下の名前で実行環境を指すときの語。ディレクトリ名 `hosts/claude/`、`hosts/codex/` は英字のまま。表示名は Claude と Codex であり、製品名 Claude Code は版を引くときに限って書く |
 | source tree | 正本の木 |  | `skills/`、`protocol/`、`hosts/<host>/` の実装、`tools/ddl_gate.py` からなるホストに中立な一本の木。両ホストの生成物はここから作る |
 | build（`tools/build.py`） | 生成（build） |  | 正本の木から両ホストの生成物を `dist/` に書き出すこと。初出に英語を添える |
@@ -209,6 +212,6 @@
 
 ## 決定（2026-10-18）
 
-1. gate の訳は「ゲート」に統一する（STOP ゲート、人間のゲート、ゲートの hook）。この repo の design.md は仕組みの名として「門」を使っているが、これは repo 内部の呼び名として残す。
+1. gate の訳は「ゲート」に統一する（STOP ゲート、人間のゲート、ゲートの hook）。design.md を含めて例外は設けない。
 2. モデルに載っている内容としての context は「コンテキスト」、一般の意味だけ「文脈」とする。
 3. 見出しは固有名詞と節の名前を除いて日本語に訳す。
