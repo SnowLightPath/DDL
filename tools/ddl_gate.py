@@ -206,9 +206,9 @@ PREDATES = "DDL STOP: {} predates the latest user message, resume or compaction;
 GIT_QUESTION_MISMATCH = "DDL Git review: the question does not match prepared review {}; ask it unchanged"
 PENDING_NOTICE = ("DDL gate: report {} is awaiting the user's answer (report: {}). Prepare it again under a new ID "
                   "and ask its question; do not continue the phase.")
-# A tool output wraps the gate's JSON in at most a few envelopes (a JSON `output` field, a content list,
-# an `Output:` section); deeper nesting is not the gate's own output.
-ENVELOPE_DEPTH = 3
+# Codex Desktop can wrap the gate's JSON in four steps: content list, text, parsed exec result,
+# and its output JSON. Deeper nesting is not the gate's own output.
+ENVELOPE_DEPTH = 4
 # The gate's own preparation call: python3 [-I] <gate> <subcommand> --runtime <rt> <<'DELIM' (quoted).
 PREPARE_HEAD = _Pattern("PREPARE_HEAD", r"python3(?:[ \t]+-I)?[ \t]+(.+?)[ \t]+(?:prepare-report|prepare-git-review)"
                                         r"[ \t]+--runtime(?:[ \t]+|=)(?:claude|codex)[ \t]*<<[ \t]*(['\"])"
@@ -1076,7 +1076,11 @@ def prepared_output(value, depth=0):
         return None
     if isinstance(value, list):
         for item in value:
-            found = prepared_output(item.get("text") if isinstance(item, dict) else item, depth + 1)
+            if isinstance(item, dict) and item.get("type") in ("text", "input_text"):
+                item = item.get("text")
+            if not isinstance(item, str):
+                continue
+            found = prepared_output(item, depth + 1)
             if found:
                 return found
         return None
@@ -1174,7 +1178,7 @@ def codex_pending_signal(kind, ptype, payload):
     if kind == "response_item" and ptype == "function_call" and payload.get("name") in QUESTION_TOOLS["codex"]:
         ident = question_id(asked_question("codex", payload.get("arguments")))
         return ident is not None, ident
-    if kind == "response_item" and ptype == "function_call_output":
+    if kind == "response_item" and ptype in ("function_call_output", "custom_tool_call_output"):
         ident = prepared_output(payload.get("output"))
         return ident is not None, ident
     return False, None

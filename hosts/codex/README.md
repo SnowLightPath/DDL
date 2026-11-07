@@ -67,7 +67,7 @@ Subset editing starts only when requested and uses the host's actual native capa
 
 ## Host limits
 
-On 2026-11-01, the Codex desktop host used for verification accepted actual click responses after final messages. This is a result for that host, not a guarantee about every Codex surface.
+The [approval implementation](approval.md#observed) and [Git review implementation](git-review.md#observed) record the tested desktop versions, dates and Coverage limits. These checks do not establish support for every Codex surface.
 
 The tested **Codex CLI 0.166.0 Default** could show a question but could not collect its answer after the response ended. DDL therefore leaves the work unapproved on that route, including Git recording and sending: typed approval cannot replace the missing native Git-review answer. Other versions may behave differently; support depends on whether the interface can collect the required approval.
 

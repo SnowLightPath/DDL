@@ -75,6 +75,24 @@ def codex_reply(call_id, question, answer):
     return "<send_user_message_question_reply>\n" + json.dumps(rows) + "\n</send_user_message_question_reply>"
 
 
+def codex_desktop_output(value):
+    """Sanitized Desktop text(result) shape: two input_text blocks around an exec result."""
+    result = {"chunk_id": "fixture", "wall_time_seconds": 0.01, "exit_code": 0,
+              "original_token_count": 100, "output": json.dumps(value) + "\n"}
+    return [{"type": "input_text", "text": "Script completed\nWall time 0.1 seconds\nOutput:\n"},
+            {"type": "input_text", "text": json.dumps(result)}]
+
+
+def codex_desktop_preparation(rows, prepared):
+    """Replace only a fixture's preparation result; no assistant text or reasoning is needed."""
+    rows = [row for row in rows if row.get("payload", {}).get("type") != "reasoning"]
+    for row in rows:
+        item = row.get("payload", {})
+        if item.get("type") == "function_call_output" and item.get("call_id") == "prepare-call":
+            item.update(type="custom_tool_call_output", output=codex_desktop_output(prepared))
+    return rows
+
+
 QUESTION_TOOL = {"claude": "AskUserQuestion", "codex": "request_user_input_async"}
 QUESTION_KEY = {"claude": "question", "codex": "title"}
 
@@ -1139,7 +1157,7 @@ class GitReviewTest(GateTest):
         proc = self.run_gate("prepare-git-review", runtime, self.review_input)
         return json.loads(proc.stdout)
 
-    def record(self, runtime, review, choice=0, mutate=None, variant=""):
+    def record(self, runtime, review, choice=0, mutate=None, variant="", desktop=False):
         """Write the native transcript for `review` from `git_review_<runtime><variant>.jsonl`."""
         q = review["question"]
         answer = q["options"][choice]
@@ -1154,6 +1172,8 @@ class GitReviewTest(GateTest):
                         "@PREPARED_JSON@": json.dumps(review), "@INPUT@": prepare_input,
                         "@PREPARE_ARGS_JSON@": json.dumps({"cmd": codex_call})}
         rows = template_rows("git_review_" + runtime + variant + ".jsonl", replacements)
+        if desktop:
+            rows = codex_desktop_preparation(rows, review)
         if mutate:
             mutate(rows)
         write_rows(self.transcript, rows)
@@ -1271,6 +1291,56 @@ class GitReviewTest(GateTest):
                 self.assert_allowed(self.check(runtime))
                 self.git("commit", "--cleanup=verbatim", "-F", str(self.message))
                 self.pushed(runtime, self.check(runtime, "git push origin main"))
+
+    def test_codex_desktop_preparation_and_receipt_do_not_authorize_git(self):
+        review = self.prepare("codex", [self.command, "git push origin main"])
+        rows = self.record("codex", review, variant="_reasoning", desktop=True)
+        self.assertFalse(any(row["payload"].get("type") in ("message", "agent_message", "reasoning") for row in rows))
+        pending = {"id": review["reviewId"], "report": review["report"]}
+        waiting = ddl_gate.WAITING_REASON.format(review["reviewId"], review["report"])
+        unrelated = {"questions": [{"title": "Which file first?", "options": ["A", "B"]}]}
+        altered = json.loads(json.dumps(review["nativeRequest"]))
+        altered["questions"][0]["title"] += " (changed)"
+        for stage, record in (("prepared", rows[:3]), ("receipt", rows[:5])):
+            with self.subTest(stage=stage):
+                write_rows(self.transcript, record)
+                with mock.patch.dict(os.environ, {"DDL_GATE_STATE_DIR": self.state}):
+                    self.assertEqual(ddl_gate.scan_codex(self.transcript), (True, pending))
+                for command in (self.command, "git push origin main", "touch x"):
+                    self.assertTrue(self.blocked(self.check("codex", command)).startswith(waiting))
+                self.assert_reason(self.ask("codex", unrelated, str(self.transcript)),
+                                   ddl_gate.ASK_UNCHANGED.format(review["reviewId"]))
+                self.assert_reason(self.ask("codex", altered, str(self.transcript)),
+                                   ddl_gate.GIT_QUESTION_MISMATCH.format(review["reviewId"]))
+                self.assert_allowed(self.ask("codex", review["nativeRequest"], str(self.transcript)))
+        write_rows(self.transcript, rows)
+        with mock.patch.dict(os.environ, {"DDL_GATE_STATE_DIR": self.state}):
+            self.assertEqual(ddl_gate.scan_codex(self.transcript), (False, None))
+        self.assert_allowed(self.check("codex"))
+        self.git("commit", "--cleanup=verbatim", "-F", str(self.message))
+        self.assert_allowed(self.check("codex", "git push origin main"))
+
+    def test_codex_desktop_git_preparation_keeps_record_checks(self):
+        review = self.prepare("codex")
+        unknown = render(review, {review["reviewId"]: "G-0123456789abcdef"})
+        self.record("codex", unknown, variant="_reasoning", desktop=True)
+        self.assert_reason(self.ask("codex", unknown["nativeRequest"], str(self.transcript)),
+                           ddl_gate.NOT_PREPARED.format(unknown["reviewId"]))
+        changed = self.prepare("codex")
+        (pathlib.Path(changed["report"]).parent / "review.json").write_text("{}\n")
+        self.record("codex", changed, variant="_reasoning", desktop=True)
+        self.assert_reason(self.ask("codex", changed["nativeRequest"], str(self.transcript)),
+                           ddl_gate.NOT_PREPARED.format(changed["reviewId"]))
+        foreign = self.prepare("claude")
+        foreign["nativeRequest"] = {"questions": [foreign["question"]]}
+        self.record("codex", foreign, variant="_reasoning", desktop=True)
+        self.assert_reason(self.ask("codex", foreign["nativeRequest"], str(self.transcript)),
+                           ddl_gate.NOT_PREPARED.format(foreign["reviewId"]))
+        self.record("codex", review, variant="_reasoning", desktop=True)
+        self.run_gate("session-start", "codex", payload("codex", "session-start", str(self.transcript),
+                                                       cwd=str(self.repo), source="resume"))
+        self.assert_reason(self.ask("codex", review["nativeRequest"], str(self.transcript)),
+                           ddl_gate.PREDATES.format(review["reviewId"]))
 
     def test_altered_question_is_denied_and_cannot_authorize_git(self):
         for runtime in ("claude", "codex"):
@@ -1641,7 +1711,7 @@ SHELL = {"claude": ("Bash", "command"), "codex": ("exec_command", "cmd")}
 class ReportStopTest(GateTest):
     """A decision report proved from its prepared question, with the report text recorded only as thinking."""
 
-    def flow(self, runtime, prepared, stage, answer=0):
+    def flow(self, runtime, prepared, stage, answer=0, desktop=False):
         """The report_flow transcript cut after `stage`: prepared, asked, or answered (option `answer`)."""
         question = prepared["question"]
         option = prepared["nativeRequest"]["questions"][0]["options"][answer]
@@ -1652,6 +1722,8 @@ class ReportStopTest(GateTest):
                         "@REQUEST_JSON@": json.dumps(prepared["nativeRequest"]), "@ANSWERS@": {question: label},
                         "@REPLY@": codex_reply("report-question", question, label)}
         rows = template_rows("report_flow_" + runtime + ".jsonl", replacements)[:FLOW_STAGES[runtime][stage]]
+        if desktop:
+            rows = codex_desktop_preparation(rows, prepared)
         path = os.path.join(self.tmp, "{}-{}.jsonl".format(runtime, stage))
         write_rows(path, rows)
         return path
@@ -1684,6 +1756,52 @@ class ReportStopTest(GateTest):
                 self.assertEqual(self.scan(runtime, transcript), (False, None))
                 for tool, tool_input in WRITES[runtime]:
                     self.assert_allowed(self.call(runtime, transcript, tool, tool_input))
+
+    def test_codex_desktop_report_holds_writes_until_answered(self):
+        prepared = self.prepare_report("codex")
+        pending = {"id": prepared["reportId"], "report": prepared["report"]}
+        waiting = ddl_gate.WAITING_REASON.format(prepared["reportId"], prepared["report"])
+        unrelated = {"questions": [{"title": "Which file first?", "options": ["A", "B"]}]}
+        altered = json.loads(json.dumps(prepared["nativeRequest"]))
+        altered["questions"][0]["title"] += " (changed)"
+        for stage in ("prepared", "asked", "answered"):
+            with self.subTest(stage=stage):
+                transcript = self.flow("codex", prepared, stage, desktop=True)
+                rows = [json.loads(line) for line in pathlib.Path(transcript).read_text().splitlines()]
+                self.assertFalse(any(row["payload"].get("type") in ("message", "agent_message", "reasoning") for row in rows))
+                self.assertEqual(self.scan("codex", transcript), (False, None) if stage == "answered" else (True, pending))
+                for tool, tool_input in WRITES["codex"]:
+                    proc = self.call("codex", transcript, tool, tool_input)
+                    if stage == "answered":
+                        self.assert_allowed(proc)
+                    else:
+                        self.assert_reason(proc, waiting)
+                if stage != "answered":
+                    self.assert_reason(self.call("codex", transcript, "exec_command", {"cmd": "touch x"}),
+                                       waiting + SEGMENT_SUFFIX.format("touch x"))
+                    self.assert_reason(self.call("codex", transcript, QUESTION_TOOL["codex"], unrelated),
+                                       ddl_gate.ASK_UNCHANGED.format(prepared["reportId"]))
+                    self.assert_reason(self.call("codex", transcript, QUESTION_TOOL["codex"], altered),
+                                       ddl_gate.ASK_UNCHANGED.format(prepared["reportId"]))
+                    self.assert_allowed(self.call("codex", transcript, QUESTION_TOOL["codex"], prepared["nativeRequest"]))
+
+    def test_codex_desktop_report_keeps_record_checks(self):
+        prepared = self.prepare_report("codex")
+        unknown = render(prepared, {prepared["reportId"]: "R-0123456789abcdef"})
+        changed = self.prepare_report("codex")
+        with open(changed["report"], "a", encoding="utf-8") as fh:
+            fh.write("Changed after preparation.\n")
+        foreign = self.prepare_report("claude")
+        foreign["nativeRequest"] = {"questions": [{"title": foreign["question"], "options": ["A", "B"]}]}
+        for invalid in (unknown, changed, foreign):
+            with self.subTest(report=invalid["reportId"]):
+                transcript = self.flow("codex", invalid, "prepared", desktop=True)
+                self.assert_reason(self.call("codex", transcript, QUESTION_TOOL["codex"], invalid["nativeRequest"]),
+                                   ddl_gate.NOT_PREPARED.format(invalid["reportId"]))
+        transcript = self.flow("codex", prepared, "prepared", desktop=True)
+        self.run_gate("session-start", "codex", payload("codex", "session-start", transcript, source="resume"))
+        self.assert_reason(self.call("codex", transcript, QUESTION_TOOL["codex"], prepared["nativeRequest"]),
+                           ddl_gate.PREDATES.format(prepared["reportId"]))
 
     def test_question_without_the_pending_id_is_denied(self):
         ordinary = {"claude": {"questions": [{"question": "Which file first?", "header": "Order", "multiSelect": False,
@@ -1908,6 +2026,33 @@ class QuestionFormatTest(unittest.TestCase):
                       json.dumps({"reportId": "R-" + hexid}), deep, None):
             with self.subTest(value=value):
                 self.assertIsNone(ddl_gate.prepared_output(value))
+
+    def test_codex_desktop_output_is_bounded_and_reads_only_text_blocks(self):
+        hexid = "a" * ddl_gate.ID_HEX_LENGTH
+        for kind, key in (("R", "reportId"), ("G", "reviewId")):
+            with self.subTest(kind=kind):
+                prepared = {key: kind + "-" + hexid, "nativeRequest": {}}
+                output = codex_desktop_output(prepared)
+                found = (kind, hexid)
+                self.assertEqual(ddl_gate.prepared_output(output), found)  # exactly depth four
+                for ptype in ("function_call_output", "custom_tool_call_output"):
+                    self.assertEqual(ddl_gate.codex_pending_signal("response_item", ptype, {"output": output}),
+                                     (True, found))
+                self.assertIsNone(ddl_gate.prepared_output({"output": output}))  # one envelope too deep
+                doc = json.dumps(prepared)
+                self.assertEqual(ddl_gate.prepared_output([doc]), found)
+                self.assertEqual(ddl_gate.prepared_output([{"type": "text", "text": doc}]), found)
+                rejected = [doc + " trailing prose", "Preparation result: " + doc, doc[:-1],
+                            {"metadata": {"output": doc}}, {"text": doc},
+                            [{"type": "thinking", "text": doc}], [{"type": "reasoning", "text": doc}],
+                            [{"type": "summary_text", "text": doc}], [{"text": doc}],
+                            [prepared], [{"type": "input_text", "text": prepared}]]
+                for value in rejected:
+                    with self.subTest(value=value):
+                        self.assertIsNone(ddl_gate.prepared_output(value))
+                for ptype in ("reasoning", "thinking", "custom_tool_call"):
+                    self.assertEqual(ddl_gate.codex_pending_signal("response_item", ptype, {"output": output}),
+                                     (False, None))
 
     def test_only_the_exact_preparation_call_is_recognized(self):
         own = os.path.realpath(ddl_gate.__file__)

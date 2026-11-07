@@ -19,8 +19,11 @@ Read for every ordinary commit or push, before the shared Git review operation; 
 | Fact | Version | Date |
 |---|---|---|
 | The installed binary maps approval policy `never` to hook mode `bypassPermissions` and other policies to `default` (binary inspection, no live payload); `dontAsk` is the documented explicit no-confirmation mode | Codex 0.163.0 | 2026-11-01 |
+| With policy `never`, one native answer allowed the exact prepared commit and push to a disposable repository/local bare remote; hooks stayed enabled, with no manual `!` or extra push-confirmation UI | Codex Desktop 0.167.0-alpha.3.2 | 2026-11-07 |
+| Offline replay of only actual question/answer items proved `native_git_choice` without assistant text | Codex Desktop 0.167.0-alpha.3.2 | 2026-11-07 |
 
 ## Coverage
 
 - The hook denies a recognized unreviewed commit or push only when the call reaches the Codex tool hooks: the project rules and hooks under project trust, or the user-level hooks.
 - `bin/doctor.sh` covers null records and the no-confirmation modes by simulated dispatch.
+- The live `never` run does not test native push prompts under policies that permit prompting.
