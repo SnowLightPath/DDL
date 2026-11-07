@@ -171,7 +171,7 @@ DDL uses temporary notes to help Human and LLM share purposes and designs across
 
 Ultimately, code becomes the source of truth. Delete DDL documents when no longer needed.
 
-Before recording or sending changes with Git, the agent shows the final diff, exact message, and destination. One submitted native choice covers the compatible ready set. The hook checks ordinary commit/push calls against that review even when STOP is open; an earlier implementation approval or a normal reply is insufficient. Changed contents require a new review. This guard covers calls reaching the hook, with the runtime limits documented separately. The Close stage brings design.md and the documents up to date before that review, so one commit ends the work and no further command follows.
+Before recording or sending changes with Git, the agent shows the final diff, exact message, and destination in a review file. One submitted native choice covers the compatible ready set; its question names the review ID and that file, so the question alone is enough to decide. The hook checks ordinary commit/push calls against that review even when STOP is open; an earlier implementation approval or a normal reply is insufficient. Changed contents require a new review. This guard covers calls reaching the hook, with the runtime limits documented separately. The Close stage brings design.md and the documents up to date before that review, so one commit ends the work and no further command follows.
 
 **Tool-Assisted Option:** [Claude](../../hosts/claude/) (`/draft`, `/realize`, `/reflect` + support commands) | [OpenAI Codex](../../hosts/codex/) (`$draft`, `$realize`, `$reflect` + support skills)
 

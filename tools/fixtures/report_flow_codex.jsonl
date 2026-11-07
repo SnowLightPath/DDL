@@ -1,0 +1,10 @@
+{"type":"event_msg","payload":{"type":"task_started","turn_id":"report-turn"}}
+{"type":"event_msg","payload":{"type":"item_completed","turn_id":"report-turn","item":{"type":"UserMessage","id":"prompt","content":[{"type":"text","text":"$realize the gate"}]}}}
+{"type":"response_item","payload":{"type":"reasoning","summary":[{"type":"summary_text","text":"+++DDL_REPORT\n\nRealize report summarized."}],"content":null,"encrypted_content":"fixture-sig"}}
+{"type":"response_item","payload":{"type":"function_call","name":"exec_command","call_id":"prepare-call","arguments":"@PREPARE_ARGS_JSON@"}}
+{"type":"response_item","payload":{"type":"function_call_output","call_id":"prepare-call","output":"Chunk ID: 5f1c\nWall time: 0.0812 seconds\nProcess exited with code 0\nOriginal token count: 410\nOutput:\n@PREPARED_JSON@"}}
+{"type":"response_item","payload":{"type":"function_call","name":"request_user_input_async","call_id":"report-question","arguments":"@REQUEST_JSON@"}}
+{"type":"response_item","payload":{"type":"function_call_output","call_id":"report-question","output":"{\"accepted\":true}"}}
+{"type":"event_msg","payload":{"type":"task_complete","turn_id":"report-turn"}}
+{"type":"event_msg","payload":{"type":"task_started","turn_id":"answer-turn"}}
+{"type":"event_msg","payload":{"type":"item_completed","turn_id":"answer-turn","item":{"type":"UserMessage","id":"answer","content":[{"type":"text","text":"@REPLY@"}]}}}

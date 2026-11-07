@@ -1,0 +1,2 @@
+{"type":"user","message":{"role":"user","content":"/realize the gate"},"origin":{"kind":"human"},"turnOrigin":"human","promptSource":"typed"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","thinking":"+++DDL_REPORT\n\n## Realize report\n\nAwaiting approval.","signature":"fixture-sig"}]}}

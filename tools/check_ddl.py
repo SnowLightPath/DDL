@@ -94,7 +94,8 @@ OPERATION_STEPS = {
 }
 FORMATS = {
     "approval": ("+++DDL_REPORT", *REPORT_LABELS, "Outcome:", "approve all", "subset", "hold",
-                 "approved in advance (<date>)"),
+                 "approved in advance (<date>)", "prepare-report", "reportId", "R-<id>",
+                 "<state dir>/reports/<id>/report.md", "nativeRequest", "Full report", "全文", "R1–R12"),
     "close": ("nothing remains", "left: <item> — <reason>"),
     "git-review": ("language", "operations", "cwd", "command", "reviewId", "report", "question", "nativeRequest",
                    "G-<id>"),
@@ -114,7 +115,7 @@ NOTEBOOK_WRITERS = ("draft", "realize", "reflect", "commit")
 EXCEPTIONS = {
     "approval": ("receipt", "timeout", "summary", "worker notification", "another session", "cancel", "no selection",
                  "clarification", "ambiguous", "interface unavailable", "informational", "advance approval",
-                 "interrupted"),
+                 "interrupted", "collects input", "preparation unavailable"),
     "close": ("Binding Drift", "no change", "no Close", "hold", "no Direction", "commit yourself", "review first",
               "compaction", "validate fails", "argument", "documentation only", "cannot reconstruct"),
     "git-review": ("hold", "revision", "timeout", "receipt", "changed", "resume", "compaction", "unsupported", "alias",
@@ -129,7 +130,8 @@ EXCEPTIONS = {
 START_CONCERNS = ("Session start", "Compaction", "Notebook loading", "Adapter paths", "+++DDL_PHASE", "+++DDL_REPORT")
 PARALLEL_CONCERNS = ("Team primitive", "type: Explore", "type: general-purpose", "spawn", "Background", "Completion",
                      "Nesting", "Concurrency", "Fallback")
-APPROVAL_CONCERNS = ("Choice tool", "Subset", "Receipt", "Timeout", "Mutating tools", "Human input boundary", "Hook")
+APPROVAL_CONCERNS = ("Choice tool", "Subset", "Receipt", "Timeout", "Mutating tools", "Human input boundary", "Prepare",
+                     "Hook")
 GIT_CONCERNS = ("Prepare", "nativeRequest", "Revocation", "Push confirmation", "Attribution")
 # Keyed by operation: the same concerns for every host's implementation of it (P9).
 CONCERNS = {"start": START_CONCERNS, "parallel-work": PARALLEL_CONCERNS, "approval": APPROVAL_CONCERNS,

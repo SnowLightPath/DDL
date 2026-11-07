@@ -1,26 +1,37 @@
 #!/usr/bin/env python3
 """DDL gate: the mechanical half of the protocol's +++STOP rule, as a lifecycle hook.
 
-After detecting a report under the heading `+++DDL_REPORT`, the gate denies covered mutating
-calls until submitted human input. The assistant follows the protocol's Approval operation: a synchronous
-question waits for the actual answer and can resume approved work in the same turn; an
-asynchronous request receipt ends the turn while awaiting the actual answer. Informational
-reports require no approval by themselves. Whether a human reply approves the current report
-and scope normally remains the assistant's judgment. Ordinary Git commits and pushes have an
-additional, independent guard: a prepared content review and an actual matching native choice
-are required even after STOP opens and even when native command approvals are disabled.
+Approval is carried by the native question. A decision report is prepared with `prepare-report`
+and a Git review with `prepare-git-review`; each returns one native question of five
+`<label>: <value>` lines (decision, recommendation, consequence, ID `R-…`/`G-…`, absolute report
+path). The STOP is pending from that preparation output, from a question that carries an ID, or
+from a line-initial `+++DDL_REPORT` in assistant text, until submitted human input; meanwhile the
+gate denies covered mutating calls and any question other than the prepared one. The gate proves
+a pending STOP and a Git review from the question and its answer, never from assistant text, and
+reads no thinking block or reasoning item. The assistant follows the protocol's Approval
+operation: a synchronous question waits for the actual answer and can resume approved work in the
+same turn; an asynchronous request receipt ends the turn while awaiting the actual answer.
+Whether a human reply approves the current report and scope remains the assistant's judgment.
+Ordinary Git commits and pushes have an additional, independent guard: a prepared content review
+and an actual matching native choice are required even after STOP opens and even when native
+command approvals are disabled.
 
 Usage (the same command serves Claude Code and Codex CLI; the hook payload JSON is on stdin):
   python3 tools/ddl_gate.py pre-tool-use       --runtime claude|codex
   python3 tools/ddl_gate.py stop               --runtime claude|codex
   python3 tools/ddl_gate.py user-prompt-submit --runtime claude|codex
   python3 tools/ddl_gate.py session-start      --runtime claude|codex
+  python3 tools/ddl_gate.py prepare-report     --runtime claude|codex
   python3 tools/ddl_gate.py prepare-git-review --runtime claude|codex
   python3 tools/ddl_gate.py status [--cwd DIR]
 
-The preparation command reads JSON {language: en|ja, operations: [{cwd, command}, ...]} on stdin.
-It snapshots the staged changes and push targets, writes review detail in the private state
-directory, and returns the report path and native question. It cannot create approval.
+prepare-report reads JSON {language, decision, recommendation, consequence, detail, options?,
+multiSelect?} on stdin, writes report.md and report.json under `<state dir>/reports/<id>/`, and
+prints {reportId, report, question, nativeRequest}. prepare-git-review reads JSON
+{language: en|ja, operations: [{cwd, command}, ...]}, snapshots the staged changes and push
+targets, writes review detail in the private state directory, and prints the same shape with
+reviewId. Neither creates approval; invalid input prints `DDL STOP: …` / `DDL Git review: …` on
+stderr and exits 2.
 
 Scope: the hook acts only in a DDL project, one whose instruction file (CLAUDE.md, .claude/CLAUDE.md
 or AGENTS.md in the event's `cwd` or a parent, up to the directory holding `.git` and below $HOME)
@@ -32,19 +43,23 @@ Only json, os and sys are imported up front; the other modules load on first use
 
 Decisions (JSON on stdout; the exit status is always 0):
   pre-tool-use        CLOSED and the tool may mutate -> permissionDecision "deny";
+                      a question carrying an ID must equal the prepared request (else "deny"), and
+                      while CLOSED a question without the pending ID is denied;
                       ordinary commit/push also needs a matching native content review while OPEN;
                       claude answers a reviewed ordinary push with "ask" (native confirmation)
                       codex also denies unsupported push forms in confirmation-enabled modes
   stop                writes the marker file when the turn ended with a report; prints nothing
   user-prompt-submit  removes the marker (a human spoke); prints nothing
-  session-start       compact/resume while CLOSED -> additionalContext with a notice;
+  session-start       compact/resume while CLOSED -> additionalContext with a notice (naming the
+                      pending ID and report when known);
                       codex also gets design.md injected (claude imports it through CLAUDE.md)
 
 State: the conversation record (`transcript_path`) is read from the end. A readable record is
 authoritative for Claude; Codex keeps a pending marker authoritative even over an OPEN record
 until the marker is cleared. An answered AskUserQuestion and an approved plan count as human input
-(toolUseResult / permissionDecision from the user). Claude Code writes the transcript
-asynchronously, so a continuation in the same turn can escape the gate; the rule then holds as
+(toolUseResult / permissionDecision from the user). A prepared ID older than the session's
+`.git-epoch` (resume, compaction, fork, clear, or a new prompt) covers nothing. Claude Code writes
+the transcript asynchronously, so a continuation in the same turn can escape the gate; the rule then holds as
 an instruction. A marker file `<state dir>/<session_id>.pending` carries the signal across
 turns and for runtimes whose record is unreadable, and `<state dir>/<session_id>.warned` makes
 the unreadable-record warning appear once per session; the state dir is $DDL_GATE_STATE_DIR,
@@ -53,9 +68,9 @@ else $TMPDIR/ddl-gate, else /tmp/ddl-gate. Wire all four events, or the marker i
 The general STOP gate fails open on internal errors. Recognized Git commit/push review failures
 instead deny the operation; an unreadable or changed review never creates permission. The shell
 allowlist guards against accidental continuation; it is not a sandbox. Both adapters use catch-all
-matchers, but only calls reaching the runtime's tool hooks are checked. Only exact known read tools
-and a bounded, literal shell subset pass while CLOSED; unknown tools, general scripts and code
-wrappers do not. Ambient executable/config
+matchers, but only calls reaching the runtime's tool hooks are checked. Only exact known read tools,
+a bounded, literal shell subset, and the gate's own preparation call pass while CLOSED; unknown
+tools, general scripts and code wrappers do not. Ambient executable/config
 behavior is outside this static check. Push form checks do not inspect arbitrary scripts or aliases,
 never rewrite a command, and never emit an affirmative permission grant.
 Runtime-level hook failures/timeouts can still fail open; the content check uses a shorter time
@@ -139,15 +154,65 @@ REDIRECT = _Pattern("REDIRECT", r">>?")
 # A whole token that is a harmless redirect (`2>&1`, `2>/dev/null`, `<in`) or a bare operator (`>`, `2>>`, `<`).
 REDIR_TOKEN = _Pattern("REDIR_TOKEN", r"(\d*|&)>>?(&\d+|/dev/null)?$|\d*<\S*$")
 
-GIT_REVIEW_TAG = _Pattern("GIT_REVIEW_TAG", r"\[G-([0-9a-f]{16})\]$")
 GIT_REVIEW_REASON = ("DDL Git review: this commit or push needs a submitted native choice for its exact "
                      "contents, message, and destination. Prepare a Git review with ddl_gate.py "
-                     "prepare-git-review, show its report and question, and wait for the actual answer. ")
+                     "prepare-git-review, ask its prepared question unchanged, and wait for the actual answer. ")
 PUSH_ASK_REASON = "DDL Git review: confirm the reviewed push natively."
 GIT_PROTECTED = {"commit", "push", "commit-tree", "send-pack"}
 # Leave headroom beneath the adapters' ten-second hook timeout. A timed-out runtime hook may fail open.
 GIT_REVIEW_BUDGET_SECONDS = 4
 _git_review_deadline = None
+
+# --- the prepared question --------------------------------------------------------------------
+# A decision report (R-) and a Git review (G-) are each asked as one native question of five
+# `<label>: <value>` lines: what to decide, the recommendation, the consequence, the ID, and the
+# absolute path of report.md. The host records that question and its answer verbatim, so the gate
+# proves a pending STOP and a Git approval from them rather than from assistant text.
+# One short sentence per line keeps the question readable on a phone; detail belongs in the report file.
+QUESTION_LINE_LIMIT = 300
+QUESTION_LABELS = {"ja": ("決めること", "推奨", "影響", "確認 ID", "全文"),
+                   "en": ("Decision", "Recommendation", "Consequence", "ID", "Full report")}
+QUESTION_ID_LINE = 3  # zero-based: the ID is the fourth of the five lines
+# A prepared ID is this many hex digits (64 bits) of a SHA-256 over the record, which carries a nonce.
+ID_HEX_LENGTH = 16
+NONCE_BYTES = 16  # 128 random bits, so two preparations of the same content never share an ID
+QUESTION_ID = _Pattern("QUESTION_ID", r"[^\n:]+: ([RG])-([0-9a-f]{%d})" % ID_HEX_LENGTH)
+PREPARED_ID = _Pattern("PREPARED_ID", r"([RG])-([0-9a-f]{%d})" % ID_HEX_LENGTH)
+ELLIPSIS = "…"
+SHORT_SHA_LENGTH = 7  # Git's default abbreviation; it only names a pushed commit in the question
+# A BCP 47-style language tag: a two-to-eight-letter primary subtag, then optional subtags.
+LANGUAGE_CODE = _Pattern("LANGUAGE_CODE", r"[A-Za-z]{2,8}(?:[-_][A-Za-z0-9]{1,8})*")
+MIN_OPTIONS, MAX_OPTIONS = 2, 4  # the bounds of one native Claude question's options
+REPORT_VERSION = 1  # the report.json schema; a change of fields bumps it
+REPORT_INPUT_KEYS = {"language", "decision", "recommendation", "consequence", "detail", "options", "multiSelect"}
+REPORT_LINE_KEYS = ("decision", "recommendation", "consequence")
+# The fields the report ID hashes; report.json adds id, question, nativeRequest and reportHash.
+REPORT_CORE_KEYS = ("version", "runtime", "language", "nonce", "createdAt", *REPORT_LINE_KEYS,
+                    "options", "multiSelect", "detailHash")
+DEFAULT_OPTIONS = {
+    "ja": [{"label": "すべて承認（推奨）", "description": "表示した推奨をすべて適用する"},
+           {"label": "一部・修正", "description": "項目を選ぶか修正を求める。報告を作り直して聞き直す"},
+           {"label": "保留", "description": "何も適用しない"}],
+    "en": [{"label": "Approve all (Recommended)", "description": "Apply every displayed recommendation"},
+           {"label": "Subset or changes",
+            "description": "Select items or request changes; the report is rebuilt and asked again"},
+           {"label": "Hold", "description": "Apply nothing"}]}
+QUESTION_TOOLS = {"claude": {"AskUserQuestion"}, "codex": {"request_user_input", "request_user_input_async"}}
+WAITING_REASON = "DDL STOP: {} is waiting for the user's answer (report: {})"
+ASK_UNCHANGED = "DDL STOP: ask the prepared question for {} unchanged"
+PREPARE_FIRST = "DDL STOP: prepare the report and ask its question"
+NOT_PREPARED = "DDL STOP: {} was not prepared here; prepare the report again"
+PREDATES = "DDL STOP: {} predates the latest user message, resume or compaction; prepare the report again"
+GIT_QUESTION_MISMATCH = "DDL Git review: the question does not match prepared review {}; ask it unchanged"
+PENDING_NOTICE = ("DDL gate: report {} is awaiting the user's answer (report: {}). Prepare it again under a new ID "
+                  "and ask its question; do not continue the phase.")
+# A tool output wraps the gate's JSON in at most a few envelopes (a JSON `output` field, a content list,
+# an `Output:` section); deeper nesting is not the gate's own output.
+ENVELOPE_DEPTH = 3
+# The gate's own preparation call: python3 [-I] <gate> <subcommand> --runtime <rt> <<'DELIM' (quoted).
+PREPARE_HEAD = _Pattern("PREPARE_HEAD", r"python3(?:[ \t]+-I)?[ \t]+(.+?)[ \t]+(?:prepare-report|prepare-git-review)"
+                                        r"[ \t]+--runtime(?:[ \t]+|=)(?:claude|codex)[ \t]*<<[ \t]*(['\"])"
+                                        r"([A-Za-z_][A-Za-z0-9_]*)\2[ \t]*")
 
 
 def review_json(value):
@@ -405,18 +470,131 @@ def snapshot_operation(request, commits=()):
     return commit_snapshot(cwd, args) if kind == "commit" else push_snapshot(cwd, args, commits)
 
 
+def is_japanese(language):
+    """Japanese labels for `ja` and its regional forms (`ja-JP`); every other language gets English labels."""
+    return isinstance(language, str) and language.replace("_", "-").split("-")[0].lower() == "ja"
+
+
+def fit_line(text):
+    """One question value: line breaks flattened, at most QUESTION_LINE_LIMIT characters (cut with an ellipsis)."""
+    text = " ".join(str(text).splitlines())
+    return text if len(text) <= QUESTION_LINE_LIMIT else text[:QUESTION_LINE_LIMIT - len(ELLIPSIS)] + ELLIPSIS
+
+
+def fit_subject(make, subject):
+    """`make(subject)`, shortening the commit subject first so the whole line stays within the limit."""
+    line = make(subject)
+    excess = len(line) - QUESTION_LINE_LIMIT
+    if excess > 0:
+        line = make(subject[:max(len(subject) - excess - len(ELLIPSIS), 0)] + ELLIPSIS)
+    return fit_line(line)
+
+
+def question_text(language, values):
+    """The five `<label>: <value>` lines; labels follow the language, values stay as given."""
+    labels = QUESTION_LABELS["ja" if is_japanese(language) else "en"]
+    return "\n".join(label + ": " + value for label, value in zip(labels, values))
+
+
+def question_id(text):
+    """(kind, hex) parsed from the ID line (`<label>: R-<hex>` or `G-<hex>`) of a question, or None.
+
+    This one helper serves the PreToolUse check, the pending-STOP scan and the Git proof."""
+    if not isinstance(text, str):
+        return None
+    lines = text.replace("\r\n", "\n").split("\n")
+    match = QUESTION_ID.fullmatch(lines[QUESTION_ID_LINE]) if len(lines) > QUESTION_ID_LINE else None
+    return (match[1], match[2]) if match else None
+
+
+def asked_question(runtime, request):
+    """The first question's text in a native request (Claude `question`, Codex `title`), or None."""
+    if isinstance(request, str):
+        try:
+            request = json.loads(request)
+        except ValueError:
+            return None
+    questions = request.get("questions") if isinstance(request, dict) else None
+    if not isinstance(questions, list) or not questions or not isinstance(questions[0], dict):
+        return None
+    text = questions[0].get("question" if runtime == "claude" else "title")
+    return text if isinstance(text, str) else None
+
+
+def unique(items):
+    return list(dict.fromkeys(items))
+
+
+def counted(n, noun):
+    return "{} {}{}".format(n, noun, "" if n == 1 else "s")
+
+
+def git_question_values(record):
+    """Decision, recommendation and consequence lines generated from the reviewed operations."""
+    ja, ops = record["language"] == "ja", record["operations"]
+    commits = [op for op in ops if op["kind"] == "commit"]
+    pushes = [op for op in ops if op["kind"] == "push"]
+    sep = "、" if ja else ", "
+    several_repos = len({op["repo"] for op in ops}) > 1
+
+    def where(op, text):  # name the repository only when the review spans more than one
+        name = os.path.basename(op["repo"])
+        return text + ("（{}）".format(name) if ja else " ({})".format(name)) if several_repos else text
+
+    def branch(op):
+        return op["branch"].removeprefix("refs/heads/")
+
+    targets = unique(where(op, op["remote"] + "/" + op["destination"].removeprefix("refs/heads/")) for op in pushes)
+    target_text = sep.join(targets)
+    if len(commits) == 1 and len(pushes) <= 1 and all(op["fromCommit"] for op in pushes):
+        op, n = commits[0], len(commits[0]["files"])
+        subject = (op["message"].splitlines() or [""])[0].strip()
+        if ja:
+            tail = "に記録し、{} に送るか".format(target_text) if pushes else "に記録するか"
+            decision = fit_subject(lambda s: "コミット「{}」（{} ファイル）を {} {}".format(s, n, branch(op), tail), subject)
+        else:
+            tail = " and push it to {}?".format(target_text) if pushes else "?"
+            decision = fit_subject(lambda s: 'Record commit "{}" ({}) on {}{}'.format(s, counted(n, "file"), branch(op), tail),
+                                   subject)
+    elif not commits and len(pushes) == 1:
+        sha = (pushes[0]["commit"] or "")[:SHORT_SHA_LENGTH]
+        decision = "{} を {} に送るか".format(sha, target_text) if ja else "Push {} to {}?".format(sha, target_text)
+    else:
+        k, m = len(commits), len(pushes)
+        repos = sep.join(unique(os.path.basename(op["repo"]) for op in commits))
+        if commits and pushes:
+            decision = ("{} 件のコミット（{}）を記録し、{} 件を送るか".format(k, repos, m) if ja else
+                        "Record {} ({}) and push {}?".format(counted(k, "commit"), repos, m))
+        elif commits:
+            decision = ("{} 件のコミット（{}）を記録するか".format(k, repos) if ja else
+                        "Record {} ({})?".format(counted(k, "commit"), repos))
+        else:
+            decision = ("{} 件を {} に送るか".format(m, target_text) if ja else
+                        "Push {} to {}?".format(counted(m, "commit"), target_text))
+    recommendation = ("この内容で実行する。内容・メッセージ・送信先は全文と差分のとおり" if ja else
+                      "Execute it; contents, message and destination are as in the report and diff")
+    if pushes:
+        consequence = ("{} が新しいコミットに進む。取り消すには revert が要る".format(target_text) if ja else
+                       ("{} advance to the new commits; undoing them needs a revert" if len(targets) > 1 else
+                        "{} advances to the new commit; undoing it needs a revert").format(target_text))
+    else:
+        branches = unique(where(op, branch(op)) for op in commits)
+        consequence = ("{} に新しいコミットができる（送信はしない）".format(sep.join(branches)) if ja else
+                       ("{} get new commits (nothing is pushed)" if len(commits) > 1 else
+                        "{} gets a new commit (nothing is pushed)").format(sep.join(branches)))
+    return [fit_line(decision), fit_line(recommendation), fit_line(consequence)]
+
+
 def review_question(record):
+    """The five-line Git question (title) and its option labels, generated from the review record."""
+    report = review_directory() / record["id"] / "report.md"
+    title = question_text(record["language"], git_question_values(record) + ["G-" + record["id"], str(report)])
     counts = [sum(op["kind"] == kind for op in record["operations"]) for kind in ("commit", "push")]
-    tag = "[G-{}]".format(record["id"])
     if record["language"] == "ja":
-        scope = "・".join("{}{}件".format(label, n) for label, n in zip(("記録", "送信"), counts) if n)
         action = "この内容で記録・送信する" if all(counts) else ("この内容を記録する" if counts[0] else "この内容を送信する")
-        return {"title": "このGit確認案（{}）を実行しますか？ {}".format(scope, tag),
-                "options": [action + "（推奨）", "内容を見直す", "保留する"]}
-    scope = ", ".join("{} {}".format(n, label) for label, n in zip(("commits", "pushes"), counts) if n)
+        return {"title": title, "options": [action + "（推奨）", "内容を見直す", "保留する"]}
     action = "Commit and push" if all(counts) else ("Create reviewed commits" if counts[0] else "Push reviewed commits")
-    return {"title": "Execute this Git review ({})? {}".format(scope, tag),
-            "options": [action + " (Recommended)", "Revise this review", "Hold"]}
+    return {"title": title, "options": [action + " (Recommended)", "Revise this review", "Hold"]}
 
 
 def native_git_request(record):
@@ -484,8 +662,8 @@ def prepare_git_review(runtime, data):
         operations.append(op)
         patches.append(patch)
     record = {"version": 1, "runtime": runtime, "language": data.get("language", "en"),
-              "nonce": secrets.token_hex(16), "createdAt": time.time(), "operations": operations}
-    record["id"] = review_hash(record)[:16]
+              "nonce": secrets.token_hex(NONCE_BYTES), "createdAt": time.time(), "operations": operations}
+    record["id"] = review_hash(record)[:ID_HEX_LENGTH]
     directory = review_directory() / record["id"]
     directory.mkdir(parents=True, mode=0o700, exist_ok=False)
     for i, patch in enumerate(patches, 1):
@@ -495,6 +673,121 @@ def prepare_git_review(runtime, data):
     (directory / "review.json").write_text(review_json(record) + "\n", encoding="utf-8")
     return {"reviewId": "G-" + record["id"], "report": str(directory / "report.md"),
             "question": review_question(record), "nativeRequest": native_git_request(record)}
+
+
+def load_git_review(review_id, runtime):
+    """The prepared review record and its directory; ValueError when it was changed or is foreign."""
+    directory = review_directory() / review_id
+    record = json.loads((directory / "review.json").read_text(encoding="utf-8"))
+    core = {k: v for k, v in record.items() if k != "id"}
+    if record.get("id") != review_id or review_hash(core)[:ID_HEX_LENGTH] != review_id or record.get("runtime") != runtime:
+        raise ValueError("the prepared review was changed or belongs to another runtime.")
+    return record, directory
+
+
+# --- decision reports -------------------------------------------------------------------------
+
+def report_directory():
+    return pathlib.Path(state_directory()) / "reports"
+
+
+def report_question(record, path):
+    """The five-line question and the host's native request for a prepared decision report."""
+    values = [record[key] for key in REPORT_LINE_KEYS] + ["R-" + record["id"], str(path)]
+    question = question_text(record["language"], values)
+    if record["runtime"] == "codex":
+        return question, {"questions": [{"title": question, "options": [o["label"] for o in record["options"]]}]}
+    return question, {"questions": [{"question": question, "header": "DDL", "multiSelect": record["multiSelect"],
+                                     "options": [{"label": o["label"], "description": o["description"]}
+                                                 for o in record["options"]]}]}
+
+
+def one_line(value):
+    return isinstance(value, str) and bool(value.strip()) and value.splitlines() == [value]
+
+
+def report_options(language, options):
+    if options is None:
+        return DEFAULT_OPTIONS["ja" if is_japanese(language) else "en"]
+    if not isinstance(options, list) or not MIN_OPTIONS <= len(options) <= MAX_OPTIONS:
+        raise ValueError("options must be a list of {} to {} choices.".format(MIN_OPTIONS, MAX_OPTIONS))
+    for option in options:
+        if not isinstance(option, dict) or set(option) != {"label", "description"} or not one_line(option["label"]) \
+                or not isinstance(option["description"], str) or not option["description"].strip():
+            raise ValueError("each option is {label, description}: a one-line label and a non-empty description.")
+    if len({option["label"] for option in options}) != len(options):
+        raise ValueError("option labels must differ, because the answer names one label.")
+    return options
+
+
+def prepare_report(runtime, data):
+    """Prepare a decision report and its native question; never an approval. Input is JSON on stdin."""
+    if not isinstance(data, dict):
+        raise ValueError("send one JSON object with language, decision, recommendation, consequence and detail.")
+    unknown = sorted(set(data) - REPORT_INPUT_KEYS)
+    if unknown:
+        raise ValueError("unknown input keys: {}.".format(", ".join(unknown)))
+    language = data.get("language")
+    if not isinstance(language, str) or not LANGUAGE_CODE.fullmatch(language):
+        raise ValueError("language must be a language code such as ja or en.")
+    for key in REPORT_LINE_KEYS:
+        value = data.get(key)
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("{} must be a non-empty string.".format(key))
+        if value.splitlines() != [value]:
+            raise ValueError("{} must be one line; put the detail in the report.".format(key))
+        if len(value) > QUESTION_LINE_LIMIT:
+            raise ValueError("{} has {} characters; keep it within {} and put the detail in the report.".format(
+                key, len(value), QUESTION_LINE_LIMIT))
+    detail = data.get("detail")
+    if not isinstance(detail, str) or not detail.strip():
+        raise ValueError("detail must be the complete report as a non-empty string.")
+    multi = data.get("multiSelect")
+    multi = False if multi is None else multi
+    if not isinstance(multi, bool):
+        raise ValueError("multiSelect must be true or false.")
+    if multi and runtime == "codex":
+        raise ValueError("multiSelect is available on Claude only; a Codex question takes one answer.")
+    record = {"version": REPORT_VERSION, "runtime": runtime, "language": language,
+              "nonce": secrets.token_hex(NONCE_BYTES), "createdAt": time.time(),
+              **{key: data[key] for key in REPORT_LINE_KEYS},
+              "options": report_options(language, data.get("options")), "multiSelect": multi,
+              "detailHash": hashlib.sha256(detail.encode("utf-8")).hexdigest()}
+    record["id"] = review_hash(record)[:ID_HEX_LENGTH]
+    directory = report_directory() / record["id"]
+    question, request = report_question(record, directory / "report.md")
+    text = (question + "\n\n" + detail + ("" if detail.endswith("\n") else "\n")).encode("utf-8")
+    directory.mkdir(parents=True, mode=0o700, exist_ok=False)
+    (directory / "report.md").write_bytes(text)
+    record.update(question=question, nativeRequest=request, reportHash=hashlib.sha256(text).hexdigest())
+    (directory / "report.json").write_text(review_json(record) + "\n", encoding="utf-8")
+    return {"reportId": "R-" + record["id"], "report": str(directory / "report.md"), "question": question,
+            "nativeRequest": request}
+
+
+def load_report(report_id, runtime):
+    """The prepared report record; ValueError when it, its question, or report.md was changed or is foreign."""
+    directory = report_directory() / report_id
+    record = json.loads((directory / "report.json").read_text(encoding="utf-8"))
+    core = {key: record[key] for key in REPORT_CORE_KEYS}
+    if record.get("id") != report_id or review_hash(core)[:ID_HEX_LENGTH] != report_id or record.get("runtime") != runtime:
+        raise ValueError("the prepared report was changed or belongs to another runtime.")
+    if (record.get("question"), record.get("nativeRequest")) != report_question(record, directory / "report.md"):
+        raise ValueError("the prepared question was changed.")
+    if hashlib.sha256((directory / "report.md").read_bytes()).hexdigest() != record.get("reportHash"):
+        raise ValueError("the report was changed after preparation.")
+    return record
+
+
+def prepared_location(kind, prepared_id):
+    """The report.md a prepared ID names (`R` decision report or `G` Git review)."""
+    return (report_directory() if kind == "R" else review_directory()) / prepared_id / "report.md"
+
+
+def predates_epoch(session_id, created_at):
+    """True when the preparation is not newer than the session's last resume, compaction, fork, clear or prompt."""
+    epoch = session_file(session_id, ".git-epoch")
+    return epoch.exists() and created_at <= float(epoch.read_text())
 
 
 def codex_git_reply(text):
@@ -517,13 +810,14 @@ def codex_git_reply(text):
 
 
 def native_git_choice(runtime, path):
-    """Return (question, answer, report text) only for the latest real submitted native choice.
+    """Return (question request, answer) only for the latest real submitted native choice.
 
-    Match native request/result IDs, not an approval word or an assistant-authored receipt.
-    A later report, human message, compaction, or unreadable record invalidates the proof.
+    Match native request/result IDs, not an approval word, an assistant-authored receipt, or any
+    assistant text: the question itself carries the review (its ID line). The walk stops at the
+    matching request; a later human message, compaction, or unreadable record invalidates the proof.
     """
     stats = {"lines": 0, "parsed": 0}
-    answer, request_id, title, request = None, None, None, None
+    answer, request_id, title = None, None, None
     try:
         for entry in iter_entries_reversed(path, stats):
             if _git_review_deadline and time.monotonic() >= _git_review_deadline:
@@ -534,14 +828,13 @@ def native_git_choice(runtime, path):
                 return None
             if runtime == "claude":
                 if entry.get("type") == "assistant":
-                    text = claude_text(entry)
+                    if answer is None:
+                        continue
                     for block in (entry.get("message") or {}).get("content", []):
                         if isinstance(block, dict) and block.get("type") == "tool_use" and block.get("id") == request_id:
                             if block.get("name") != "AskUserQuestion":
                                 return None
-                            request = block.get("input", {})
-                    if has_report(text):
-                        return (request, answer, text) if request else None
+                            return block.get("input", {}), answer
                 elif is_human_prompt_claude(entry):
                     if answer is not None or not is_dialog_answer_claude(entry):
                         return None
@@ -554,10 +847,6 @@ def native_git_choice(runtime, path):
             else:
                 payload = entry.get("payload", {})
                 kind, typ = entry.get("type"), payload.get("type")
-                text = codex_text(payload) if kind == "response_item" and payload.get("role") == "assistant" else (
-                    payload.get("message") if kind == "event_msg" and typ == "agent_message" else None)
-                if has_report(text):
-                    return (request, answer, text) if request else None
                 if kind == "event_msg" and typ == "task_started" and answer is None:
                     return None
                 if kind == "event_msg" and typ == "item_completed" and payload.get("item", {}).get("type") == "UserMessage":
@@ -567,13 +856,19 @@ def native_git_choice(runtime, path):
                     if not reply:
                         return None
                     request_id, title, answer = reply
-                if kind == "response_item" and typ == "function_call" and payload.get("call_id") == request_id:
+                if kind == "response_item" and typ == "function_call" and answer is not None \
+                        and payload.get("call_id") == request_id:
                     if payload.get("name") != "request_user_input_async":
                         return None
                     request = json.loads(payload.get("arguments", "{}"))
-                    if request.get("questions", [{}])[0].get("title") != title:
+                    # The reply envelope repeats the title. Normalize line endings before comparing: how the
+                    # native host carries a multi-line title in that envelope has not been observed.
+                    asked = request.get("questions", [{}])[0].get("title")
+                    if not isinstance(asked, str) or not isinstance(title, str) or \
+                            asked.replace("\r\n", "\n") != title.replace("\r\n", "\n"):
                         return None
-    except (OSError, ValueError, TypeError, KeyError, IndexError):
+                    return request, answer
+    except (OSError, ValueError, TypeError, KeyError, IndexError, AttributeError):
         return None
     return None
 
@@ -581,30 +876,21 @@ def native_git_choice(runtime, path):
 def approved_git_review(runtime, payload):
     proof = native_git_choice(runtime, payload.get("transcript_path"))
     if not proof:
-        raise ValueError("no matching native choice and current Git report are recorded.")
-    request, answer, report = proof
-    questions = request.get("questions", [])
+        raise ValueError("no submitted native answer to a prepared Git review question is recorded.")
+    request, answer = proof
+    questions = request.get("questions", []) if isinstance(request, dict) else []
     if len(questions) != 1:
         raise ValueError("the Git review needs one whole-set native question.")
-    q = questions[0]
-    title = q.get("question" if runtime == "claude" else "title", "")
-    match = GIT_REVIEW_TAG.search(title)
-    if not match:
+    ident = question_id(asked_question(runtime, request))
+    if not ident or ident[0] != "G":
         raise ValueError("the choice is not for a prepared Git review.")
-    directory = review_directory() / match[1]
-    record = json.loads((directory / "review.json").read_text(encoding="utf-8"))
-    core = {k: v for k, v in record.items() if k != "id"}
-    if record.get("id") != match[1] or review_hash(core)[:16] != match[1] or record.get("runtime") != runtime:
-        raise ValueError("the prepared review was changed or belongs to another runtime.")
+    record, directory = load_git_review(ident[1], runtime)
     expected = review_question(record)
     if request != native_git_request(record):
         raise ValueError("the question does not match the prepared review.")
-    if answer != expected["options"][0] or "G-" + match[1] not in report:
+    if answer != expected["options"][0]:
         raise ValueError("the selected action does not approve the current Git review.")
-    if str(directory / "report.md") not in report:
-        raise ValueError("the decision report did not make the complete prepared review accessible.")
-    epoch = session_file(payload.get("session_id"), ".git-epoch")
-    if epoch.exists() and record["createdAt"] <= float(epoch.read_text()):
+    if predates_epoch(payload.get("session_id"), record["createdAt"]):
         raise ValueError("prepare and review again after resume or compaction.")
     if (directory / "report.md").read_text(encoding="utf-8") != review_report(record, directory):
         raise ValueError("the review detail was changed after preparation.")
@@ -768,22 +1054,106 @@ def is_human_prompt_claude(entry) -> bool:
     return bool(text) and not text.startswith(NOT_HUMAN_PREFIXES)
 
 
-def record_state_claude(path) -> bool | None:
-    """CLOSED (True), OPEN (False), or None when the record is unreadable."""
+def prepared_output(value, depth=0):
+    """(kind, hex) when a tool output is the JSON that prepare-report or prepare-git-review printed, else None.
+
+    Parsed, not searched, so reading a file that merely mentions an ID does not close the record. The JSON
+    may sit in a known envelope: a JSON object's `output` field, a list of text items, or an `Output:` section."""
+    if depth > ENVELOPE_DEPTH:
+        return None
+    if isinstance(value, str):
+        text = value.strip()
+        if "nativeRequest" not in text:  # cheap filter before parsing every tool output
+            return None
+        candidates = [text] + ([text.rsplit("Output:\n", 1)[1].strip()] if "Output:\n" in text else [])
+        for candidate in candidates:
+            try:
+                found = prepared_output(json.loads(candidate), depth + 1)
+            except ValueError:
+                continue
+            if found:
+                return found
+        return None
+    if isinstance(value, list):
+        for item in value:
+            found = prepared_output(item.get("text") if isinstance(item, dict) else item, depth + 1)
+            if found:
+                return found
+        return None
+    if isinstance(value, dict):
+        if "nativeRequest" in value:
+            for kind, key in (("R", "reportId"), ("G", "reviewId")):
+                match = PREPARED_ID.fullmatch(value[key]) if isinstance(value.get(key), str) else None
+                if match and match[1] == kind:
+                    return kind, match[2]
+            return None
+        if "output" in value:
+            return prepared_output(value["output"], depth + 1)
+    return None
+
+
+def known_preparation(ident):
+    """{"id", "report"} for a prepared ID whose report.md exists in this state directory, else None."""
+    if not ident:
+        return None
+    path = prepared_location(*ident)
+    return {"id": ident[0] + "-" + ident[1], "report": str(path)} if path.is_file() else None
+
+
+def claude_pending_signal(entry):
+    """(closes the record, prepared ID or None) for one Claude entry after the last human input.
+
+    Assistant `text` blocks and question tool_use inputs are read; `thinking` blocks never are, since a
+    signed thinking block may hold only a summary of what the assistant wrote."""
+    content = (entry.get("message") or {}).get("content")
+    blocks = [b for b in content if isinstance(b, dict)] if isinstance(content, list) else []
+    if entry.get("type") == "assistant":
+        for block in blocks:
+            if block.get("type") == "tool_use" and block.get("name") in QUESTION_TOOLS["claude"]:
+                ident = question_id(asked_question("claude", block.get("input")))
+                if ident:
+                    return True, ident
+        return has_report(claude_text(entry)), None
+    if entry.get("type") == "user":
+        result = entry.get("toolUseResult")
+        ident = prepared_output(result.get("stdout")) if isinstance(result, dict) else None
+        for block in blocks:
+            if not ident and block.get("type") == "tool_result":
+                ident = prepared_output(block.get("content"))
+        return ident is not None, ident
+    return False, None
+
+
+def scan_claude(path):
+    """(state, pending): state is CLOSED (True), OPEN (False), or None when the record is unreadable;
+    pending is {"id", "report"} when a known preparation is waiting, else None.
+
+    Walking back to the last human input, the record is CLOSED by a line-initial +++DDL_REPORT in
+    assistant text, by a question whose ID line names a preparation, or by the preparation output.
+    The walk continues past a text-only signal to learn the pending ID."""
     stats = {"lines": 0, "parsed": 0}
+    closed = False
     try:
         for entry in iter_entries_reversed(path, stats):
             if entry.get("isSidechain"):
                 continue
-            if entry.get("type") == "assistant" and has_report(claude_text(entry)):
-                return True
             if is_human_prompt_claude(entry):
-                return False
+                break
+            closes, ident = claude_pending_signal(entry)
+            closed = closed or closes
+            pending = known_preparation(ident)
+            if pending:
+                return True, pending
     except OSError:
-        return None
-    if stats["lines"] and not stats["parsed"]:
-        return None
-    return False
+        return (True, None) if closed else (None, None)
+    if not closed and stats["lines"] and not stats["parsed"]:
+        return None, None
+    return closed, None
+
+
+def record_state_claude(path) -> bool | None:
+    """CLOSED (True), OPEN (False), or None when the record is unreadable."""
+    return scan_claude(path)[0]
 
 
 def codex_text(payload) -> str:
@@ -795,41 +1165,64 @@ def codex_text(payload) -> str:
     return ""
 
 
-def record_state_codex(path, turn_id=None) -> bool | None:
-    """Same contract as record_state_claude, for a Codex rollout file.
+def codex_pending_signal(kind, ptype, payload):
+    """(closes the record, prepared ID or None) for one Codex rollout item; reasoning items are never read."""
+    if kind == "response_item" and ptype == "message" and payload.get("role") == "assistant":
+        return has_report(codex_text(payload)), None
+    if kind == "event_msg" and ptype == "agent_message":
+        return has_report(payload.get("message")), None
+    if kind == "response_item" and ptype == "function_call" and payload.get("name") in QUESTION_TOOLS["codex"]:
+        ident = question_id(asked_question("codex", payload.get("arguments")))
+        return ident is not None, ident
+    if kind == "response_item" and ptype == "function_call_output":
+        ident = prepared_output(payload.get("output"))
+        return ident is not None, ident
+    return False, None
+
+
+def scan_codex(path):
+    """Same contract as scan_claude, for a Codex rollout file.
 
     Only `item_completed`/UserMessage and `task_started` mark the human's turn: user-role messages also
-    carry injected context (AGENTS.md, environment), so they cannot be the signal. `turn_id` is accepted
-    for callers that have it; the boundary rule does not need it."""
+    carry injected context (AGENTS.md, environment), so they cannot be the signal."""
     stats = {"lines": 0, "parsed": 0}
+    closed = False
     try:
         for entry in iter_entries_reversed(path, stats):
             payload = entry.get("payload")
             if not isinstance(payload, dict):
                 continue
             kind, ptype = entry.get("type"), payload.get("type")
-            if kind == "response_item" and ptype == "message" and payload.get("role") == "assistant":
-                if has_report(codex_text(payload)):
-                    return True
-            elif kind == "event_msg" and ptype == "agent_message" and has_report(payload.get("message")):
-                return True
-            elif kind == "event_msg" and ptype == "item_completed":
+            if kind == "event_msg" and ptype == "task_started":
+                break
+            if kind == "event_msg" and ptype == "item_completed":
                 item = payload.get("item")
                 if isinstance(item, dict) and item.get("type") == "UserMessage":
-                    return False
-            elif kind == "event_msg" and ptype == "task_started":
-                return False
+                    break
+                continue
+            closes, ident = codex_pending_signal(kind, ptype, payload)
+            closed = closed or closes
+            pending = known_preparation(ident)
+            if pending:
+                return True, pending
     except OSError:
-        return None
-    if stats["lines"] and not stats["parsed"]:
-        return None
-    return False
+        return (True, None) if closed else (None, None)
+    if not closed and stats["lines"] and not stats["parsed"]:
+        return None, None
+    return closed, None
+
+
+def record_state_codex(path, turn_id=None) -> bool | None:
+    """Same contract as record_state_claude, for a Codex rollout file. `turn_id` is accepted for callers
+    that have it; the boundary rule does not need it."""
+    return scan_codex(path)[0]
 
 
 # --- marker files -----------------------------------------------------------------------------
 
 def state_directory() -> str:
     base = os.environ.get("DDL_GATE_STATE_DIR") or os.path.join(os.environ.get("TMPDIR") or "/tmp", "ddl-gate")
+    base = os.path.abspath(base)  # the question's last line names report.md by its absolute path
     os.makedirs(base, exist_ok=True)
     return base
 
@@ -1283,6 +1676,43 @@ def is_mutating(runtime, tool_name, tool_input) -> tuple[bool, str]:
     return True, ""
 
 
+def gate_path_tokens():
+    """The spellings of this gate's path that its own preparation call may use."""
+    tokens = set()
+    for path in {os.path.realpath(__file__), os.path.abspath(__file__), ".codex/hooks/ddl_gate.py"}:
+        tokens |= {path, '"' + path + '"', "'" + path + "'"}
+    for var, homes in (("HOME", (".claude", ".codex")), ("CLAUDE_PROJECT_DIR", (".claude",))):
+        for home in homes:
+            rest = "/" + home + "/hooks/ddl_gate.py"
+            for ref in ("$" + var, "${" + var + "}"):
+                tokens |= {ref + rest, '"' + ref + rest + '"', '"' + ref + '"' + rest}
+    return tokens
+
+
+def is_gate_preparation(command) -> bool:
+    """Exactly `python3 [-I] <gate> prepare-report|prepare-git-review --runtime <rt> <<'DELIM'` with the
+    JSON in a quoted here-document and nothing else: no pipe, redirect, list, or further command.
+
+    Rebuilding a report after compaction or a clarification is part of presenting it, so this call stays
+    available while the STOP is pending. The quoted delimiter keeps the body free of expansions."""
+    if not isinstance(command, str):
+        return False
+    head, newline, body = command.partition("\n")
+    match = PREPARE_HEAD.fullmatch(head) if newline else None
+    if not match or match[1] not in gate_path_tokens():
+        return False
+    lines = body.split("\n")
+    if lines[-1] == "":
+        lines.pop()  # the newline that ends the terminator line
+    # Any earlier line that the shell could read as the terminator would run the lines after it.
+    return bool(lines) and lines[-1] == match[3] and all(line.strip() != match[3] for line in lines[:-1])
+
+
+def gate_preparation(runtime, payload) -> bool:
+    return payload.get("tool_name") in SHELL_TOOLS.get(runtime, set()) and \
+        is_gate_preparation(shell_command(payload.get("tool_input")))
+
+
 def native_linear_shell(command, parts) -> bool:
     """The conservative subset the native policy can inspect as individual argv lists."""
     if not literal_shell(command):
@@ -1390,23 +1820,70 @@ def deny(reason):
 
 # --- events -----------------------------------------------------------------------------------
 
-def record_state(runtime, payload) -> bool | None:
+def record_scan(runtime, payload):
+    """(state, pending) from the conversation record; (None, None) when it is missing or unreadable."""
     path = payload.get("transcript_path")
     if not isinstance(path, str) or not path:
-        return None
+        return None, None
+    return scan_codex(path) if runtime == "codex" else scan_claude(path)
+
+
+def record_state(runtime, payload) -> bool | None:
+    return record_scan(runtime, payload)[0]
+
+
+def pending_scan(runtime, payload):
+    """Combine record and marker into (state, pending). Codex: its record format is unstable, so a marker
+    is trusted even over an OPEN record. Claude: the record is authoritative whenever it is readable."""
+    state, pending = record_scan(runtime, payload)
+    marker = marker_path(payload.get("session_id")).exists()
     if runtime == "codex":
-        return record_state_codex(path, payload.get("turn_id"))
-    return record_state_claude(path)
+        state = True if (state is True or marker) else state
+    else:
+        state = True if (state is None and marker) else state
+    return state, (pending if state is True else None)
 
 
 def pending_state(runtime, payload) -> bool | None:
-    """Combine record and marker. Codex: its record format is unstable, so a marker is trusted even over
-    an OPEN record. Claude: the record is authoritative whenever it is readable."""
-    state = record_state(runtime, payload)
-    marker = marker_path(payload.get("session_id")).exists()
-    if runtime == "codex":
-        return True if (state is True or marker) else state
-    return True if (state is None and marker) else state
+    return pending_scan(runtime, payload)[0]
+
+
+def question_guard(runtime, payload, state, pending):
+    """Check a native question before the safe-tool shortcut.
+
+    A question that carries an ID must equal the request prepared under that ID, in this state
+    directory and after the session's last epoch. A question without an ID is an ordinary question,
+    except while a STOP is pending: then only the prepared question may be asked."""
+    if payload.get("tool_name") not in QUESTION_TOOLS.get(runtime, set()):
+        return None
+    request = payload.get("tool_input")
+    if isinstance(request, str):
+        try:
+            request = json.loads(request)
+        except ValueError:
+            pass
+    ident = question_id(asked_question(runtime, request))
+    if ident is None:
+        if state is not True:
+            return None
+        return deny(ASK_UNCHANGED.format(pending["id"]) if pending else PREPARE_FIRST)
+    kind, prepared_id = ident
+    label = kind + "-" + prepared_id
+    try:
+        if kind == "R":
+            record = load_report(prepared_id, runtime)
+            expected = record["nativeRequest"]
+        else:
+            record, _ = load_git_review(prepared_id, runtime)
+            expected = native_git_request(record)
+        stale = predates_epoch(payload.get("session_id"), record["createdAt"])
+    except (OSError, ValueError, TypeError, KeyError, AttributeError):
+        return deny(NOT_PREPARED.format(label))
+    if stale:
+        return deny(PREDATES.format(label))
+    if request != expected:
+        return deny((GIT_QUESTION_MISMATCH if kind == "G" else ASK_UNCHANGED).format(label))
+    return None  # the prepared question; the host's own policy still applies
 
 
 def handle_pre_tool_use(runtime, payload):
@@ -1414,15 +1891,19 @@ def handle_pre_tool_use(runtime, payload):
         return None
     git_review = git_review_guard(runtime, payload)
     try:
-        state = pending_state(runtime, payload)
+        state, pending = pending_scan(runtime, payload)
     except Exception:
         if git_review is not None:
             return git_review
         raise
+    asked = question_guard(runtime, payload, state, pending)
+    if asked is not None:
+        return asked
     if state is True:
         mutating, segment = is_mutating(runtime, payload.get("tool_name"), payload.get("tool_input"))
-        if mutating:
-            return deny(DENY_REASON + (" Shell segment is not read-only: `{}`.".format(segment) if segment else ""))
+        if mutating and not gate_preparation(runtime, payload):
+            reason = WAITING_REASON.format(pending["id"], pending["report"]) if pending else DENY_REASON
+            return deny(reason + (" Shell segment is not read-only: `{}`.".format(segment) if segment else ""))
     if git_review is not None:
         return git_review
     outward = push_guard(runtime, payload)
@@ -1440,7 +1921,8 @@ def handle_pre_tool_use(runtime, payload):
 def handle_stop(runtime, payload):
     if not session_project(payload)["ddl"]:
         return None
-    # The last message is the cheap signal; the record catches a report emitted earlier in the same turn.
+    # The last message is the cheap signal; the record catches a report emitted earlier in the same turn,
+    # including one that is recorded only as a prepared question or the preparation output.
     closed = has_report(payload.get("last_assistant_message")) or record_state(runtime, payload) is True
     if closed:
         marker_path(payload.get("session_id")).write_text(str(time.time()))
@@ -1458,12 +1940,12 @@ def handle_user_prompt_submit(runtime, payload):
     if runtime == "codex":
         try:
             reply = codex_git_reply(payload.get("prompt"))
-            match = GIT_REVIEW_TAG.search(reply[1]) if reply else None
-            if match:
-                record = json.loads((review_directory() / match[1] / "review.json").read_text())
+            ident = question_id(reply[1]) if reply else None
+            if ident and ident[0] == "G":
+                record, _ = load_git_review(ident[1], runtime)
                 q = review_question(record)
-                matching_submission = record.get("runtime") == runtime and reply[1] == q["title"] and reply[2] == q["options"][0]
-        except (OSError, ValueError, TypeError, KeyError):
+                matching_submission = reply[1].replace("\r\n", "\n") == q["title"] and reply[2] == q["options"][0]
+        except (OSError, ValueError, TypeError, KeyError, AttributeError):
             pass
     if not matching_submission:
         session_file(payload.get("session_id"), ".git-epoch").write_text(str(time.time()))
@@ -1495,8 +1977,10 @@ def handle_session_start(runtime, payload):
     parts = []
     if payload.get("source") in ("compact", "resume", "fork", "clear"):
         session_file(payload.get("session_id"), ".git-epoch").write_text(str(time.time()))
-    if payload.get("source") in ("compact", "resume") and pending_state(runtime, payload) is True:
-        parts.append(NOTICE)
+    if payload.get("source") in ("compact", "resume"):
+        state, pending = pending_scan(runtime, payload)
+        if state is True:
+            parts.append(PENDING_NOTICE.format(pending["id"], pending["report"]) if pending else NOTICE)
     if runtime == "codex":
         design = find_design_md(payload.get("cwd"))
         if design is not None:
@@ -1550,6 +2034,20 @@ def main(argv) -> int:
             return 0
         except Exception as exc:
             print("DDL Git review: " + str(exc), file=sys.stderr)
+            return 2
+    if argv and argv[0] == "prepare-report":
+        try:
+            _, runtime, problem = parse_args(["session-start", *argv[1:]])
+            if problem:
+                raise ValueError(problem)
+            try:
+                data = json.loads(sys.stdin.read())
+            except ValueError as exc:
+                raise ValueError("the input is not JSON ({}).".format(exc)) from None
+            emit(prepare_report(runtime, data))
+            return 0
+        except Exception as exc:
+            print("DDL STOP: " + str(exc), file=sys.stderr)
             return 2
     try:
         event, runtime, problem = parse_args(argv)

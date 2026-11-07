@@ -142,9 +142,12 @@ class SetupTest(unittest.TestCase):
         data = self.payload(runtime, nested, transcript)
         self.assertEqual(self.dispatch(config, "Stop", dict(data, last_assistant_message=REPORT), nested, project), [])
         self.assert_denied(self.dispatch(config, "PreToolUse", data, nested, project))
-        # Clarification tools can continue while the STOP is pending.
+        # While the STOP is pending only the prepared question may be asked; a bare question is denied.
         clarification = "AskUserQuestion" if runtime == "claude" else "request_user_input_async"
-        self.assertEqual(self.dispatch(config, "PreToolUse", dict(data, tool_name=clarification), nested, project), [])
+        outputs = self.dispatch(config, "PreToolUse", dict(data, tool_name=clarification), nested, project)
+        self.assert_denied(outputs)
+        self.assertEqual(outputs[0]["hookSpecificOutput"]["permissionDecisionReason"],
+                         "DDL STOP: prepare the report and ask its question")
         self.assert_denied(self.dispatch(config, "PreToolUse", data, nested, project))
         if runtime == "codex":
             shutil.copyfile(FIXTURES / "codex_question_receipt.jsonl", transcript)

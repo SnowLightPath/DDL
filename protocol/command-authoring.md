@@ -224,7 +224,7 @@ Core activity here.
 
 +++STOP: always
 
-Emit `+++DDL_REPORT`, then the report below; follow Approval to present it and ask.
+Follow Approval: prepare the report below, emit `+++DDL_REPORT` and the report, then ask its prepared question.
 
 +++Report:
 Decision: {approve the complete current review set, select or revise it, or hold}

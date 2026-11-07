@@ -1,0 +1,9 @@
+{"type":"event_msg","payload":{"type":"task_started","turn_id":"review-turn"}}
+{"type":"response_item","payload":{"type":"function_call","name":"exec_command","call_id":"prepare-call","arguments":"@PREPARE_ARGS_JSON@"}}
+{"type":"response_item","payload":{"type":"function_call_output","call_id":"prepare-call","output":"Chunk ID: 5f1c\nWall time: 0.0812 seconds\nProcess exited with code 0\nOriginal token count: 410\nOutput:\n@PREPARED_JSON@"}}
+{"type":"response_item","payload":{"type":"reasoning","summary":[{"type":"summary_text","text":"+++DDL_REPORT\nGit review G-@ID@\nReview detail: @REPORT@"}],"content":null,"encrypted_content":"fixture-sig"}}
+{"type":"response_item","payload":{"type":"function_call","name":"request_user_input_async","call_id":"git-review-call","arguments":"@REQUEST_JSON@"}}
+{"type":"response_item","payload":{"type":"function_call_output","call_id":"git-review-call","output":"{\"accepted\":true}"}}
+{"type":"event_msg","payload":{"type":"task_complete","turn_id":"review-turn"}}
+{"type":"event_msg","payload":{"type":"task_started","turn_id":"answer-turn"}}
+{"type":"event_msg","payload":{"type":"item_completed","turn_id":"answer-turn","item":{"type":"UserMessage","id":"submitted-answer","content":[{"type":"text","text":"@REPLY@"}]}}}

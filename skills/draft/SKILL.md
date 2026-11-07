@@ -81,7 +81,7 @@ For D7, present options: change the Binding Decision, change the Experience, or 
 
 +++STOP: always
 
-Emit `+++DDL_REPORT` and present the draft for the decision to save it, following Approval. If the host cannot receive a permitted native choice, state that limitation and leave the draft unsaved.
+Following Approval, prepare the draft's report, emit `+++DDL_REPORT` and the report, and ask its prepared question for the decision to save it. If the host cannot receive a permitted native choice, state that limitation and leave the draft unsaved.
 
 +++Report:
 Decision: save this draft to `design.md`, revise it, or leave it unsaved.

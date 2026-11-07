@@ -9,7 +9,7 @@ Read once per Codex session after the entry and before the first command step; i
 | Concern | Implementation |
 |---|---|
 | Session start | The `AGENTS.md` chain (global, then the project root down to the working directory) is read once per run before any work; memories are injected when `memories.use_memories` is on. |
-| Compaction | The conversation is summarized; the SessionStart hook (Notebook loading) runs again, injects design.md and re-states a pending report. |
+| Compaction | The conversation is summarized; the SessionStart hook (Notebook loading) runs again, injects design.md and re-states a pending report's ID and file. |
 | Notebook loading | The SessionStart hook in `.codex/hooks.json` (`session-start --runtime codex`, `additionalContextLimit: 0`) injects design.md as additional context at every SessionStart event (wiring: Approval Implementation), when the hook is enabled and trusted. |
 | Adapter paths | `.codex/config.toml`, `.codex/agents/`, `.codex/hooks.json`, `.codex/hooks/`, `.codex/rules/` and the project `AGENTS.md`; `bin/install.sh` puts the same files under `$HOME/.codex/`, except `config.toml`, which is set by hand. Project-local configuration needs project trust, user-level hooks do not; review new or changed hooks in `/hooks` when the host asks. |
 | `+++DDL_PHASE` | Must. |
@@ -24,5 +24,5 @@ Read once per Codex session after the entry and before the first command step; i
 ## Coverage
 
 - Lookup: Codex lists a project skill and a user-level skill of the same name both; Phase 0 reads the project copy by path.
-- Enforced: the SessionStart injection above and `allow_implicit_invocation: false` in `agents/openai.yaml` of command skills, when Codex runs the project `.codex/` under project trust or the user-level `$HOME/.codex/` hooks.
+- Enforced: the SessionStart injection above and `allow_implicit_invocation: false` in `agents/openai.yaml` of command skills, under the trust in Adapter paths.
 - Limits: an untrusted project, a disabled hook or a host that does not run hooks leaves Phase 0 to read design.md; the GUI, an actual compaction and hook trust in another host are unverified.

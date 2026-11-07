@@ -71,7 +71,7 @@ After those checks pass, prepare the final candidate set for review:
 Decision: create the proposed commit, revise it, or leave it uncommitted.
 Recommendation: the commit's purpose and why the proposed files belong together; keep material detections visible.
 Consequence: commit exactly `Files` with the exact `Message`; state whether `Push` is no or names the remote and branch, and include any requested push in the selected action explicitly.
-Review detail: the complete `Files` list and diff, affected `Scope`, exact `Message`, every material `Detection`, `Push`, and a summary of the design.md and documentation changes the Close scan applied. Show the prepared review ID and link its complete report before asking; all must be accessible before approval.
+Review detail: the complete `Files` list and diff, affected `Scope`, exact `Message`, every material `Detection`, `Push`, and a summary of the design.md and documentation changes the Close scan applied. The prepared question carries the review ID and the report file, which holds all of it before approval.
 Choices: use the prepared native question and its exact action labels for one whole-set approval (Git review). Do not replace it with an arbitrary question or ask again per file. Approval of a different file set, message, or push target is not approval of this proposal.
 
 ### Phase 3: COMMIT

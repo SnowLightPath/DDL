@@ -1,0 +1,5 @@
+{"type":"user","message":{"role":"user","content":"/realize the gate"},"origin":{"kind":"human"},"turnOrigin":"human","promptSource":"typed"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","thinking":"+++DDL_REPORT\n\nRealize report summarized.","signature":"fixture-sig"},{"type":"tool_use","id":"prepare-call","name":"Bash","input":{"command":"@PREPARE_COMMAND@"}}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"prepare-call","content":"@PREPARED_JSON@"}]},"toolUseResult":{"stdout":"@PREPARED_JSON@","stderr":"","interrupted":false,"isImage":false}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"report-question","name":"AskUserQuestion","input":"@REQUEST@"}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"report-question","content":"User has answered your questions."}]},"toolUseResult":{"questions":[],"answers":"@ANSWERS@","annotations":{}},"permissionDecision":{"decision":"accept","source":"user_temporary"}}

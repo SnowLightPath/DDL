@@ -6,8 +6,8 @@ description: "Use when executing or authoring a Design-Doc Loop command that use
 
 # DDL protocol
 
-Design-Doc Loop: a human-LLM workflow protocol. A command describes its work
-in phases; this protocol holds the shared rules.
+Design-Doc Loop: a human-LLM workflow protocol; commands describe their work
+in phases.
 
 ## Start
 
@@ -39,7 +39,7 @@ implementations.
 | `+++NEVER` | `+++NEVER: <prohibition in the imperative>` | 1+ | command `## Constraints`; global in the guidance file | Binds this command, or every command from the guidance file; refuse the prohibited action in every phase. |
 | `+++Report` | `+++Report:` then labeled lines (labels: Approval Formats) | 0+ | body of a phase with `+++STOP: always` (REPORT, or a REVIEW filling its role: Command authoring Operands) | Content contract at a STOP: the command says what the user reviews; Approval says how to present and ask. |
 | `+++DDL_PHASE` | `+++DDL_PHASE: <PhaseName>` | 0+ | output | Output marker on the first line of a mutating phase, paired with its heading; the host's start implementation says whether it is required. |
-| `+++DDL_REPORT` | `+++DDL_REPORT` alone on a line, then the report | 0+ | output | Output heading before the decision report at every STOP, in every host. |
+| `+++DDL_REPORT` | `+++DDL_REPORT` alone on a line, then the report | 0+ | output | Output heading before the decision report at every STOP, in every host, once it is prepared (Approval). |
 
 - Markdown headings mark document structure and are never instructions.
 - A `+++` line in a phase body is an instruction; the fenced block after
@@ -51,10 +51,11 @@ implementations.
 
 - While a decision STOP is pending, call no tool that mutates the work (an MCP
   or connector tool that creates, updates, sends, publishes or deletes included)
-  and start or continue no worker.
-- The native question is the sole exception; opening it grants no work
-  permission. Before it, or after an actual request for clarification,
-  read-only tools may clarify the report, never begin the next phase.
+  and start or continue no worker; phase momentum ("I already presented the
+  plan, I might as well execute") never overrides this.
+- The exceptions are the report's preparation and its prepared question; neither
+  grants work permission. Before the question, or after an actual request for
+  clarification, read-only tools may clarify the report, never begin the next phase.
 
 ## Reading map
 

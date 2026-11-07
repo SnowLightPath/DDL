@@ -70,4 +70,4 @@ Every skill defines its own D-targets (D1, D2, …). Cross-cutting targets below
 +++NEVER: Spawn agents when a SWARM has fewer than 2 units (scopes, Direction lanes, files, document pairs, approved changes; the protocol’s Parallel work operation) — for 2+, follow +++SWARM semantics (mandatory when condition is true; only the lead fans out; the host mapping in the Parallel work operation's Implementation section)
 +++NEVER: Add AI attribution to commits or generated code
 +++NEVER: Skip emitting +++DDL_PHASE before mutation — Codex's execution-forward bias must be visibly checkpointed
-+++NEVER: Output a +++STOP gate without +++DDL_REPORT and the decision report required by the protocol’s Approval operation
++++NEVER: Output a +++STOP gate without +++DDL_REPORT, the decision report and its prepared decision question required by the protocol’s Approval operation

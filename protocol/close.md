@@ -27,7 +27,7 @@ Run Close after the last implementation stage's gates are marked passed, in this
 2. **Docs:** Audit the documentation the change set touches as `/docs` does (stale versions, references, sections, examples, names) and fix it.
 3. **Resonate:** Align every changed document with its language counterpart as `/resonate` does, dated Changelog rows included where the project keeps them.
 4. **Validate:** Run the Validation block and the mechanical Acceptance Gates after the Close edits; a failure stops (the command's validation detection).
-5. **Git review:** Stage the whole change set (implementation, design.md, documents); prepare the review for the commit and, only with `remote` (Formats), the push after it; show its report with a summary of the design.md and documentation changes and a link to the full diff. One native submission records, and when named sends, the set in one commit; no command chain follows.
+5. **Git review:** Stage the whole change set (implementation, design.md, documents); prepare the review for the commit and, only with `remote` (Formats), the push after it; show its report with a summary of the design.md and documentation changes; its question names the report file, which holds the full diff. One native submission records, and when named sends, the set in one commit; no command chain follows.
 
 ## Formats
 

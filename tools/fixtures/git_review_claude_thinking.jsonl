@@ -1,0 +1,5 @@
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"prepare-call","name":"Bash","input":{"command":"python3 \"$HOME/.claude/hooks/ddl_gate.py\" prepare-git-review --runtime claude <<'JSON'\n@INPUT@\nJSON"}}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"prepare-call","content":"@PREPARED_JSON@"}]},"toolUseResult":{"stdout":"@PREPARED_JSON@","stderr":"","interrupted":false,"isImage":false}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","thinking":"+++DDL_REPORT\nGit review G-@ID@\nReview detail: @REPORT@","signature":"fixture-sig"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"git-review-call","name":"AskUserQuestion","input":"@REQUEST@"}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"git-review-call","content":"Submitted native answer"}]},"toolUseResult":{"answers":"@ANSWERS@"},"permissionDecision":{"decision":"accept","source":"user_temporary"}}

@@ -152,6 +152,16 @@
 | label | ラベル |  |  |
 | layer | 層 | レイヤー |  |
 | report / `+++DDL_REPORT` | 報告 / `+++DDL_REPORT` | レポート |  |
+| prepare / preparation（報告や確認案を） | 準備する / 準備 |  | 質問の前に報告の全文をファイルに書くこと。`prepare-report` と `prepare-git-review` は英字のまま |
+| native question / native question UI / native choice | 質問 / 質問画面 / 標準の選択画面 |  | 問いそのものは「質問」、実行環境が備える画面は「質問画面」（「実行環境の質問画面」）。Git の確認の文脈では「標準の選択画面」とも書く |
+| five-line question | 5 行の質問 |  | STOP で問う質問の形。ユーザーの言語で決めること、推奨、影響、確認 ID、全文の 5 行を書く。英語版のラベルは Decision、Recommendation、Consequence、ID、Full report |
+| confirmation ID / review ID | 確認 ID |  | 質問の 4 行目。決定の報告は `R-<id>`、Git の確認案は `G-<id>`（どちらも 16 桁の 16 進数） |
+| full report / full report file | 全文 / 全文報告ファイル |  | 質問の 5 行目のラベルは「全文」。報告の全文を書いたファイルで、質問はその絶対パスを載せる |
+| Git review / prepared review | Git の確認 / 確認案 |  | 準備された一式（差分、メッセージ、送信先）は「確認案」 |
+| pending（STOP が） | 待機中 / STOP の待機 |  | 「待機中の報告」「待機中の確認 ID」 |
+| typed message | 入力されたメッセージ |  | 質問への回答ではなく、人間が書いて送った発言 |
+| thinking block / signed thinking block | 思考ブロック |  | Claude の記録の thinking。signed は訳さない（帰属表記の行で使わない訳に当たるため）。ゲートは読まない |
+| reasoning item（Codex の記録） | 推論の項目 |  | Codex の記録の reasoning。ゲートは読まない |
 | check（照らし合わせる） | 照らす / 確かめる |  | 名詞の checks は「検査」 |
 | validation / Validation | 検証 / Validation |  | 節の名前は英字のまま |
 | verbatim | 逐語で / そのまま |  |  |

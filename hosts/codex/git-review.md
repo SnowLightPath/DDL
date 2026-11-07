@@ -8,8 +8,8 @@ Read for every ordinary commit or push, before the shared Git review operation; 
 
 | Concern | Implementation |
 |---|---|
-| Prepare | `python3 "$HOME/.codex/hooks/ddl_gate.py" prepare-git-review --runtime codex` with the request JSON (Formats) on stdin; project copy `.codex/hooks/ddl_gate.py` at the repository root, development source `tools/ddl_gate.py`. |
-| `nativeRequest` | Unchanged as the `request_user_input_async` arguments (title, labels, descriptions, selection mode); end the turn after the receipt and wait for the `UserMessage` reply, which the hook matches by call ID, question and selected action; an unreadable or unsupported reply denies even under `never`, `bypassPermissions` or `dontAsk`. |
+| Prepare | Approval's Prepare row with `prepare-git-review --runtime codex` and the request JSON (Formats) on stdin. |
+| `nativeRequest` | Unchanged as the `request_user_input_async` arguments (`title` with the five lines, option labels; no descriptions or selection mode); end the turn after the receipt and wait for the `UserMessage` reply, which the hook matches by call ID, question and selected action; an unreadable or unsupported reply denies even under `never`, `bypassPermissions` or `dontAsk`. |
 | Revocation | `UserPromptSubmit` revokes; a possible matching native submission is preserved pending full request/result proof. |
 | Push confirmation | `.codex/rules/ddl.rules` (project trust): `prefix_rule` on `["git", "push"]`, `decision = "prompt"`, so a supported literal `git push ...` reaches the native prompt when the approval policy allows prompting; the hook's static form guard, independent of STOP, rejects recognized push forms that miss that prefix (Git global options, wrappers) with a canonical retry, never rewriting or allowing, and absolute host Git paths keep native resolution; `bypassPermissions` / `dontAsk` hook modes skip only this guard, a never-prompting session shows nothing, and the `$commit` report's approval still applies. |
 | Attribution | Codex adds no attribution of its own. |

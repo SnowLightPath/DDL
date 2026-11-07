@@ -12,6 +12,7 @@ Usage:
   python3 -I tools/test_ddl_gate.py
 """
 import atexit
+import hashlib
 import json
 import os
 import pathlib
@@ -42,6 +43,40 @@ MARKER_LINE = "→ DDL-PROTOCOL"
 
 def fixture(name):
     return str(FIXTURES / name)
+
+
+def render(value, replacements):
+    """Fill a fixture template: a whole-value placeholder takes any JSON value, a string one also fills substrings."""
+    if isinstance(value, str):
+        if value in replacements:
+            return replacements[value]
+        for key, text in replacements.items():
+            if isinstance(text, str):
+                value = value.replace(key, text)
+        return value
+    if isinstance(value, list):
+        return [render(v, replacements) for v in value]
+    if isinstance(value, dict):
+        return {k: render(v, replacements) for k, v in value.items()}
+    return value
+
+
+def template_rows(name, replacements):
+    return [render(json.loads(line), replacements) for line in pathlib.Path(fixture(name)).read_text().splitlines()]
+
+
+def write_rows(path, rows):
+    pathlib.Path(path).write_text("".join(json.dumps(row) + "\n" for row in rows))
+
+
+def codex_reply(call_id, question, answer):
+    """The observed Codex envelope that delivers a submitted native answer as a user message."""
+    rows = [{"questionItemId": json.dumps(["request_user_input_async", call_id, 0]), "question": question, "answer": answer}]
+    return "<send_user_message_question_reply>\n" + json.dumps(rows) + "\n</send_user_message_question_reply>"
+
+
+QUESTION_TOOL = {"claude": "AskUserQuestion", "codex": "request_user_input_async"}
+QUESTION_KEY = {"claude": "question", "codex": "title"}
 
 
 def mark_project(root, name=".claude/CLAUDE.md", line=MARKER_LINE):
@@ -414,7 +449,9 @@ RECORD_STATES = {
     "claude_question_timed_out.jsonl": True,
     "claude_plan_approved.jsonl": False,
     "claude_plan_rejected.jsonl": True,
+    "claude_thinking_only_report.jsonl": False,  # a thinking block is never read
     "codex_open.jsonl": False,
+    "codex_reasoning_only_report.jsonl": False,  # nor a reasoning item
     "codex_closed_in_turn.jsonl": True,
     "codex_previous_turn_report.jsonl": False,
     "codex_question_receipt.jsonl": True,
@@ -492,10 +529,23 @@ class GateTest(unittest.TestCase):
         expected = ddl_gate.DENY_REASON + (SEGMENT_SUFFIX.format(segment) if segment else "")
         self.assertEqual(out["permissionDecisionReason"], expected)
 
+    def assert_reason(self, proc, reason):
+        out = json.loads(proc.stdout)["hookSpecificOutput"]
+        self.assertEqual((out["hookEventName"], out["permissionDecision"]), ("PreToolUse", "deny"))
+        self.assertEqual(out["permissionDecisionReason"], reason)
+
     def assert_warning(self, proc):
         out = json.loads(proc.stdout)
         self.assertEqual(list(out), ["systemMessage"])
         return out["systemMessage"]
+
+    def prepare_report(self, runtime, **fields):
+        data = {"language": "ja", "decision": "README と docs の 3 件の修正を作業ツリーに入れるか",
+                "recommendation": "すべて承認。R1 は版数を 0.7.0 に、R2・R3 はリンクの修正",
+                "consequence": "3 ファイルが変わる（未コミット）",
+                "detail": "## Realize report\n\n- R1 版数\n- R2 リンク\n- R3 リンク\n"}
+        data.update(fields)
+        return json.loads(self.run_gate(None, None, data, argv=["prepare-report", "--runtime", runtime]).stdout)
 
     def context(self, proc):
         out = json.loads(proc.stdout)["hookSpecificOutput"]
@@ -553,7 +603,8 @@ class ClaudePreToolUseTest(GateTest):
                     "claude_malformed.jsonl": False, "claude_dialog_answer.jsonl": True,
                     "claude_question_empty.jsonl": False, "claude_question_cancelled.jsonl": False,
                     "claude_question_timed_out.jsonl": False,
-                    "claude_plan_approved.jsonl": True, "claude_plan_rejected.jsonl": False}
+                    "claude_plan_approved.jsonl": True, "claude_plan_rejected.jsonl": False,
+                    "claude_thinking_only_report.jsonl": True}
         for name, allowed in outcomes.items():
             with self.subTest(fixture=name):
                 proc = self.run_gate("pre-tool-use", "claude", payload("claude", transcript=fixture(name)))
@@ -593,12 +644,15 @@ class CodexPreToolUseTest(GateTest):
                                           payload("codex", transcript=fixture("codex_previous_turn_report.jsonl"))))
 
     def test_requesting_human_input_does_not_itself_reopen(self):
+        # A text-only STOP has no prepared question, so a bare question is denied and the STOP stays pending.
         transcript = fixture("codex_closed_in_turn.jsonl")
         for tool in ("request_user_input", "request_user_input_async"):
             with self.subTest(tool=tool):
-                self.assert_allowed(self.run_gate("pre-tool-use", "codex",
-                                                 payload("codex", transcript=transcript, tool_name=tool)))
+                self.assert_reason(self.run_gate("pre-tool-use", "codex", payload("codex", transcript=transcript,
+                                                                                 tool_name=tool)), ddl_gate.PREPARE_FIRST)
                 self.assert_denied(self.run_gate("pre-tool-use", "codex", payload("codex", transcript=transcript)))
+        self.assert_allowed(self.run_gate("pre-tool-use", "codex", payload("codex", transcript=fixture("codex_open.jsonl"),
+                                                                            tool_name="request_user_input_async")))
 
     def test_native_question_receipt_answer_and_newer_report(self):
         # These hand-written fixtures use observed native envelopes, not the reader's implementation.
@@ -802,7 +856,7 @@ class AdapterDispatchTest(GateTest):
     def test_actual_dispatch_keeps_confirmed_reads_available(self):
         cases = {
             "claude": [("Read", {"file_path": "design.md"}), ("Grep", {"pattern": "DDL"}),
-                       ("TaskGet", {"taskId": "fixture"}), ("TaskList", {}), ("AskUserQuestion", {}),
+                       ("TaskGet", {"taskId": "fixture"}), ("TaskList", {}),
                        ("Bash", {"command": "sed -n '1,10p' design.md | head -n 5"})],
             "codex": [("view_image", {"path": "fixture.png"}), ("list_agents", {}),
                       ("exec_command", {"cmd": "rg -n 'a > b|literal $value' src | head -n 5"}),
@@ -816,6 +870,17 @@ class AdapterDispatchTest(GateTest):
                 with self.subTest(runtime=runtime, tool=name):
                     data = self.adapter_payload(runtime, transcript=transcript, tool_name=name, tool_input=tool_input)
                     self.assert_adapter_allowed(self.run_adapter(runtime, "pre-tool-use", data))
+
+    def test_actual_dispatch_admits_only_the_prepared_question_while_pending(self):
+        for runtime in ("claude", "codex"):
+            with self.subTest(runtime=runtime):
+                transcript = fixture(runtime + "_closed_in_turn.jsonl")
+                bare = self.adapter_payload(runtime, transcript=transcript, tool_name=QUESTION_TOOL[runtime], tool_input={})
+                for proc in self.run_adapter(runtime, "pre-tool-use", bare):
+                    self.assert_reason(proc, ddl_gate.PREPARE_FIRST)
+                prepared = self.prepare_report(runtime)
+                asked = dict(bare, tool_input=prepared["nativeRequest"])
+                self.assert_adapter_allowed(self.run_adapter(runtime, "pre-tool-use", asked))
 
     def test_actual_dispatch_blocks_script_and_execution_helper_regressions(self):
         commands = ("sed 'e touch blocked.txt' design.md", "sed -n '1p;w blocked.txt' design.md",
@@ -862,8 +927,9 @@ class AdapterDispatchTest(GateTest):
                 stop = self.adapter_payload(runtime, "stop", str(transcript), session,
                                             last_assistant_message=REPORT_TEXT)
                 self.assert_adapter_allowed(self.run_adapter(runtime, "stop", stop))
-                question = "AskUserQuestion" if runtime == "claude" else "request_user_input_async"
-                self.assert_adapter_allowed(self.run_adapter(runtime, "pre-tool-use", dict(pre, tool_name=question)))
+                prepared = self.prepare_report(runtime)
+                asked = dict(pre, tool_name=QUESTION_TOOL[runtime], tool_input=prepared["nativeRequest"])
+                self.assert_adapter_allowed(self.run_adapter(runtime, "pre-tool-use", asked))
                 self.assertTrue(self.marker(session).exists())
                 self.assert_adapter_denied(self.run_adapter(runtime, "pre-tool-use", pre))
 
@@ -1069,37 +1135,35 @@ class GitReviewTest(GateTest):
 
     def prepare(self, runtime, commands=None):
         operations = [{"cwd": str(self.repo), "command": command} for command in (commands or [self.command])]
-        proc = self.run_gate("prepare-git-review", runtime, {"language": "ja", "operations": operations})
+        self.review_input = {"language": "ja", "operations": operations}
+        proc = self.run_gate("prepare-git-review", runtime, self.review_input)
         return json.loads(proc.stdout)
 
-    def record(self, runtime, review, choice=0, mutate=None):
+    def record(self, runtime, review, choice=0, mutate=None, variant=""):
+        """Write the native transcript for `review` from `git_review_<runtime><variant>.jsonl`."""
         q = review["question"]
         answer = q["options"][choice]
         request = review["nativeRequest"]
-        reply = [{"questionItemId": json.dumps(["request_user_input_async", "git-review-call", 0]),
-                  "question": q["title"], "answer": answer}]
+        prepare_input = json.dumps(getattr(self, "review_input", {}))
+        codex_call = ("python3 \"$HOME/.codex/hooks/ddl_gate.py\" prepare-git-review --runtime codex <<'JSON'\n"
+                      + prepare_input + "\nJSON")
         replacements = {"@ID@": review["reviewId"][2:], "@REPORT@": review["report"],
                         "@REQUEST@": request, "@REQUEST_JSON@": json.dumps(request),
                         "@ANSWERS@": {q["title"]: answer},
-                        "@REPLY@": "<send_user_message_question_reply>\n" + json.dumps(reply) +
-                                   "\n</send_user_message_question_reply>"}
-        def render(value):
-            if isinstance(value, str):
-                if value in replacements:
-                    return replacements[value]
-                for key in ("@ID@", "@REPORT@"):
-                    value = value.replace(key, replacements[key])
-                return value
-            if isinstance(value, list):
-                return [render(v) for v in value]
-            if isinstance(value, dict):
-                return {k: render(v) for k, v in value.items()}
-            return value
-        rows = [render(json.loads(line)) for line in pathlib.Path(fixture("git_review_" + runtime + ".jsonl")).read_text().splitlines()]
+                        "@REPLY@": codex_reply("git-review-call", q["title"], answer),
+                        "@PREPARED_JSON@": json.dumps(review), "@INPUT@": prepare_input,
+                        "@PREPARE_ARGS_JSON@": json.dumps({"cmd": codex_call})}
+        rows = template_rows("git_review_" + runtime + variant + ".jsonl", replacements)
         if mutate:
             mutate(rows)
-        self.transcript.write_text("".join(json.dumps(row) + "\n" for row in rows))
+        write_rows(self.transcript, rows)
         return rows
+
+    def ask(self, runtime, request, transcript=None, **extra):
+        """PreToolUse for the native question tool carrying `request`."""
+        data = payload(runtime, cwd=str(self.repo), transcript=transcript or fixture(runtime + "_open.jsonl"),
+                       tool_name=QUESTION_TOOL[runtime], tool_input=request, **extra)
+        return self.run_gate("pre-tool-use", runtime, data)
 
     def check(self, runtime, command=None, transcript=True, **extra):
         data = payload(runtime, cwd=str(self.repo), transcript=str(self.transcript) if transcript else None,
@@ -1126,6 +1190,27 @@ class GitReviewTest(GateTest):
                     with self.subTest(runtime=runtime, mode=mode, command=command):
                         self.assertIn("DDL Git review", self.blocked(self.check(runtime, command, False, permission_mode=mode)))
 
+    def test_doctor_probe_shape_still_denies_with_the_git_review_reason(self):
+        # bin/ddl_setup.py doctor probes the installed hook this way and checks the `DDL Git review:` substring.
+        project = pathlib.Path(self.tmp) / "doctor project"
+        project.mkdir()
+        (project / "CLAUDE.md").write_text("→ DDL-PROTOCOL\n", encoding="utf-8")
+        records = {"claude": [{"type": "user", "message": {"role": "user", "content": "Continue."},
+                               "origin": {"kind": "human"}, "turnOrigin": "human", "promptSource": "typed"}],
+                   "codex": [{"type": "event_msg", "payload": {"type": "task_started", "turn_id": "doctor"}},
+                             {"type": "response_item", "payload": {"type": "message", "role": "user",
+                                                                   "content": [{"type": "input_text", "text": "Continue."}]}}]}
+        for runtime, rows in records.items():
+            write_rows(self.transcript, rows)
+            for command, record, mode in (("git commit --cleanup=verbatim -m doctor", str(self.transcript), "default"),
+                                          ("git push origin main", str(self.transcript), "default"),
+                                          ("git push origin main", None, "default"),
+                                          ("git push origin main", str(self.transcript), "bypassPermissions")):
+                with self.subTest(runtime=runtime, command=command, record=record, mode=mode):
+                    data = payload(runtime, cwd=str(project), transcript=record, session="doctor-" + runtime,
+                                   permission_mode=mode, tool_name="Bash", tool_input={"command": command})
+                    self.assertIn("DDL Git review:", self.blocked(self.run_gate("pre-tool-use", runtime, data)))
+
     def test_matching_native_choice_passes_without_granting_host_permission(self):
         for runtime in ("claude", "codex"):
             review = self.prepare(runtime)
@@ -1148,17 +1233,106 @@ class GitReviewTest(GateTest):
                 f.write(json.dumps(row) + "\n")
             self.blocked(self.check(runtime))
 
-    def test_receipt_missing_request_and_wrong_report_cannot_authorize_git(self):
+    def test_missing_answer_or_request_denies_but_report_text_is_not_required(self):
         for runtime in ("claude", "codex"):
             review = self.prepare(runtime)
             def omit_detail(rows):
                 entry = rows[0] if runtime == "claude" else rows[1]["payload"]
                 message = entry["message"] if runtime == "claude" else entry
                 message["content"][0]["text"] = "+++DDL_REPORT\nGit review " + review["reviewId"]
-            for change in (lambda rows: rows.pop(), lambda rows: rows.pop(1 if runtime == "claude" else 2),
-                           lambda rows: rows.pop(0 if runtime == "claude" else 1), omit_detail):
-                self.record(runtime, review, mutate=change)
-                self.blocked(self.check(runtime))
+            with self.subTest(runtime=runtime, missing="answer"):
+                self.record(runtime, review, mutate=lambda rows: rows.pop())
+                reason = self.blocked(self.check(runtime))
+                if runtime == "claude":  # the asked, unanswered question keeps its STOP pending and names it
+                    self.assertTrue(reason.startswith(ddl_gate.WAITING_REASON.format(review["reviewId"], review["report"])))
+                else:  # the next turn started without a reply
+                    self.assertIn("DDL Git review:", reason)
+            with self.subTest(runtime=runtime, missing="request"):
+                self.record(runtime, review, mutate=lambda rows: rows.pop(1 if runtime == "claude" else 2))
+                self.assertIn("DDL Git review:", self.blocked(self.check(runtime)))
+            # The question carries the review; the chat report, whole or summarized, is not evidence either way.
+            for change in (lambda rows: rows.pop(0 if runtime == "claude" else 1), omit_detail):
+                with self.subTest(runtime=runtime, missing="report text"):
+                    self.record(runtime, review, mutate=change)
+                    self.assert_allowed(self.check(runtime))
+
+    def test_report_recorded_only_as_thinking_still_proves_commit_and_push(self):
+        for runtime in ("claude", "codex"):
+            with self.subTest(runtime=runtime):
+                self.stage("thinking " + runtime + "\n")
+                review = self.prepare(runtime, [self.command, "git push origin main"])
+                rows = self.record(runtime, review, variant="_thinking" if runtime == "claude" else "_reasoning")
+                self.assertIn("+++DDL_REPORT", json.dumps(rows))  # present only where the gate never reads
+                if runtime == "claude":
+                    self.assertFalse(any(ddl_gate.claude_text(row) for row in rows if row["type"] == "assistant"))
+                else:
+                    self.assertFalse(any(row["payload"].get("type") in ("message", "agent_message") for row in rows))
+                self.assert_allowed(self.ask(runtime, review["nativeRequest"], str(self.transcript)))
+                self.assert_allowed(self.check(runtime))
+                self.git("commit", "--cleanup=verbatim", "-F", str(self.message))
+                self.pushed(runtime, self.check(runtime, "git push origin main"))
+
+    def test_altered_question_is_denied_and_cannot_authorize_git(self):
+        for runtime in ("claude", "codex"):
+            with self.subTest(runtime=runtime):
+                review = self.prepare(runtime)
+                key, execute = QUESTION_KEY[runtime], review["question"]["options"][0]
+                altered = json.loads(json.dumps(review["nativeRequest"]))
+                lines = altered["questions"][0][key].split("\n")
+                lines[0] += "（修正）"
+                altered["questions"][0][key] = "\n".join(lines)
+                self.assert_reason(self.ask(runtime, altered),
+                                   ddl_gate.GIT_QUESTION_MISMATCH.format(review["reviewId"]))
+                self.assert_allowed(self.ask(runtime, review["nativeRequest"]))
+
+                def alter(rows):
+                    for row in rows:
+                        for block in (row.get("message") or {}).get("content", []):
+                            if isinstance(block, dict) and block.get("type") == "tool_use":
+                                block["input"] = altered
+                        if (row.get("payload") or {}).get("type") == "function_call":
+                            row["payload"]["arguments"] = json.dumps(altered)
+                    if runtime == "claude":
+                        rows[-1]["toolUseResult"]["answers"] = {altered["questions"][0][key]: execute}
+                    else:
+                        rows[-1]["payload"]["item"]["content"][0]["text"] = codex_reply(
+                            "git-review-call", altered["questions"][0][key], execute)
+                self.record(runtime, review, mutate=alter)
+                self.assertIn("does not match", self.blocked(self.check(runtime)))
+
+    def test_git_question_after_resume_or_for_another_runtime_is_denied(self):
+        for runtime, other in (("claude", "codex"), ("codex", "claude")):
+            with self.subTest(runtime=runtime):
+                review = self.prepare(runtime)
+                foreign = self.prepare(other)
+                foreign_request = json.loads(json.dumps(review["nativeRequest"]))
+                key = QUESTION_KEY[runtime]
+                foreign_request["questions"][0][key] = foreign["question"]["title"]
+                self.assert_reason(self.ask(runtime, foreign_request), ddl_gate.NOT_PREPARED.format(foreign["reviewId"]))
+                self.assert_allowed(self.ask(runtime, review["nativeRequest"]))
+                self.run_gate("session-start", runtime, payload(runtime, "session-start", fixture(runtime + "_open.jsonl"),
+                                                                cwd=str(self.repo), source="compact"))
+                self.assert_reason(self.ask(runtime, review["nativeRequest"]), ddl_gate.PREDATES.format(review["reviewId"]))
+
+    def test_git_question_names_what_will_run(self):
+        review = self.prepare("claude")
+        self.assertEqual(review["question"]["title"].split("\n"), [
+            "決めること: コミット「Record reviewed contents」（1 ファイル）を main に記録するか",
+            "推奨: この内容で実行する。内容・メッセージ・送信先は全文と差分のとおり",
+            "影響: main に新しいコミットができる（送信はしない）",
+            "確認 ID: " + review["reviewId"], "全文: " + review["report"]])
+        self.assertTrue(os.path.isabs(review["report"]))
+        self.assertEqual(ddl_gate.question_id(review["question"]["title"]), ("G", review["reviewId"][2:]))
+        self.assertIn(review["question"]["title"], pathlib.Path(review["report"]).read_text(encoding="utf-8"))
+        self.assertEqual(review["nativeRequest"]["questions"][0]["header"], "Git")
+        both = self.prepare("codex", [self.command, "git push origin main"])
+        lines = both["question"]["title"].split("\n")
+        self.assertEqual(lines[0], "決めること: コミット「Record reviewed contents」（1 ファイル）を main に記録し、origin/main に送るか")
+        self.assertEqual(lines[2], "影響: origin/main が新しいコミットに進む。取り消すには revert が要る")
+        self.assertEqual(both["nativeRequest"], {"questions": [both["question"]]})
+        push = self.prepare("codex", ["git push origin main"])
+        self.assertEqual(push["question"]["title"].split("\n")[0],
+                         "決めること: {} を origin/main に送るか".format(self.git("rev-parse", "HEAD")[:ddl_gate.SHORT_SHA_LENGTH]))
 
     def test_wrong_native_request_id_or_question_is_denied(self):
         for runtime in ("claude", "codex"):
@@ -1450,6 +1624,321 @@ class GitReviewTest(GateTest):
                                   input=json.dumps(data), capture_output=True, text=True, env=env)
             self.assertEqual(proc.returncode, 2)
             self.assertIn("DDL Git review", proc.stderr)
+
+
+PREPARE_CALL = {runtime: "python3 \"$HOME/.{0}/hooks/ddl_gate.py\" prepare-report --runtime {0} <<'JSON'\n"
+                         "{{\"language\": \"ja\", \"detail\": \"$(not expanded)\"}}\nJSON".format(runtime)
+                for runtime in ("claude", "codex")}
+FLOW_STAGES = {"claude": {"prepared": 3, "asked": 4, "answered": 5}, "codex": {"prepared": 5, "asked": 8, "answered": 10}}
+WRITES = {"claude": [("Edit", {"file_path": "design.md", "old_string": "a", "new_string": "b"}),
+                     ("Write", {"file_path": "x.txt", "content": "x"}), ("Agent", {"prompt": "continue"})],
+          "codex": [("apply_patch", {"patch": "*** Begin Patch\n*** End Patch"}), ("spawn_agent", {"message": "continue"})]}
+READS = {"claude": [("Read", {"file_path": "design.md"}), ("Bash", {"command": "git status"})],
+         "codex": [("exec_command", {"cmd": "rg -n DDL design.md"})]}
+SHELL = {"claude": ("Bash", "command"), "codex": ("exec_command", "cmd")}
+
+
+class ReportStopTest(GateTest):
+    """A decision report proved from its prepared question, with the report text recorded only as thinking."""
+
+    def flow(self, runtime, prepared, stage, answer=0):
+        """The report_flow transcript cut after `stage`: prepared, asked, or answered (option `answer`)."""
+        question = prepared["question"]
+        option = prepared["nativeRequest"]["questions"][0]["options"][answer]
+        label = option["label"] if isinstance(option, dict) else option
+        replacements = {"@PREPARE_COMMAND@": PREPARE_CALL[runtime],
+                        "@PREPARE_ARGS_JSON@": json.dumps({"cmd": PREPARE_CALL[runtime]}),
+                        "@PREPARED_JSON@": json.dumps(prepared), "@REQUEST@": prepared["nativeRequest"],
+                        "@REQUEST_JSON@": json.dumps(prepared["nativeRequest"]), "@ANSWERS@": {question: label},
+                        "@REPLY@": codex_reply("report-question", question, label)}
+        rows = template_rows("report_flow_" + runtime + ".jsonl", replacements)[:FLOW_STAGES[runtime][stage]]
+        path = os.path.join(self.tmp, "{}-{}.jsonl".format(runtime, stage))
+        write_rows(path, rows)
+        return path
+
+    def call(self, runtime, transcript, tool, tool_input, session="sess"):
+        return self.run_gate("pre-tool-use", runtime, payload(runtime, transcript=transcript, session=session,
+                                                              tool_name=tool, tool_input=tool_input))
+
+    def scan(self, runtime, transcript):
+        with mock.patch.dict(os.environ, {"DDL_GATE_STATE_DIR": self.state}):
+            return (ddl_gate.scan_codex if runtime == "codex" else ddl_gate.scan_claude)(transcript)
+
+    def test_prepared_report_holds_writes_until_its_question_is_answered(self):
+        for runtime in ("claude", "codex"):
+            with self.subTest(runtime=runtime):
+                prepared = self.prepare_report(runtime)
+                pending = {"id": prepared["reportId"], "report": prepared["report"]}
+                waiting = ddl_gate.WAITING_REASON.format(prepared["reportId"], prepared["report"])
+                for stage in ("prepared", "asked"):
+                    transcript = self.flow(runtime, prepared, stage)
+                    self.assertEqual(self.scan(runtime, transcript), (True, pending))
+                    for tool, tool_input in WRITES[runtime]:
+                        self.assert_reason(self.call(runtime, transcript, tool, tool_input), waiting)
+                    shell, key = SHELL[runtime]
+                    self.assert_reason(self.call(runtime, transcript, shell, {key: "touch x"}),
+                                       waiting + SEGMENT_SUFFIX.format("touch x"))
+                    for tool, tool_input in READS[runtime]:
+                        self.assert_allowed(self.call(runtime, transcript, tool, tool_input))
+                transcript = self.flow(runtime, prepared, "answered")
+                self.assertEqual(self.scan(runtime, transcript), (False, None))
+                for tool, tool_input in WRITES[runtime]:
+                    self.assert_allowed(self.call(runtime, transcript, tool, tool_input))
+
+    def test_question_without_the_pending_id_is_denied(self):
+        ordinary = {"claude": {"questions": [{"question": "Which file first?", "header": "Order", "multiSelect": False,
+                                              "options": [{"label": "A", "description": "a"},
+                                                          {"label": "B", "description": "b"}]}]},
+                    "codex": {"questions": [{"title": "Which file first?", "options": ["A", "B"]}]}}
+        for runtime in ("claude", "codex"):
+            with self.subTest(runtime=runtime):
+                prepared = self.prepare_report(runtime)
+                transcript, tool = self.flow(runtime, prepared, "prepared"), QUESTION_TOOL[runtime]
+                unchanged = ddl_gate.ASK_UNCHANGED.format(prepared["reportId"])
+                self.assert_reason(self.call(runtime, transcript, tool, ordinary[runtime]), unchanged)
+                altered = json.loads(json.dumps(prepared["nativeRequest"]))
+                lines = altered["questions"][0][QUESTION_KEY[runtime]].split("\n")
+                lines[1] += "（変更）"
+                altered["questions"][0][QUESTION_KEY[runtime]] = "\n".join(lines)
+                self.assert_reason(self.call(runtime, transcript, tool, altered), unchanged)
+                self.assert_allowed(self.call(runtime, transcript, tool, prepared["nativeRequest"]))
+                # A STOP marked only in text has no prepared question to name.
+                self.assert_reason(self.call(runtime, fixture(runtime + "_closed_in_turn.jsonl"), tool, ordinary[runtime]),
+                                   ddl_gate.PREPARE_FIRST)
+                # Ordinary questions keep working while nothing is pending.
+                self.assert_allowed(self.call(runtime, fixture(runtime + "_open.jsonl"), tool, ordinary[runtime]))
+
+    def test_the_gates_own_preparation_call_runs_while_pending(self):
+        for runtime in ("claude", "codex"):
+            with self.subTest(runtime=runtime):
+                prepared = self.prepare_report(runtime)
+                transcript = self.flow(runtime, prepared, "prepared")
+                shell, key = SHELL[runtime]
+                own = ("python3 -I " + shlex.quote(GATE) + " prepare-git-review --runtime " + runtime +
+                       " <<\"EOF\"\n{\"language\": \"ja\", \"operations\": []}\nEOF\n")
+                for command in (PREPARE_CALL[runtime], own):
+                    self.assert_allowed(self.call(runtime, transcript, shell, {key: command}))
+                for command in (PREPARE_CALL[runtime] + "\ntouch x",
+                                PREPARE_CALL[runtime].replace("'JSON'\n{", "'JSON'\n{}\nJSON\ntouch x\n{"),
+                                PREPARE_CALL[runtime].replace("<<'JSON'", "<<'JSON' | tee x"),
+                                PREPARE_CALL[runtime].replace("<<'JSON'", "<<JSON"),
+                                PREPARE_CALL[runtime].replace("prepare-report", "pre-tool-use")):
+                    with self.subTest(command=command):
+                        out = json.loads(self.call(runtime, transcript, shell, {key: command}).stdout)
+                        self.assertEqual(out["hookSpecificOutput"]["permissionDecision"], "deny")
+                        self.assertTrue(out["hookSpecificOutput"]["permissionDecisionReason"].startswith(
+                            ddl_gate.WAITING_REASON.format(prepared["reportId"], prepared["report"])))
+
+    def test_stale_unknown_or_changed_ids_are_denied(self):
+        for runtime in ("claude", "codex"):
+            with self.subTest(runtime=runtime):
+                prepared = self.prepare_report(runtime)
+                tool, key, opened = QUESTION_TOOL[runtime], QUESTION_KEY[runtime], fixture(runtime + "_open.jsonl")
+                self.assert_allowed(self.call(runtime, opened, tool, prepared["nativeRequest"]))
+                forged = json.loads(json.dumps(prepared["nativeRequest"]))
+                forged["questions"][0][key] = forged["questions"][0][key].replace(prepared["reportId"], "R-0123456789abcdef")
+                self.assert_reason(self.call(runtime, opened, tool, forged), ddl_gate.NOT_PREPARED.format("R-0123456789abcdef"))
+                changed = self.prepare_report(runtime)
+                with open(changed["report"], "a", encoding="utf-8") as fh:
+                    fh.write("- R4 added after preparation\n")
+                self.assert_reason(self.call(runtime, opened, tool, changed["nativeRequest"]),
+                                   ddl_gate.NOT_PREPARED.format(changed["reportId"]))
+                self.run_gate("session-start", runtime, payload(runtime, "session-start", opened, source="resume"))
+                self.assert_reason(self.call(runtime, opened, tool, prepared["nativeRequest"]),
+                                   ddl_gate.PREDATES.format(prepared["reportId"]))
+                self.assert_allowed(self.call(runtime, opened, tool, self.prepare_report(runtime)["nativeRequest"]))
+
+    def test_stop_marks_and_compaction_names_the_pending_report(self):
+        for runtime in ("claude", "codex"):
+            with self.subTest(runtime=runtime):
+                prepared = self.prepare_report(runtime)
+                transcript, session = self.flow(runtime, prepared, "prepared"), runtime + "-notice"
+                self.run_gate("stop", runtime, payload(runtime, "stop", transcript, session, last_assistant_message=""))
+                self.assertTrue(self.marker(session).exists())
+                proc = self.run_gate("session-start", runtime, payload(runtime, "session-start", transcript, session,
+                                                                       source="compact"))
+                self.assertEqual(self.context(proc), ddl_gate.PENDING_NOTICE.format(prepared["reportId"], prepared["report"]))
+                # Compaction retires the ID: the report is prepared again under a new one.
+                self.assert_reason(self.call(runtime, transcript, QUESTION_TOOL[runtime], prepared["nativeRequest"], session),
+                                   ddl_gate.PREDATES.format(prepared["reportId"]))
+                renewed = self.prepare_report(runtime)
+                self.assert_allowed(self.call(runtime, transcript, QUESTION_TOOL[runtime], renewed["nativeRequest"], session))
+
+
+class PrepareReportTest(GateTest):
+    BASE = {"language": "ja", "decision": "R1–R3 を作業ツリーに入れるか", "recommendation": "すべて承認",
+            "consequence": "3 ファイルが変わる", "detail": "## Report\n"}
+
+    def cli(self, runtime, data):
+        stdin = data if isinstance(data, str) else json.dumps(data)
+        return subprocess.run([sys.executable, "-I", GATE, "prepare-report", "--runtime", runtime], input=stdin,
+                              capture_output=True, text=True, env=dict(os.environ, DDL_GATE_STATE_DIR=self.state))
+
+    def test_output_shape_and_files(self):
+        detail = "## Realize report\n\n| ID | 内容 |\n|---|---|\n| R1 | 版数 |\n"
+        out = self.prepare_report("claude", detail=detail)
+        self.assertEqual(set(out), {"reportId", "report", "question", "nativeRequest"})
+        self.assertRegex(out["reportId"], r"^R-[0-9a-f]{16}$")
+        directory = pathlib.Path(self.state) / "reports" / out["reportId"][2:]
+        self.assertEqual(out["report"], str(directory / "report.md"))
+        self.assertTrue(os.path.isabs(out["report"]))
+        self.assertEqual(out["question"].split("\n"), [
+            "決めること: README と docs の 3 件の修正を作業ツリーに入れるか",
+            "推奨: すべて承認。R1 は版数を 0.7.0 に、R2・R3 はリンクの修正",
+            "影響: 3 ファイルが変わる（未コミット）",
+            "確認 ID: " + out["reportId"], "全文: " + out["report"]])
+        self.assertEqual(ddl_gate.question_id(out["question"]), ("R", out["reportId"][2:]))
+        self.assertEqual(out["nativeRequest"], {"questions": [{"question": out["question"], "header": "DDL",
+                                                               "multiSelect": False,
+                                                               "options": ddl_gate.DEFAULT_OPTIONS["ja"]}]})
+        text = (directory / "report.md").read_bytes()
+        self.assertEqual(text.decode("utf-8"), out["question"] + "\n\n" + detail)
+        record = json.loads((directory / "report.json").read_text(encoding="utf-8"))
+        self.assertLessEqual({"version", "runtime", "language", "nonce", "createdAt", "id", "question",
+                              "nativeRequest", "reportHash"}, set(record))
+        self.assertEqual((record["id"], record["runtime"], record["language"], record["question"], record["nativeRequest"]),
+                         (out["reportId"][2:], "claude", "ja", out["question"], out["nativeRequest"]))
+        self.assertEqual(record["reportHash"], hashlib.sha256(text).hexdigest())
+        self.assertEqual(directory.stat().st_mode & 0o777, 0o700)
+        self.assertNotEqual(self.prepare_report("claude", detail=detail)["reportId"], out["reportId"])  # a nonce each time
+
+    def test_english_labels_codex_shape_and_custom_options(self):
+        out = self.prepare_report("codex", language="en", decision="Apply R1–R3 to the working tree?",
+                                  recommendation="Approve all", consequence="Three files change (uncommitted)")
+        self.assertEqual([line.split(": ", 1)[0] for line in out["question"].split("\n")],
+                         ["Decision", "Recommendation", "Consequence", "ID", "Full report"])
+        self.assertEqual(out["nativeRequest"], {"questions": [{"title": out["question"], "options": [
+            "Approve all (Recommended)", "Subset or changes", "Hold"]}]})
+        options = [{"label": "R1 only", "description": "Apply R1"}, {"label": "R1 and R2", "description": "Apply both"}]
+        out = self.prepare_report("claude", language="en", options=options, multiSelect=True)
+        self.assertEqual(out["nativeRequest"]["questions"][0],
+                         {"question": out["question"], "header": "DDL", "multiSelect": True, "options": options})
+        regional = self.prepare_report("claude", language="ja-JP")
+        self.assertTrue(regional["question"].startswith("決めること: "))
+        at_limit = self.prepare_report("codex", recommendation="あ" * ddl_gate.QUESTION_LINE_LIMIT)
+        self.assertIn("推奨: " + "あ" * ddl_gate.QUESTION_LINE_LIMIT + "\n", at_limit["question"])
+
+    def test_input_errors_exit_2_and_prepare_nothing(self):
+        base, option = self.BASE, {"label": "A", "description": "a"}
+        options = [{"label": str(i), "description": "d"} for i in range(ddl_gate.MAX_OPTIONS + 1)]
+        cases = [("claude", dict(base, decision="一行目\n二行目")), ("claude", dict(base, consequence="a\rb")),
+                 ("claude", dict(base, recommendation="あ" * (ddl_gate.QUESTION_LINE_LIMIT + 1))),
+                 ("claude", dict(base, options=[option])), ("claude", dict(base, options=options)),
+                 ("claude", dict(base, options=[option, option])), ("claude", dict(base, options=[option, {"label": "B"}])),
+                 ("codex", dict(base, multiSelect=True)), ("claude", dict(base, multiSelect="yes")),
+                 ("claude", {k: v for k, v in base.items() if k != "detail"}), ("claude", dict(base, detail=" \n")),
+                 ("claude", dict(base, recommendation="  ")), ("claude", dict(base, language="日本語")),
+                 ("claude", dict(base, surprise=1)), ("claude", [base]), ("claude", "not json"), ("gemini", base)]
+        for runtime, data in cases:
+            with self.subTest(runtime=runtime, data=data):
+                proc = self.cli(runtime, data)
+                self.assertEqual((proc.returncode, proc.stdout), (2, ""))
+                self.assertTrue(proc.stderr.startswith("DDL STOP: "), proc.stderr)
+        self.assertFalse((pathlib.Path(self.state) / "reports").exists())
+        self.assertEqual(self.cli("codex", base).returncode, 0)
+
+
+class QuestionFormatTest(unittest.TestCase):
+    """The five-line question, its ID line, and the shapes the gate recognizes; no state directory is touched."""
+
+    def test_question_id_reads_only_the_fourth_line(self):
+        hexid = "0123456789abcdef"
+        self.assertEqual(ddl_gate.question_id("a\nb\nc\nID: R-" + hexid + "\n全文: /x"), ("R", hexid))
+        self.assertEqual(ddl_gate.question_id("a\r\nb\r\nc\r\n確認 ID: G-" + hexid + "\r\n全文: /x"), ("G", hexid))
+        for text in ("ID: R-" + hexid, "a\nb\nID: R-" + hexid + "\nc\nd", "a\nb\nc\nID: R-" + hexid.upper(),
+                     "a\nb\nc\nID: R-" + hexid[:-1], "a\nb\nc\nID: R-" + hexid + " (old)", "a\nb\nc\nID:R-" + hexid,
+                     "a\nb\nc\nID: X-" + hexid, None, 42):
+            with self.subTest(text=text):
+                self.assertIsNone(ddl_gate.question_id(text))
+
+    def op_commit(self, repo="/r/app", message="Fix the gate\n\nBody.\n", files=2):
+        return {"kind": "commit", "repo": repo, "branch": "refs/heads/main", "message": message,
+                "files": [["M", "f{}".format(i)] for i in range(files)]}
+
+    def op_push(self, repo="/r/app", dependent=True):
+        return {"kind": "push", "repo": repo, "remote": "origin", "destination": "refs/heads/main",
+                "commit": None if dependent else "0123456789abcdef0123", "fromCommit": "h" if dependent else None}
+
+    def values(self, language, *ops):
+        return ddl_gate.git_question_values({"language": language, "operations": list(ops)})
+
+    def test_git_lines_are_generated_from_the_operations(self):
+        self.assertEqual(self.values("en", self.op_commit(), self.op_push()), [
+            'Record commit "Fix the gate" (2 files) on main and push it to origin/main?',
+            "Execute it; contents, message and destination are as in the report and diff",
+            "origin/main advances to the new commit; undoing it needs a revert"])
+        self.assertEqual(self.values("en", self.op_commit(files=1)),
+                         ['Record commit "Fix the gate" (1 file) on main?',
+                          "Execute it; contents, message and destination are as in the report and diff",
+                          "main gets a new commit (nothing is pushed)"])
+        self.assertEqual(self.values("en", self.op_push(dependent=False))[0], "Push 0123456 to origin/main?")
+        self.assertEqual(self.values("ja", self.op_push(dependent=False))[0], "0123456 を origin/main に送るか")
+        several = [self.op_commit("/r/app"), self.op_commit("/r/lib"), self.op_push("/r/app"), self.op_push("/r/lib")]
+        self.assertEqual(self.values("ja", *several), [
+            "2 件のコミット（app、lib）を記録し、2 件を送るか",
+            "この内容で実行する。内容・メッセージ・送信先は全文と差分のとおり",
+            "origin/main（app）、origin/main（lib） が新しいコミットに進む。取り消すには revert が要る"])
+        self.assertEqual(self.values("en", *several[:2]), [
+            "Record 2 commits (app, lib)?", "Execute it; contents, message and destination are as in the report and diff",
+            "main (app), main (lib) get new commits (nothing is pushed)"])
+
+    def test_long_subject_is_shortened_within_the_line_limit(self):
+        for language, tail in (("ja", "…」（2 ファイル）を main に記録するか"), ("en", '…" (2 files) on main?')):
+            with self.subTest(language=language):
+                decision = self.values(language, self.op_commit(message="x" * 500 + "\n"))[0]
+                self.assertLessEqual(len(decision), ddl_gate.QUESTION_LINE_LIMIT)
+                self.assertTrue(decision.endswith(tail), decision)
+        self.assertEqual(len(ddl_gate.fit_line("y" * 1000)), ddl_gate.QUESTION_LINE_LIMIT)
+        self.assertEqual(ddl_gate.fit_line("a\nb"), "a b")
+
+    def test_prepared_output_is_parsed_not_searched(self):
+        hexid = "a" * ddl_gate.ID_HEX_LENGTH
+        doc = json.dumps({"reportId": "R-" + hexid, "report": "/x/report.md", "question": "q", "nativeRequest": {}})
+        found = ("R", hexid)
+        for value in (doc, "Chunk ID: 1f\nWall time: 0.1 seconds\nProcess exited with code 0\nOutput:\n" + doc + "\n",
+                      json.dumps({"output": doc + "\n", "metadata": {"exit_code": 0}}), [{"type": "text", "text": doc}]):
+            with self.subTest(value=value):
+                self.assertEqual(ddl_gate.prepared_output(value), found)
+        self.assertEqual(ddl_gate.prepared_output(json.dumps({"reviewId": "G-" + hexid, "nativeRequest": {}})), ("G", hexid))
+        deep = doc
+        for _ in range(ddl_gate.ENVELOPE_DEPTH):
+            deep = json.dumps({"output": deep})
+        for value in ('The gate prints "nativeRequest" and "reportId": "R-' + hexid + '".',
+                      json.dumps({"reportId": "G-" + hexid, "nativeRequest": {}}),
+                      json.dumps({"reportId": "R-" + hexid}), deep, None):
+            with self.subTest(value=value):
+                self.assertIsNone(ddl_gate.prepared_output(value))
+
+    def test_only_the_exact_preparation_call_is_recognized(self):
+        own = os.path.realpath(ddl_gate.__file__)
+        body = "\n{\"language\": \"ja\", \"detail\": \"$(rm x) `rm x`\"}\n"
+        allowed = ["python3 \"$HOME/.claude/hooks/ddl_gate.py\" prepare-report --runtime claude <<'JSON'" + body + "JSON",
+                   "python3 -I \"$CLAUDE_PROJECT_DIR\"/.claude/hooks/ddl_gate.py prepare-git-review --runtime claude <<\"EOF\""
+                   + body + "EOF\n",
+                   "python3 $HOME/.codex/hooks/ddl_gate.py prepare-report --runtime=codex << 'JSON'" + body + "JSON",
+                   "python3 .codex/hooks/ddl_gate.py prepare-report --runtime codex <<'JSON'" + body + "JSON",
+                   "python3 " + shlex.quote(own) + " prepare-report --runtime codex <<'X'" + body + "X",
+                   "python3 '" + own + "' prepare-report --runtime claude <<'JSON'" + body + "JSON"]
+        for command in allowed:
+            with self.subTest(command=command):
+                self.assertTrue(ddl_gate.is_gate_preparation(command))
+        head = "python3 \"$HOME/.claude/hooks/ddl_gate.py\" prepare-report --runtime claude "
+        denied = [head + "<<JSON" + body + "JSON", head + "<<'JSON'" + body + "JSON\nrm x",
+                  head + "<<'JSON'\n{}\nJSON\nrm x\nJSON", head + "<<'JSON'\n{}\n  JSON  \nrm x\nJSON",
+                  head + "<<'JSON' | tee out" + body + "JSON", head + "<<'JSON' > out" + body + "JSON",
+                  head + "<<'JSON'; rm x" + body + "JSON", head + "<<'JSON' && rm x" + body + "JSON",
+                  head + "<<'JSON'" + body + "JSON\r", head.rstrip(), head + "<<'JSON'" + body,
+                  "python3 /tmp/other.py prepare-report --runtime claude <<'JSON'" + body + "JSON",
+                  "python3 ~/.claude/hooks/ddl_gate.py prepare-report --runtime claude <<'JSON'" + body + "JSON",
+                  "python3 \"$HOME/.claude/hooks/ddl_gate.py\" pre-tool-use --runtime claude <<'JSON'" + body + "JSON",
+                  "python3 \"$HOME/.claude/hooks/ddl_gate.py\" prepare-report --runtime gemini <<'JSON'" + body + "JSON",
+                  "python3 -c 'print(1)' prepare-report --runtime claude <<'JSON'" + body + "JSON",
+                  "python3 \"$EVIL/.claude/hooks/ddl_gate.py\" prepare-report --runtime claude <<'JSON'" + body + "JSON",
+                  "/usr/bin/python3 \"$HOME/.claude/hooks/ddl_gate.py\" prepare-report --runtime claude <<'JSON'" + body + "JSON",
+                  None, ["python3"]]
+        for command in denied:
+            with self.subTest(command=command):
+                self.assertFalse(ddl_gate.is_gate_preparation(command))
 
 
 class ProjectScopeTest(GateTest):

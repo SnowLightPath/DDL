@@ -1,0 +1,4 @@
+{"type":"event_msg","payload":{"type":"task_started","turn_id":"turn-fixture"}}
+{"type":"event_msg","payload":{"type":"item_completed","turn_id":"turn-fixture","item":{"type":"UserMessage","id":"prompt-fixture","content":[{"type":"text","text":"$realize the gate"}]}}}
+{"type":"response_item","payload":{"type":"reasoning","summary":[{"type":"summary_text","text":"+++DDL_REPORT\n\n## Realize report\n\nAwaiting approval."}],"content":[{"type":"reasoning_text","text":"+++DDL_REPORT\n\n## Realize report\n\nAwaiting approval."}],"encrypted_content":"fixture-sig"}}
+{"type":"event_msg","payload":{"type":"agent_reasoning","text":"+++DDL_REPORT\n\n## Realize report\n\nAwaiting approval."}}

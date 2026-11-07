@@ -9,7 +9,7 @@ Read once per Claude session, after the entry and before the first command step,
 | Concern | Implementation |
 |---|---|
 | Session start | In context already, never to be read again: the user and project `CLAUDE.md` (or `.claude/CLAUDE.md`) and the automatic memory file; nested `CLAUDE.md` files and path-scoped rules load on demand. |
-| Compaction | The project `CLAUDE.md` and the memory file are re-injected from disk; the SessionStart hook re-states a pending report. |
+| Compaction | The project `CLAUDE.md` and the memory file are re-injected from disk; the SessionStart hook re-states a pending report's ID and file. |
 | Notebook loading | The `@../design.md` import line in `.claude/CLAUDE.md` (`@design.md` from a root `CLAUDE.md`, or the project's other notebook file) loads it with the guidance at start and after compaction; subagents get it unless their definition sets `omitClaudeMd`. |
 | Adapter paths | `.claude/settings.json` (hooks, `env`, `permissions`, `attribution`), `.claude/agents/explorer.md` and `worker.md`, `.claude/hooks/ddl_gate.py`, the import line in `.claude/CLAUDE.md`; `bin/install.sh` mirrors them under `$HOME/.claude/`. |
 | `+++DDL_PHASE` | Should, above all in a long session. |
@@ -27,6 +27,5 @@ Read once per Claude session, after the entry and before the first command step,
 ## Coverage
 
 - Enforced: the import line, the SessionStart re-statement and `disable-model-invocation: true` in command skill frontmatter, under trusted project or user-level settings.
-- Limits: a missing import file is silent.
 - Lookup: the `Skill` tool resolves a skill name to the user-level copy; Phase 0 reads the project copy by path (Observed).
 - Naming: never name a protocol file `claude.md` or `CLAUDE.md`; it would load as a nested instruction file (Observed).

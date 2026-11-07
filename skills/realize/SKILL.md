@@ -126,7 +126,7 @@ Apply steps 1–3 with a SWARM shaped like Phase 2's, team `realize-close`, when
 Decision: record the closed work as the prepared Git review, revise it, or hold.
 Recommendation: the purpose of the change set and why its implementation, design.md, and documentation changes belong in one commit; keep material detections visible.
 Consequence: commit exactly the staged set with the exact message; the push, when the plan named `remote`, is part of the same selected action. A hold or revision records nothing and leaves the Close edits in the working tree for revision.
-Review detail: the prepared review ID and the link to its complete report and diff; the complete file list and scopes; the exact message; a summary of the design.md changes (Experience added, stages and gates retired, Validation updated) and of the documentation changes; every material detection.
+Review detail: the prepared review's report file with the diff, named with its ID in the question; the complete file list and scopes; the exact message; a summary of the design.md changes (Experience added, stages and gates retired, Validation updated) and of the documentation changes; every material detection.
 Choices: use the prepared native question and its exact action labels for one whole-set approval (Git review). Approval of a different file set, message, or push target is not approval of this proposal.
 
 ### Phase 6: RECORD

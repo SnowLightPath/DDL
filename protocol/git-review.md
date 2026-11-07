@@ -26,7 +26,7 @@ Run Git in the shell tool's working directory for the intended repository; read 
 ## Operation
 
 1. **Prepare.** Stage the actual set, write the exact message and include only explicitly requested ready pushes; a batch holds one ready commit per repository and its compatible pushes, each commit before its push; discard no unrelated change. Run the helper (Syntax); staging is reversible preparation, not approval.
-2. **Review.** Emit `+++DDL_REPORT`, show the review ID and link the complete report and diff before the question. Pass the returned native request to the host's choice tool unchanged (exact title and action labels); append no approval word, change no scope. Outcomes: approve the whole compatible set, revise or hold (Exceptions).
+2. **Review.** Emit `+++DDL_REPORT` and the report, then pass the returned native request to the host's choice tool unchanged (exact title and action labels); its five lines carry the review ID and the report file, so the chat report is not evidence. Append no approval word, change no scope. Outcomes: approve the whole compatible set, revise or hold (Exceptions).
 3. **Wait.** Wait for the human submission to that exact request (Approval step 3). Not Git approval: an implementation approval given before the final diff existed, a prior plan, an ordinary STOP release, an assistant's claim of approval or a blanket instruction to commit without review, a timeout, a receipt, a cancellation, an unrelated, later or unreadable answer, a permission mode that suppresses native prompts.
 4. **Keep the reviewed index intact.** One answer covers a ready commit and its push only when the push resolves to the commit with precisely the reviewed parent, tree and verbatim message. Never restage newer contents under the old answer. Resume or compaction invalidates the preparation: prepare again.
 5. **Record.** Run exactly the reviewed Git actions (the `operations` list) in the reviewed order and report the commit hash as progress; emit no new STOP report between an approved commit and its approved push.
@@ -34,7 +34,7 @@ Run Git in the shell tool's working directory for the intended repository; read 
 ## Formats
 
 - Input JSON keys: `language` (the user's language for the report), `operations` (in execution order), each with `cwd` (the repository) and `command` (the literal Git form).
-- Output JSON keys: `reviewId`, `report` (the file to link), `question` (its text), `nativeRequest` (the host's request, passed unchanged).
+- Output JSON keys: `reviewId`, `report` (the report file), `question` (its five lines: Approval Formats, built from the reviewed operations), `nativeRequest` (the host's request, passed unchanged).
 - The review ID `G-<id>`: 16 hexadecimal characters.
 - The review directory `<state dir>/git-reviews/<id>/`: `report.md`, `review.json`, one `<n>.patch` per commit.
 
@@ -71,8 +71,8 @@ The helper's input for one commit and its push; one answer records the commit an
 
 The host's implementation: [{Host}](hosts/{host}/git-review.md), folded into this section in the installed skill. Hook coverage (one script, both hosts):
 
-- Matches request and answer by identifier, compares the complete request (labels, descriptions, selection mode), checks that the report names this review, and compares the real staged contents, base, message and branch; for a push also source commit, resolved remote and destination branch.
+- Matches request and answer by identifier, compares the complete request (labels, descriptions, selection mode), checks that the question carries this review, and compares the real staged contents, base, message and branch; for a push also source commit, resolved remote and destination branch.
 - Denies a recognized unreviewed commit or push, also under no-prompt permission modes where the implementation says so; Git reads keep working, the native permission policy still applies after the content check, and the hook never grants, rewrites or stages a command.
 - Covers recognized calls reaching the hook, not aliases, arbitrary programs, state-changing Git hooks, a concurrent index change or input to an existing process. The review files carry no approval flag: the answer is proved from the current conversation record, and missing or altered detail denies the recognized call.
 - An unprovable review fails closed in a running handler, which verifies within a shorter internal time budget to leave timeout headroom; a host-level failure fails open, like a general STOP failure.
-- An ordinary UserPromptSubmit revokes older preparations at once, even before the transcript flushes; resume and compaction advance the epoch `<session>.git-epoch`. Diagnostics and tests use simulated dispatch (its limit: Approval Implementation).
+- An ordinary UserPromptSubmit revokes older preparations at once, even before the transcript flushes; resume and compaction advance the epoch `<session>.git-epoch`. Diagnostics and tests use simulated dispatch, which proves neither the live choice interface nor the hook's trust.
