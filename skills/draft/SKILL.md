@@ -86,7 +86,7 @@ Following Approval, prepare the draft's report, emit `+++DDL_REPORT` and the rep
 +++Report:
 Decision: save this draft to `design.md`, revise it, or leave it unsaved.
 Recommendation: the proposed experience and why it answers the user's request; keep unresolved conflicts visible.
-Consequence: saving records the approved design; it does not authorize implementation.
+Consequence: saving records the approved design in `design.md` and this approval in the history (Notebook); it does not authorize implementation.
 Review detail: the concrete Experience examples and states; each Binding Decision with reason and source; any Direction, Acceptance Gates, Unbound items, and detections. Include only the sections the draft uses.
 Choices: request one approval for the complete displayed draft through Approval: save all recommended sections, select or revise the draft, or leave it unsaved. Do not request approval again per section or state.
 
@@ -94,7 +94,7 @@ Choices: request one approval for the complete displayed draft through Approval:
 
 **Pre-condition.** Enter this phase only after explicit user approval of its scope at the Phase 3 STOP gate (per Approval). If the actual answer does not authorize this work, return to Phase 3 and re-present the current decision.
 
-1. Save the approved draft to `design.md`: Experience, Binding Decisions, Direction (ending with its Close stage), and Acceptance Gates under their own headings (omit the sections the draft does not use); principles from D5 go to the principles section. A Binding Decision row without quoted words takes Source `approved /draft report (<date>)`
+1. Save the approved draft as Notebook says, into `design.md` and the history: Experience, Binding Decisions, Direction (ending with its Close stage), and Acceptance Gates under their own headings (omit the sections the draft does not use); principles from D5 go to the principles section. A Binding Decision row without quoted words takes Source `approved /draft report (<date>)`
 2. Suggest: "Run `/realize` to implement this experience"
 
 ## Constraints

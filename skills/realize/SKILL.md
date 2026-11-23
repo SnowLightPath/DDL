@@ -110,11 +110,11 @@ On entry, read the Close operation.
 
 Enter this phase only when the approved plan includes the Close stage (approved at the Phase 1 STOP) and every earlier stage's gates are marked passed; a D1, D6, or D7 STOP on the way returns to the phase whose decision is pending. Run the Close stage as Close defines, in order:
 
-1. Reflect: compare the code with design.md; add the Experience the code revealed, check every Binding Decision, replace the Direction stages whose gates are all marked passed (including this work's own stages) with their outcome and delete their `Approved plan` lines, retire Acceptance Gates whose gates are all marked passed after moving continuing mechanical gates into Validation, and correct Scopes and Validation. Write design.md as it will read after the commit; the Git review in Phase 5 is the gate that records it. A Binding Drift is D6: stop as in Phase 2
+1. Reflect (Close step 1; retirement as Notebook says), this work's own stages included; the Git review in Phase 5 is the gate that records the result. A Binding Drift is D6: stop as in Phase 2
 2. Docs: audit and fix the documentation the change set touches
 3. Resonate: align every changed document with its language counterpart, including dated Changelog rows where the project keeps them
 4. Validate: run all validation commands in `design.md` and the mechanical gates in Acceptance Gates again; D7 stops as in Phase 3
-5. Read the Git review operation and its implementation for the current host, stage the whole change set (implementation, design.md, documents), then prepare the Git review for the commit and for the push when the plan names `remote`; a commit precedes its push in the review
+5. Read the Git review operation and its implementation for the current host, stage the whole change set (implementation, design.md and its history, documents), then prepare the Git review for the commit and for the push when the plan names `remote`; a commit precedes its push in the review
 
 Apply steps 1–3 with a SWARM shaped like Phase 2's, team `realize-close`, when 2+ scopes change; the lead performs the comparison, the validation, and the review preparation.
 

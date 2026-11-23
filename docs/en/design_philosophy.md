@@ -40,7 +40,7 @@ Documents connect Human and LLM. Code is written based on them.
 
 However, design issues may be discovered during implementation. When that happens, update the documents.
 
-Ultimately, code becomes the source of truth. DDL documents get integrated into code or docs, and are deleted when no longer needed. No need to be formal about it.
+Ultimately, code becomes the source of truth. DDL documents get integrated into code or docs, and what they no longer need is deleted or moved to a history file. No need to be formal about it.
 
 ## The Loop
 
@@ -107,7 +107,7 @@ Implement code following the documented principles and Binding Decisions. Follow
 
 **Intent:** Update documents based on implementation results.
 
-If you learn something from implementation, update the documents. Check the code against Binding Decisions, and replace finished Direction with what actually happened. In the tool-assisted loop, Reflect runs as the Close stage at the end of Realize, before the single commit that ends the work.
+If you learn something from implementation, update the documents. Check the code against Binding Decisions, and move finished Direction, with what actually happened, to the history file `design-history.md`, so that design.md keeps only the current design. In the tool-assisted loop, Reflect runs as the Close stage at the end of Realize, before the single commit that ends the work.
 
 Sometimes your fingers fly across the keyboard so fast that code outpaces design. In the harness era, they are often the agent's fingers.
 

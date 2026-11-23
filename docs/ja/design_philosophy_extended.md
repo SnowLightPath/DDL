@@ -197,11 +197,12 @@ DDL は人間の側から行うコンテキストエンジニアリングです�
 |----|------|----------|--------|
 | 指示ファイル（`CLAUDE.md`、`AGENTS.md`） | ここでの働き方: プロトコルの探索先、全体の制約、G1–G7 | セッション開始時。Claude Code はコンパクションのあとにプロジェクトのファイルを入れ直す | 人間 |
 | design.md | 人間が合意したこと: Experience、Binding Decisions、Direction、Acceptance Gates、原則、スコープ、検証 | セッション開始時。コンパクションのあとはアダプタが入れ直し（Claude ではプロジェクトの指示ファイルとともに取り込み、Codex では SessionStart の注入）、コンテキストにないときに限りコマンドが Phase 0 で読み直す | ループを通じた人間と LLM |
+| 履歴ファイル（`design-history.md`） | 設計の経緯: 人間の言葉の全文とその確認 ID、退役した段階とゲート、その `Approved plan` の行と結果 | セッション開始時には読み込まない。理由や出どころが要るときに読む | ループを通じた人間と LLM |
 | プロトコルとコマンド | コマンドの動き方。プロトコルは命令セット仕様として書かれ、入口と操作 6 本の二段からなり、導入されたスキルではホストの実装がその中に畳み込まれる。入口は命令セット（ディレクティブの表）と読み込み地図を持つ。各操作は同じ 8 節（読む場面、構文、オペランド、動作、形式、例、例外、実装）を持つ。正本では `hosts/` の実装がホストごとに 4 本あり、Start のための `start.md` と、ホストごとに違いのある操作（approval、parallel-work、git-review）ごとの同じ名前の一本からなる。導入されたスキルは `start.md` を入口の Host 節に、残りの 3 本を同じ名前の操作の Implementation 節に畳み込む。コマンドはスキルであり、Claude では `.claude/skills/<name>/SKILL.md`、Codex では `.agents/skills/<name>/SKILL.md` にある | コマンドは呼び出されたとき、Phase 0 で `ddl-protocol` の入口を読み、各操作はその動作の直前に一本ずつ読む。どちらのファイルもホストの実装を中に持つ。コンパクションのあとにコンテキストから消えた内容は読み直す。両実行環境でプロジェクトの写しがあればそれを、なければ利用者レベルの写し（`$HOME/.claude/skills/`、`$HOME/.codex/skills/`）を使う。`tools/build.py` はホストに中立な一本の正本の木から両ホストのレイアウトを生成し、各ホストが受け取るプロトコルの木（入口と操作であり、そのホストの実装を畳み込んだもの）もその生成物に含まれる。コマンドはプロトコルを参照し、決して複製しない | 方法論 |
 | ワーカーのプロンプト | 一つのスコープのパス、そのスコープが担う Experience の項目、原則、Binding Decisions、Direction の段階、スコープの検証コマンド、そのフェーズで人間が承認した行（逐語）、`/realize` では承認された計画 | リードが並列に割り振るとき。ワーカーはプロンプトが名指しするファイルと design.md の節だけを読む | design.md から組み立てるリード |
 | 自動メモリ、コンパクションの要約、進捗ファイル | エージェントの作業状態 | ハーネスによって | エージェント。決して決定の出どころにはならない |
 
-ここから三つの帰結が導かれます。第一に、節を退役させるとコンテキストの予算を節約できます。使い終えた Direction や受け入れられた Acceptance Gates を退役させれば、以後のセッションはその内容をコンテキストに載せずに済みます。この意味で、「DDL のドキュメントは一時的である」はコンテキストの規則でもあります。第二に、会話は永続しません。コンパクションの要約はユーザーの発言ではなく、何も承認しません。STOP が承認を求めた報告がコンテキストに逐語で残っていなければ、コマンドはそれを design.md と git とその報告が挙げたファイルから組み立て直して改めて承認を求めます。要約のあとに与えられた承認はその要約のあとに出された報告にだけ適用されます。再起動で中断された STOP は再開されず、コマンドは止まったフェーズからやり直し、ゲートが `passed` と記された段階は飛ばします。人間が承認したものは何であれその場で書き留められます（下書きは design.md へ、通ったゲートはその印へ、委任された選択は表へ、事前承認はそのゲートへ、承認された計画は Direction へ）。第三に、記憶は合意ではありません。自動メモリにしか存在しない決定は design.md が記録するまで提案にとどまります。
+ここから三つの帰結が導かれます。第一に、節を退役させるとコンテキストの予算を節約できます。使い終えた Direction や受け入れられた Acceptance Gates を履歴ファイルへ退役させれば、以後のセッションはその内容をコンテキストに載せずに済み、design.md にはいまの設計だけが現在形で残ります。この意味で、「DDL のドキュメントは一時的である」はコンテキストの規則でもあります。第二に、会話は永続しません。コンパクションの要約はユーザーの発言ではなく、何も承認しません。STOP が承認を求めた報告がコンテキストに逐語で残っていなければ、コマンドはそれを design.md と git とその報告が挙げたファイルから組み立て直して改めて承認を求めます。要約のあとに与えられた承認はその要約のあとに出された報告にだけ適用されます。再起動で中断された STOP は再開されず、コマンドは止まったフェーズからやり直し、ゲートが `passed` と記された段階は飛ばします。人間が承認したものは何であれその場で書き留められます（下書きは design.md へ、通ったゲートはその印へ、委任された選択は表へ、事前承認はそのゲートへ、承認された計画は Direction へ）。第三に、記憶は合意ではありません。自動メモリにしか存在しない決定は design.md が記録するまで提案にとどまります。
 
 #### 指示と仕組み
 
@@ -329,8 +330,8 @@ Reflect を支える観点は次のとおりです。
 | NEW_PATTERN | 文書化されていないパターンが見つかった | 原則として加える |
 | OUTDATED | 実装のない原則 | 削除するか、実装する |
 | BINDING_DRIFT | コードが Binding Decision から外れている | 人間が選ぶ: コードを直すか、決定を変える |
-| SPENT_DIRECTION | Direction の段階が `passed` と記されている | 結果で置き換えて `Approved plan` の行を消し、すべての段階が終わったら節を消す |
-| SPENT_ACCEPTANCE | すべての Acceptance Gate が `passed` と記され、作業が受け入れられている | 長く残る検査を Validation に移し、節を消す |
+| SPENT_DIRECTION | Direction の段階が `passed` と記されている | `Approved plan` の行と結果とともに履歴ファイルへ退役させ、すべての段階が終わったら節を消す |
+| SPENT_ACCEPTANCE | すべての Acceptance Gate が `passed` と記され、作業が受け入れられている | 長く残る検査を Validation に移し、節を履歴ファイルへ退役させる |
 | EXPERIENCE_GAP | Experience が記述していない状態をコードが扱っている、または Experience の項目をコードが実現していない | その状態を Experience に加えるか、コードにその項目を実現させる |
 
 これらの分類は、より広い Detection Targets の体系（§3.4）の部分集合です。
@@ -355,7 +356,7 @@ Detection Targets はコマンドの各フェーズの中で並列に走る自�
 | G6 | Silent Failure | エラーがユーザーへの通知なく握りつぶされている |
 | G7 | Unreviewed Mutation | 共有の成果物が STOP ゲートなしに変更されている |
 
-例: `/reflect` は独自のターゲット（D1 Drift, D2 New Pattern, D3 Outdated Principle, D4 Stale Reference, D5 Self-Contradiction, D6 Binding Drift, D7 Spent Direction, D8 Spent Acceptance Gates, D9 Experience Gap）を定義しつつ、全体のターゲットにも従います。`/draft` は D6 Unanchored Binding（理由か出どころのどちらかを欠く Binding Decision）と D7 Binding Conflict を加え、`/realize` は D6 Binding Violation と D7 Validation Failure を加えます。
+例: `/reflect` は独自のターゲット（D1 Drift, D2 New Pattern, D3 Outdated Principle, D4 Stale Reference, D5 Self-Contradiction, D6 Binding Drift, D7 Spent Direction, D8 Spent Acceptance Gates, D9 Experience Gap, D10 Past Kept）を定義しつつ、全体のターゲットにも従います。`/draft` は D6 Unanchored Binding（理由か出どころのどちらかを欠く Binding Decision）と D7 Binding Conflict を加え、`/realize` は D6 Binding Violation と D7 Validation Failure を加えます。
 
 ### 3.5 STOP ゲート
 
@@ -629,7 +630,7 @@ Human: [送信] 表示中の計画を承認。
 
 **Reflect:**
 
-人間が Node の実行環境を選んだので、Binding Decisions はコードと一致しています。すべての段階に `passed` の印が付いたら、Reflect は二つの提案をまとめます。（1）終わった Direction を結果に置き換えて使い終えた `Approved plan` の行を削除し、（2）実装中に足した停止ボタンを Experience に書き加えます。人間は表示中の案を一度に承認するか、両立する一部を選ぶか修正するか、保留します。承認された変更は節ごとに止まり直さずに適用し、履歴はバージョン管理に残ります。
+人間が Node の実行環境を選んだので、Binding Decisions はコードと一致しています。すべての段階に `passed` の印が付いたら、Reflect は二つの提案をまとめます。（1）終わった Direction を結果と使い終えた `Approved plan` の行とともに履歴ファイル `design-history.md` へ退役させ、（2）実装中に足した停止ボタンを Experience に書き加えます。人間は表示中の案を一度に承認するか、両立する一部を選ぶか修正するか、保留します。承認された変更は節ごとに止まり直さずに適用し、退役した内容は履歴ファイルに残ります。
 
 
 ## §5 採用の基準
@@ -725,12 +726,11 @@ design.md は必須ではありません。人間と LLM のあいだに*何ら�
 ## Core Principles
 ## Validation
 ## Open Questions
-## Changelog
 ```
 
 </details>
 
-> あくまで出発点です。合わなければ捨ててください。Experience を先に書き、Binding Decisions、Direction、Acceptance Gates は任意です。Scopes と Validation はコマンドが読む節で、並列の割り振りと検査に使います。
+> あくまで出発点です。合わなければ捨ててください。Experience を先に書き、Binding Decisions、Direction、Acceptance Gates は任意です。Scopes と Validation はコマンドが読む節で、並列の割り振りと検査に使います。design.md はいまの設計だけを持つので変更履歴の節は置かず、過ぎたことは隣の `design-history.md` に書きます。
 
 ### 選択肢3: ワークフローへの統合
 チーム開発向けの選択肢として PR のチェックリストに Reflect を組み込めます。
@@ -801,8 +801,9 @@ session:
 | 名前 | 目的 | 永続性 |
 |------|------|--------|
 | design.md | 設計哲学、概念の定義 | 一時的 |
-| Direction（design.md 内） | 実装に至る道筋の見通し | 最も一時的: すべての段階が終わったとき、`Approved plan` 行とともに削除される |
-| Acceptance Gates（design.md 内） | 完了の定義 | すべてのゲートが `passed` と記されたとき（作業が受け入れられたとき）に削除される。長く残る検査は先に Validation に移す |
+| Direction（design.md 内） | 実装に至る道筋の見通し | 最も一時的: ゲートがすべて通った段階は `Approved plan` の行と結果とともに履歴ファイルへ退役し、すべての段階が終わると節が削除される |
+| Acceptance Gates（design.md 内） | 完了の定義 | すべてのゲートが `passed` と記されたとき（作業が受け入れられたとき）に履歴ファイルへ退役する。長く残る検査は先に Validation に移す |
+| design-history.md | 設計の経緯: 人間の言葉とその確認 ID、退役した段階とゲートとその結果 | 追記のみで、セッション開始時には読み込まない。退役させるものがある最初の Close で作られ、どのコマンドもこのファイルを必須としない |
 | docs/adr/ | 設計決定の記録 | 永続的 |
 | src/ | 具現化されたコード | 永続的 |
 
@@ -810,7 +811,7 @@ session:
 Creation -> Use -> Integration -> Deletion
 ```
 
-DDL のドキュメントが長期にわたって残っているのは、設計がまだ安定していない証拠です。
+履歴ファイルを除けば、DDL のドキュメントが長期にわたって残っているのは設計がまだ安定していない証拠です。
 
 統合のパターンは次のとおりです。
 - コードのコメントに吸収する

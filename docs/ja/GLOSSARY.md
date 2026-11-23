@@ -66,11 +66,13 @@
 | approval / approve | 承認 / 承認する |  |  |
 | advance approval / approved in advance | 事前承認 / `approved in advance` |  | 印としての英字はそのまま |
 | passed mark / marked passed | `passed` の印 / `passed` と記された | passed の記録 |  |
-| retire（節を） | 退役させる | 片づける | 節を design.md から外すこと。「削除する」とも訳さない |
+| retire（節を） | 退役させる | 片づける | 節や通った段階を design.md から外し、その結果とともに履歴ファイルへ移すこと。「削除する」とも訳さない |
 | durable | 永続する |  | 「会話は永続しない」。「残る」と意訳しない |
 | artifact / shared artifact | 成果物 / 共有の成果物 | アーティファクト |  |
-| design.md | design.md |  | 手帳の名前。どの実行環境でも同じ |
+| design.md | design.md |  | ノートの名前。どの実行環境でも同じ |
 | notebook / shared notebook / Otto's notebook | ノート / 共有ノート / Otto のノート |  |  |
+| history file（ノートの） | 履歴ファイル |  | `design-history.md`。ノートの隣に置く追記のみのファイルで、セッション開始時には読み込まず、理由や出どころが要るときに読む。本文では「履歴」一語にせず「履歴ファイル」と書き、Changelog の「変更履歴」と区別する |
+| present tense | 現在形 |  | design.md はいまの設計だけを現在形で持ち、過ぎたことは履歴ファイルが持つ |
 | shared memory | 共有記憶 |  |  |
 | living document / living spec | 生きた文書 / 生きた仕様 |  |  |
 | temporary notes | 一時的なメモ |  |  |

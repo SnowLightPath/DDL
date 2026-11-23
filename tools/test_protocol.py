@@ -7,7 +7,7 @@ generates for each host (one file per action: the implementations folded into th
 section and the operations' Implementation sections, linked by fragment) and over the source
 protocol with its {host} placeholders rendered and its hosts/<host>/ files beside it. The
 structure checks run against a minimal conforming source tree (skills/, protocol/, hosts/) and
-fifteen mutations of it (negative tests), so each check is shown to fail on the unit it counts.
+seventeen mutations of it (negative tests), so each check is shown to fail on the unit it counts.
 Installation checks build dist/ in a fixture repository and exercise the installer with disposable
 homes and projects; they do not claim that either host loaded a skill, trusted a hook or displayed
 a native UI.
@@ -347,7 +347,8 @@ REFERENCE_FIXTURES = {
         title="The shared notebook", syntax=None,
         operands=(("Section", "Holds", "Written by", "Read by"),
                   [(f"`{s}`", "content", "/draft", "every command") for s in check_ddl.OPERANDS_ROWS["notebook"]]),
-        operation=["Binding Decisions.", "Direction.", "Acceptance Gates.", "Passed marks.", "Aligned checks."],
+        operation=["Binding Decisions.", "Direction.", "Acceptance Gates.", "Passed marks.", "Aligned checks.",
+                   "History."],
         example="```markdown\n" + md_table(("Stage", "Work (parallel lanes)", "Human sees", "Gate"),
                                            [("S0", "work", "diff", "approval")]) + "\n```",
         implementation="Loading is the host's part: " + implementation_links("start")),
@@ -709,6 +710,22 @@ class ProtocolTest(unittest.TestCase):
         self.mutate(bundle / "notebook.md", "- `passed <date>`\n", "")
         with mock.patch.object(check_ddl, "ROOT", self.repo):
             self.assert_check(check_ddl.check_protocol(), "P4", "/realize writes 'passed <date>'")
+
+    def test_p4_rejects_missing_history_entry_format(self):
+        bundle = write_protocol_fixture(self.repo)
+        self.mutate(bundle / "notebook.md", "- `## <date> <R-<id> | Close>`\n", "")
+        with mock.patch.object(check_ddl, "ROOT", self.repo):
+            errors = check_ddl.check_protocol()
+            self.assert_check(errors, "P4", "notebook.md: Formats must contain '## <date> <R-<id> | Close>'")
+            self.assertEqual(len([e for e in errors if e.startswith("P4:")]), 1, errors)
+
+    def test_p4_rejects_missing_no_history_file_exception(self):
+        bundle = write_protocol_fixture(self.repo)
+        self.mutate(bundle / "notebook.md", "| no history file | Behavior. |\n", "")
+        with mock.patch.object(check_ddl, "ROOT", self.repo):
+            errors = check_ddl.check_protocol()
+            self.assert_check(errors, "P4", "notebook.md: Exceptions needs a row whose first cell mentions 'no history file'")
+            self.assertEqual(len([e for e in errors if e.startswith("P4:")]), 1, errors)
 
     def test_p2_rejects_missing_schema_heading(self):
         bundle = write_protocol_fixture(self.repo)

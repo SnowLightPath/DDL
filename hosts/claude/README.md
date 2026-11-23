@@ -26,7 +26,7 @@ Open Claude in the project, complete its folder-trust prompt when shown, and des
 /draft Search with a Retry button
 ```
 
-Review the draft before saving it. Use `/realize` when you are ready to review an implementation plan; it ends with the Close stage, which reflects the result into the design, brings the documents up to date, validates, and asks for one Git review before committing. `/reflect` remains available on its own.
+Review the draft before saving it. Use `/realize` when you are ready to review an implementation plan; it ends with the Close stage, which reflects the result into the design, moves the finished stages with their outcome to the history file `design-history.md`, brings the documents up to date, validates, and asks for one Git review before committing. `/reflect` remains available on its own.
 
 ## Commands
 
@@ -49,7 +49,7 @@ The hook acts only in a DDL project: one whose instruction file (`CLAUDE.md`, `.
 
 ## Before recording or sending changes
 
-The agent shows the final staged diff, exact commit message, and any requested push destination in one Git review. Approve the ready set once through the native choices. A ready commit and its push share that approval; files and languages do not get separate questions. Before that review, the Close stage brings `design.md` and the documents up to date, so the commit is the last step and no command follows it.
+The agent shows the final staged diff, exact commit message, and any requested push destination in one Git review. Approve the ready set once through the native choices. A ready commit and its push share that approval; files and languages do not get separate questions. Before that review, the Close stage brings `design.md`, its history file, and the documents up to date, so the commit is the last step and no command follows it.
 
 The hook independently checks the actual contents and submitted choice before ordinary `git commit` and `git push` calls. A general reply or an earlier implementation approval supplies no Git permission. Changed contents, message, destination, or an unprovable answer stop the Git action. Git reads remain available. A native permission policy that shows no command prompt does not skip this content check. Inside a DDL project the hook itself asks natively before the reviewed push; DDL installs no separate `git push` permission rule, and the hook's behavior under modes that bypass permissions is unverified.
 
@@ -114,7 +114,7 @@ dist/claude/.claude/              → a project's .claude/
         │                         and Host, folded from hosts/claude/start.md
         ├── approval.md           a STOP report or human gate: present, ask, wait, resume; Implementation folded from hosts/claude/approval.md
         ├── parallel-work.md      a +++SWARM of two or more units: roles, prompts, fallback; Implementation folded from hosts/claude/parallel-work.md
-        ├── notebook.md           reading and writing design.md: sections, marks, retirement
+        ├── notebook.md           reading and writing design.md and its history: sections, marks, retirement
         ├── close.md              the Close stage: reflect, docs, resonate, validate, one Git review
         ├── git-review.md         the content review before any ordinary commit or push; Implementation folded from hosts/claude/git-review.md
         └── command-authoring.md  writing a command: grammar, checks, the template (Example)

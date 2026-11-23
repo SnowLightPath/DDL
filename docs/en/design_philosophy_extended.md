@@ -197,11 +197,12 @@ DDL is context engineering done from the human's side. The question "what should
 |-------|---------|--------|-------|
 | Instruction file (`CLAUDE.md`, `AGENTS.md`) | How to work here: protocol lookup, global constraints, G1–G7 | Session start; Claude Code re-injects the project file after compaction | Human |
 | design.md | What the human agreed to: Experience, Binding Decisions, Direction, Acceptance Gates, principles, scopes, validation | Session start; the adapter re-injects it after compaction (the import with the project instruction file in Claude, the SessionStart injection in Codex), and a command re-reads it in Phase 0 only when it is not in context | Human and LLM, through the loop |
+| History file (`design-history.md`) | How the design got here: the human's words in full with their confirmation IDs, and the retired stages and gates with their `Approved plan` lines and outcome | Not at session start; read when a reason or a source is needed | Human and LLM, through the loop |
 | Protocol and command | How a command runs. The protocol is written as an instruction-set reference in two tiers: the entry and six operations; the host's implementations are folded into them in the installed skill. The entry holds the instruction set (the table of directives) and a reading map. Each operation has the same eight sections (read when, syntax, operands, operation, formats, example, exceptions, implementation). In the source each host has four implementations under `hosts/`: `start.md` for Start and one for each operation with host-specific differences (approval, parallel-work, git-review), named after that operation; the installed skill folds `start.md` into the entry's Host section and the other three into the Implementation section of the operation of the same name. A command is a skill: `.claude/skills/<name>/SKILL.md` in Claude, `.agents/skills/<name>/SKILL.md` in Codex | When the command is invoked, it reads the `ddl-protocol` entry in Phase 0 and one operation before each action, each file carrying the host's implementation inside it; after compaction, it reloads what is no longer in context. Both runtimes use the project copy or else the user-level copy (`$HOME/.claude/skills/`, `$HOME/.codex/skills/`); `tools/build.py` generates both layouts from one host-neutral source tree, and the protocol tree each host receives (the entry and the operations, with that host's implementations folded in) is part of that output. Commands reference the protocol and never copy it | Methodology |
 | Worker prompt | One scope's paths, the Experience items it serves, the principles, the Binding Decisions, the Direction stage, the scope's validation commands, the rows the human approved for the phase (verbatim), and in `/realize` the approved plan | When the lead fans out; the worker reads only the files and design.md sections the prompt names | Lead, from design.md |
 | Automatic memory, compaction summaries, progress files | The agent's working state | By the harness | Agent; never a source of decisions |
 
-Three consequences follow. First, the budget: every section the loop retires (a spent Direction, accepted Acceptance Gates) is context that no later session pays for, so "DDL documents are temporary" is also a context rule. Second, the conversation is not durable: a compaction summary is not a user message and approves nothing. When the report a STOP asked about is no longer in context verbatim, the command rebuilds it from design.md, git, and the files it described and asks again; an approval given after a summary applies only to a report emitted after that summary, and a STOP that a restart interrupted is not resumed: the command runs again from the phase that stopped, skipping the stages whose gates are marked `passed`. Whatever the human approves is written down at once (the draft to design.md, a passed gate to its mark, a delegated choice to the table, an advance approval to its gate, the approved plan to Direction). Third, memory is not agreement: a decision that exists only in automatic memory is a proposal until design.md records it.
+Three consequences follow. First, the budget: every section the loop retires to the history file (a spent Direction, accepted Acceptance Gates) is context that no later session pays for, and design.md keeps only the current design, written in the present tense, so "DDL documents are temporary" is also a context rule. Second, the conversation is not durable: a compaction summary is not a user message and approves nothing. When the report a STOP asked about is no longer in context verbatim, the command rebuilds it from design.md, git, and the files it described and asks again; an approval given after a summary applies only to a report emitted after that summary, and a STOP that a restart interrupted is not resumed: the command runs again from the phase that stopped, skipping the stages whose gates are marked `passed`. Whatever the human approves is written down at once (the draft to design.md, a passed gate to its mark, a delegated choice to the table, an advance approval to its gate, the approved plan to Direction). Third, memory is not agreement: a decision that exists only in automatic memory is a proposal until design.md records it.
 
 #### Instructions and Mechanisms
 
@@ -329,8 +330,8 @@ Perspectives to support Reflect:
 | NEW_PATTERN | Undocumented pattern found | Add as principle |
 | OUTDATED | Principle without implementation | Delete or implement |
 | BINDING_DRIFT | Code departs from a Binding Decision | The human chooses: fix the code, or change the decision |
-| SPENT_DIRECTION | Direction stages are marked `passed` | Replace them with the outcome and delete their `Approved plan` lines; delete the section when every stage is done |
-| SPENT_ACCEPTANCE | Every Acceptance Gate is marked `passed`, so the work is accepted | Move lasting checks into Validation; delete the section |
+| SPENT_DIRECTION | Direction stages are marked `passed` | Retire them to the history file with their `Approved plan` lines and their outcome; delete the section when every stage is done |
+| SPENT_ACCEPTANCE | Every Acceptance Gate is marked `passed`, so the work is accepted | Move lasting checks into Validation; retire the section to the history file |
 | EXPERIENCE_GAP | Code handles a state Experience does not describe, or does not deliver an Experience item | Add the state to Experience, or make the code deliver the item |
 
 These categories are a subset of the broader Detection Targets system (§3.4).
@@ -355,7 +356,7 @@ Each command defines its own D-targets (D1, D2, …) specific to its purpose. Cr
 | G6 | Silent Failure | Error swallowed without user notification |
 | G7 | Unreviewed Mutation | Shared artifact changed without STOP gate |
 
-Example: `/reflect` defines its own targets (D1 Drift, D2 New Pattern, D3 Outdated Principle, D4 Stale Reference, D5 Self-Contradiction, D6 Binding Drift, D7 Spent Direction, D8 Spent Acceptance Gates, D9 Experience Gap) while also being subject to global targets. `/draft` adds D6 Unanchored Binding (a Binding Decision without a reason or a source) and D7 Binding Conflict; `/realize` adds D6 Binding Violation and D7 Validation Failure.
+Example: `/reflect` defines its own targets (D1 Drift, D2 New Pattern, D3 Outdated Principle, D4 Stale Reference, D5 Self-Contradiction, D6 Binding Drift, D7 Spent Direction, D8 Spent Acceptance Gates, D9 Experience Gap, D10 Past Kept) while also being subject to global targets. `/draft` adds D6 Unanchored Binding (a Binding Decision without a reason or a source) and D7 Binding Conflict; `/realize` adds D6 Binding Violation and D7 Validation Failure.
 
 ### 3.5 STOP Gates
 
@@ -629,7 +630,7 @@ Human: [submits] Approve the displayed plan.
 
 **Reflect:**
 
-The human chose a Node runtime, so Binding Decisions match the code. Once every stage is marked `passed`, Reflect recommends one review batch: (1) replace finished Direction with its outcome and delete the spent `Approved plan` lines, and (2) add the stop button introduced during implementation to Experience. The human approves the displayed batch once, selects a compatible subset or revises it, or holds it; approved changes are then applied without another pause per section. Version control keeps the history.
+The human chose a Node runtime, so Binding Decisions match the code. Once every stage is marked `passed`, Reflect recommends one review batch: (1) retire finished Direction to the history file `design-history.md`, with its outcome and the spent `Approved plan` lines, and (2) add the stop button introduced during implementation to Experience. The human approves the displayed batch once, selects a compatible subset or revises it, or holds it; approved changes are then applied without another pause per section. The history file keeps what was retired.
 
 
 ## §5 Adoption Criteria
@@ -725,12 +726,11 @@ No tools, discipline only. Most lightweight. Recommended as starting point.
 ## Core Principles
 ## Validation
 ## Open Questions
-## Changelog
 ```
 
 </details>
 
-> Just a starting point. Discard if it doesn't fit. Experience comes first; Binding Decisions, Direction, and Acceptance Gates are optional. Scopes and Validation are what the commands read for fan-out and checks.
+> Just a starting point. Discard if it doesn't fit. Experience comes first; Binding Decisions, Direction, and Acceptance Gates are optional. Scopes and Validation are what the commands read for fan-out and checks. There is no changelog section: design.md holds the current design, and what is past goes to `design-history.md` beside it.
 
 ### Option 3: Workflow Integration
 Incorporate Reflect into PR checklists. For team development.
@@ -801,8 +801,9 @@ Enables automated verification and session continuity tracking. However, if tool
 | Name | Purpose | Persistence |
 |------|---------|-------------|
 | design.md | Design philosophy, concept definitions | Temporary |
-| Direction (in design.md) | Outlook on the path to implementation | Most temporary: deleted, with its `Approved plan` lines, when every stage is done |
-| Acceptance Gates (in design.md) | Definition of done | Deleted once every gate is marked `passed` (the work is accepted); lasting checks move to Validation first |
+| Direction (in design.md) | Outlook on the path to implementation | Most temporary: stages whose gates all passed retire to the history file with their `Approved plan` lines and outcome, and the section is deleted when every stage is done |
+| Acceptance Gates (in design.md) | Definition of done | Retired to the history file once every gate is marked `passed` (the work is accepted); lasting checks move to Validation first |
+| design-history.md | How the design got here: the human's words with their confirmation IDs, and the retired stages and gates with their outcome | Append-only and not loaded at session start; created at the first Close that retires something, and no command requires it |
 | docs/adr/ | Design decision records | Permanent |
 | src/ | Manifested code | Permanent |
 
@@ -810,7 +811,7 @@ Enables automated verification and session continuity tracking. However, if tool
 Creation -> Use -> Integration -> Deletion
 ```
 
-DDL documents persisting long-term is evidence that design isn't stable yet.
+Apart from the history file, DDL documents persisting long-term is evidence that design isn't stable yet.
 
 Integration patterns:
 - Absorb into code comments

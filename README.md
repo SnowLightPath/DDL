@@ -26,7 +26,7 @@ Open your project in the **Codex GUI** or Claude and describe the experience you
 | **Draft** | Describe how the result should feel and behave | A design to review before saving |
 | **Realize** | Review the proposed implementation plan | Working code and verification results |
 | **Reflect** | Compare the implementation with the design | Proposed updates to keep them aligned |
-| **Close** | Approve one Git review of the final diff | design.md and documents reflected, one commit, nothing left to do |
+| **Close** | Approve one Git review of the final diff | design.md and documents reflected, finished stages moved to `design-history.md`, one commit, nothing left to do |
 
 > [!NOTE]
 > **Codex GUI is the primary experience.** Codex CLI 0.166.0 Default cannot collect approval through its asynchronous selector after the turn ends.

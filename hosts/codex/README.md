@@ -30,7 +30,7 @@ If `AGENTS.md` already exists, merge the DDL guidance rather than overwriting it
 $draft Search with a Retry button
 ```
 
-Review the draft before saving it. Use `$realize` when you are ready to review an implementation plan; it ends with the Close stage, which reflects the result into the design, brings the documents up to date, validates, and asks for one Git review before committing. `$reflect` remains available on its own. Start with `$draft` rather than creating an empty `design.md`.
+Review the draft before saving it. Use `$realize` when you are ready to review an implementation plan; it ends with the Close stage, which reflects the result into the design, moves the finished stages with their outcome to the history file `design-history.md`, brings the documents up to date, validates, and asks for one Git review before committing. `$reflect` remains available on its own. Start with `$draft` rather than creating an empty `design.md`.
 
 ## Skills
 
@@ -53,7 +53,7 @@ The hook acts only in a DDL project: one whose instruction file (`AGENTS.md`, `C
 
 ## Before recording or sending changes
 
-The agent shows the final staged diff, exact commit message, and any requested push destination in one Git review. Approve the ready set once through the native choices. A ready commit and its push share that approval; files and languages do not get separate questions. Before that review, the Close stage brings `design.md` and the documents up to date, so the commit is the last step and no skill follows it.
+The agent shows the final staged diff, exact commit message, and any requested push destination in one Git review. Approve the ready set once through the native choices. A ready commit and its push share that approval; files and languages do not get separate questions. Before that review, the Close stage brings `design.md`, its history file, and the documents up to date, so the commit is the last step and no skill follows it.
 
 The hook independently checks the actual contents and submitted choice before ordinary `git commit` and `git push` calls. A general reply or an earlier implementation approval supplies no Git permission. Changed contents, message, destination, or an unprovable answer stop the Git action. Git reads remain available. A native permission policy that shows no command prompt does not skip this content check.
 
@@ -144,7 +144,7 @@ dist/codex/                       → a project's root
         ├── agents/openai.yaml    read in Phase 0, never invoked
         ├── approval.md           a STOP report or human gate: present, ask, wait, resume; Implementation folded from hosts/codex/approval.md
         ├── parallel-work.md      a +++SWARM of two or more units: roles, prompts, fallback; Implementation folded from hosts/codex/parallel-work.md
-        ├── notebook.md           reading and writing design.md: sections, marks, retirement
+        ├── notebook.md           reading and writing design.md and its history: sections, marks, retirement
         ├── close.md              the Close stage: reflect, docs, resonate, validate, one Git review
         ├── git-review.md         the content review before any ordinary commit or push; Implementation folded from hosts/codex/git-review.md
         └── command-authoring.md  writing a skill: grammar, checks, the template (Example)

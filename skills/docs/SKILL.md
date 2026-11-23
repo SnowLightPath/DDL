@@ -26,7 +26,7 @@ A command run from a user-level install follows the project's own copy when one 
 2. Read the project's guidance file when it is not already in context (the host loads `AGENTS.md` for Codex, and `CLAUDE.md` or `.claude/CLAUDE.md` for Claude Code, at session start), and any applicable command overlay.
 3. Read `design.md` when it is not already in context — extract scopes, and documentation paths when design.md lists them
 4. If no `design.md` exists → treat the repository as one scope
-5. Discover all documentation files (`.md`, `.txt`, etc.)
+5. Discover all documentation files (`.md`, `.txt`, etc.), leaving out the notebook's history file
 6. If a path is given, audit only that path and the scopes it covers
 
 When a STOP needs a decision, read the Approval operation and its implementation for the current host before presenting the decision. When a SWARM fires, read the Parallel work operation and its implementation before fan-out.

@@ -61,8 +61,9 @@ Lead integrates results and performs cross-scope analysis:
    - **Code drifted** — implementation violates a principle or a Binding Decision, or does not deliver an Experience item
    - **Philosophy outdated** — code shows better approach
    - **New pattern** — code introduced something `design.md` doesn't cover
-   - **Direction spent** — stages whose gates are all marked passed; replace them with the outcome, delete the `Approved plan` lines that served them, and delete the section when every stage is done (quote the removed stages in the REPORT when design.md is not under version control)
-   - **Acceptance Gates spent** — every gate is marked passed, so the work was accepted; move gates that should keep running into Validation, then delete the section (quote it in the REPORT when design.md is not under version control)
+   - **Direction spent** — stages whose gates are all marked passed; retire them to the history with the `Approved plan` lines that served them (Notebook)
+   - **Acceptance Gates spent** — every gate is marked passed, so the work was accepted; move gates that should keep running into Validation, then retire the section to the history (Notebook)
+   - **Past kept** — a dated event, a finished stage's outcome, or a measurement of a past run that design.md still holds outside the lines, marks and cells Notebook Formats define; move it to the history (Notebook)
 6. If the project keeps its own headings for these sections (for example `Stack` or `Execution plan`), propose one mapping onto Notebook; never force a rename
 
 +++DETECT:
@@ -75,6 +76,7 @@ Lead integrates results and performs cross-scope analysis:
   D7: Spent Direction — Direction lists a stage whose gates are all marked passed, or the section remains after every stage is done
   D8: Spent Acceptance Gates — every gate in Acceptance Gates is marked passed and the section remains
   D9: Experience Gap — code handles a state Experience does not describe, or does not deliver an Experience item
+  D10: Past Kept — design.md holds a dated event, a finished stage's outcome, or a measurement of a past run outside the lines, marks and cells that Notebook Formats define
 
 ### Phase 3: REPORT
 
@@ -86,7 +88,7 @@ Do NOT modify `design.md` without approval. Only the user resolves a Binding Dri
 Decision: apply all current compatible recommendations, select or revise the set, or leave it pending.
 Recommendation: a concise overall reason, then numbered actions with stable IDs, each naming the affected principle, Binding Decision, Direction stage, or section as its `Target` and its material effect.
 Consequence: approve all applies the displayed ready set; subset approval applies only the selected IDs. A Binding Drift still requires an explicit action naming code correction or Binding Decision change, never a silent resolution.
-Review detail: each stable proposal ID, type, target, finding and supporting file/line evidence; any required quotations of removed Direction or Acceptance Gates.
+Review detail: each stable proposal ID, type, target, finding and supporting file/line evidence; what each retirement moves to the history.
 Choices: request one batch approval through Approval; open item selection only when requested, with no per-recommendation reapproval after approve all. With no findings, state that no change needs approval and stop.
 
 ### Phase 4: APPLY

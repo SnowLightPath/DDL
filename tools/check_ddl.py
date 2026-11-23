@@ -103,7 +103,8 @@ FORMATS = {
     "notebook": ("| Decision | Why it binds | Source |",
                  "Unbound: <topic> — options A / B (delegated to /realize | awaiting choice)",
                  "| Stage | Work (parallel lanes) | Human sees | Gate |", "Approved plan (<date>)", "passed <date>",
-                 "approved in advance (<date>)", "approved in /realize plan (<date>)", "approved /draft report (<date>)"),
+                 "approved in advance (<date>)", "approved in /realize plan (<date>)", "approved /draft report (<date>)",
+                 "design-history.md", "## <date> <R-<id> | Close>"),
     "command-authoring": ("### Phase N: NAME", "+++DETECT:", "D1: name — trigger", "+++STOP: always",
                           "+++STOP: on D<n>", "**Pre-condition.**", "+++Report:", *REPORT_LABELS, "+++NEVER:",
                           "+++DDL_PHASE: <PhaseName>", "+++DDL_REPORT"),
@@ -123,7 +124,7 @@ EXCEPTIONS = {
     "parallel-work": ("0 units", "1 unit", "up to max", "batch: auto", "batch: none", "dependent", "STOP", "failed",
                       "no primitive", "argument"),
     "notebook": ("existing heading", "existing code", "automatic memory", "argument", "output format", "delegated",
-                 "no reason", "not version controlled", "other notebook file"),
+                 "no reason", "no history file", "other notebook file"),
     "command-authoring": ("project copy", "overlay", "no notebook", "missing file", "tool name",
                           "domain phase name", "read-only report"),
 }
@@ -143,7 +144,7 @@ BUDGET_PATHS = (
     ("validate", 20000, ("SKILL.md", "approval.md")),
     ("draft", 29000, ("notebook.md",)),
     ("realize-plan", 38000, ("parallel-work.md",)),
-    ("realize-close", 52000, ("close.md", "git-review.md")),
+    ("realize-close", 52500, ("close.md", "git-review.md")),
 )
 EXECUTION_LIMIT = 62000
 AUTHOR_ONLY = ("command-authoring",)  # operations read by authors only: outside the execution total

@@ -2,7 +2,7 @@
 
 ## Read when
 
-Read before a command reads or writes a notebook section, records a decision, a plan or a gate mark, or retires stages and gates; the command supplies the section name and the mark it writes; the notebook is `design.md` unless the project's guidance names another file.
+Read before a command reads or writes a notebook section, records a decision, a plan or a gate mark, or retires stages and gates; the command supplies the section name and the mark it writes.
 
 ## Syntax
 
@@ -10,7 +10,7 @@ None.
 
 ## Operands
 
-Commands address sections by heading name; a project uses only those it needs and may keep others. The notebook holds only what the human agreed to; Experience comes first, and Binding Decisions, Direction and Acceptance Gates serve it, never contradict it.
+Commands address sections by heading name; a project uses only those it needs and may keep others. The notebook holds only what the human agreed to, as the current design (step 6); Experience comes first, and Binding Decisions, Direction and Acceptance Gates serve it, never contradict it.
 
 | Section | Holds | Written by | Read by |
 |---|---|---|---|
@@ -34,20 +34,23 @@ Close ([Close](close.md)) writes wherever `/reflect` writes, the same way.
    - State a delegated choice in the `/realize` plan; on plan approval move the line into the table with its Source (Formats).
 2. **Direction:** A table of stages (Formats).
    - Non-binding: `/realize` follows it by default and reports every deviation (merged, reordered or skipped stage).
-   - On plan approval, `/realize` writes the `Approved plan` line (Formats); a later or compacted session rebuilds worker prompts from it, not from a summary; `/reflect` deletes it with its stages.
+   - On plan approval, `/realize` writes the `Approved plan` line (Formats); a later or compacted session rebuilds worker prompts from it, not from a summary; it retires with its stages.
    - Gates run at the end of their stage: a mechanical gate is a validation command, a human gate a `+++STOP` batched with the other ready gates ([Approval](approval.md)). None is dropped: a merged or reordered stage keeps its gates at its end; a skipped stage's move to the end of the next stage or of the work.
-   - Every Direction ends with a stage named `Close` ([Close](close.md)): reflect, docs, resonate, validate and the Git review of the whole change set, its gate. `/draft` writes it last (missing: Close Exceptions).
-   - `/reflect`, or Close, replaces stages whose gates are all marked passed with their outcome and deletes the section when every stage is done; history stays in version control (else Exceptions).
-   - Direction is the notebook's most temporary part; retiring it, like Acceptance Gates, shrinks what later sessions load.
+   - Every Direction ends with the `Close` row ([Close](close.md) Syntax); `/draft` writes it last (missing: Close Exceptions).
+   - `/reflect`, or Close, retires stages whose gates are all marked passed (step 6) and deletes the section when every stage is done.
 3. **Acceptance Gates:** A list of conditions for done (Formats).
    - `/realize` runs the mechanical gates in VALIDATE; `/validate` runs them with the Validation block.
    - Human gates: at the end of the work, step 2's `+++STOP` and step 4's marks.
    - Accepted when every gate is marked passed; `/reflect`, or Close, then retires the section, first moving mechanical gates that keep running to Validation.
 4. **Passed marks:** A gate passes when its command gives the expected result or the human approves it, at the gate or in advance ([Approval](approval.md)). The marks (Formats) record progress and acceptance: `/reflect` reads them and never infers a pass from conversation memory.
 5. **Aligned check references:** When the approved `/realize` plan moves a validation target or reference, align Scopes and Validation before that stage's check, keeping its purpose, expected result and coverage, and show the old and new mapping in the change set; no gate, Binding Decision or Experience item changes, and a real failure still stops the work.
+6. **History:** The history file (Formats) is append-only; no session loads it at start, read it when a reason or a source is needed.
+   - `/draft` weaves the approved draft into the matching sections in the present tense and appends the human's words in full with the report ID.
+   - Retiring moves the passed stages and gates, their `Approved plan` line and their outcome into one entry.
 
 ## Formats
 
+- Files: the notebook `design.md` and its history `design-history.md` beside it.
 - Binding Decisions header: `| Decision | Why it binds | Source |`; `| Decision | Scope | Why it binds | Source |` when scopes bind different technologies.
 - Source cell: the human's dated quoted words, `approved /draft report (<date>)` for a row approved with a report, or `approved in /realize plan (<date>)` for a delegated choice.
 - Unbound line, under the table: `Unbound: <topic> — options A / B (delegated to /realize | awaiting choice)`.
@@ -56,6 +59,7 @@ Close ([Close](close.md)) writes wherever `/reflect` writes, the same way.
 - Pass mark: `passed <date>`, in the stage's Gate cell for Direction and after the gate for Acceptance Gates.
 - Advance approval, same place, written the moment the user names the gate: `approved in advance (<date>)`, then `passed <date>` when the stage or work ends.
 - Acceptance Gates lines: a mechanical gate `- <command> → <expected result>` (result when exit code alone does not decide); a human gate `- human: <what is reviewed>`.
+- History entry: `## <date> <R-<id> | Close>`, then the human's words in full or the retired rows, lines and outcome.
 - Validation block, one entry per check:
 
   ```
@@ -78,6 +82,8 @@ Under `## Direction`, as it reads after `/realize` passed stage S1 (2026-10-21):
 Approved plan (2026-10-20): files `cli/search.ts`, `app/search/**`; approach: CLI first, then the three states as three lanes; Unbound choices made: Language → TypeScript
 ```
 
+At Close, S0, S1 and the plan line move to `design-history.md` under `## 2026-10-21 Close`.
+
 ## Exceptions
 
 | Situation | Behavior |
@@ -89,8 +95,8 @@ Approved plan (2026-10-20): files `cli/search.ts`, `app/search/**`; approach: CL
 | The deliverable is a document or slides (`output format`) | The output format is the Binding Decision |
 | The human `delegated` a choice | `Unbound:` line (Formats), then Operation step 1 |
 | A technology is named with `no reason` | Ask once; without an answer, `Unbound: … (awaiting choice)` |
-| The notebook is `not version controlled` | `/reflect` quotes the removed stages and gates in its REPORT |
-| The project's guidance names an `other notebook file` | Read and write it wherever this protocol or a command says `design.md`, by the same section rules |
+| The project has `no history file` | `/draft` appends nothing; create it at the first retirement; no command requires one |
+| The project's guidance names an `other notebook file` or history file | Read and write it wherever this protocol or a command names the default (Formats), by the same rules |
 
 ## Implementation
 

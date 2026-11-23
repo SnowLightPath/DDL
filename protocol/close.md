@@ -23,11 +23,11 @@ The last row of Direction (writer: Notebook):
 
 Run Close after the last implementation stage's gates are marked passed, in this order:
 
-1. **Reflect:** Compare the code with design.md as `/reflect` does in COMPARE: add the Experience the code revealed; check every Binding Decision; retire the Direction stages and Acceptance Gates whose gates are all passed, with their `Approved plan` lines (Notebook); correct Scopes and Validation entries that no longer match the repository. Write design.md as it will read after the commit. A Binding Drift stops here (the command's Binding detection) for the user to resolve.
+1. **Reflect:** Compare the code with design.md as `/reflect` does in COMPARE: add the Experience the code revealed; check every Binding Decision; retire what passed into the history (Notebook step 6); correct Scopes and Validation entries that no longer match the repository. Write design.md and the history as they will read after the commit. A Binding Drift stops here (the command's Binding detection) for the user to resolve.
 2. **Docs:** Audit the documentation the change set touches as `/docs` does (stale versions, references, sections, examples, names) and fix it.
 3. **Resonate:** Align every changed document with its language counterpart as `/resonate` does, dated Changelog rows included where the project keeps them.
 4. **Validate:** Run the Validation block and the mechanical Acceptance Gates after the Close edits; a failure stops (the command's validation detection).
-5. **Git review:** Stage the whole change set (implementation, design.md, documents); prepare the review for the commit and, only with `remote` (Formats), the push after it; show its report with a summary of the design.md and documentation changes; its question names the report file, which holds the full diff. One native submission records, and when named sends, the set in one commit; no command chain follows.
+5. **Git review:** Stage the whole change set (implementation, design.md, its history, documents); prepare the review for the commit and, only with `remote` (Formats), the push after it; show its report with a summary of the design.md and documentation changes; its question names the report file, which holds the full diff. One native submission records, and when named sends, the set in one commit; no command chain follows.
 
 ## Formats
 
@@ -43,7 +43,7 @@ The final report of `/realize` after the commit:
 ```
 +++DDL_REPORT
 Outcome: recorded 4f2c9e1 on feature/search-states: the three screen states,
-the S0–S1 outcomes in design.md, the README section "States".
+the S0–S1 outcomes in design-history.md, the README section "States".
 Consequence: none; the branch holds the reviewed set, unpushed.
 Review detail: every Binding Decision honored; S0 and S1 retired with their
 Approved plan lines; `npm test` passed; no detection fired. Nothing remains.
