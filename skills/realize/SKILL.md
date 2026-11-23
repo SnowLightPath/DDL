@@ -29,7 +29,7 @@ A command run from a user-level install follows the project's own copy when one 
 
 Read the Notebook operation for the section rules.
 
-When a STOP needs a decision, read the Approval operation and its implementation for the current host before presenting the decision. When a SWARM fires, read the Parallel work operation and its implementation before fan-out.
+When a STOP needs a decision, read the Approval operation and its implementation for the current host before presenting the decision. When a SWARM fires, read the Parallel work operation and its implementation before fan-out. Before the Phase 1 plan, read the Run operation.
 
 ### Phase 1: READ
 
@@ -50,7 +50,7 @@ When a STOP needs a decision, read the Approval operation and its implementation
 
 +++STOP: always
 
-Lead with the decision to implement the complete proposed plan, the recommended approach and reason, and what approval authorizes (Approval). Make the files to touch, principles applied, how each Binding Decision is honored, the Direction stage to start from and any planned deviation, and the gates to pass available as review detail before approval. For each `Unbound:` line marked delegated, state the choice and its reason. Group lines awaiting choice into compatible complete plan options, or leave the unresolved portion pending; do not start a serial approval sequence. An argument that names a technology different from a Binding Decision on the same topic is shown as a separately identified Binding Decision change with the D6 options; approving the plan does not approve that change unless the user explicitly selects an action naming it. Request one batch approval to implement all displayed recommendations, select or revise the plan, or hold. After approval, do not ask again per file, task, or resolved choice; later STOPs still apply. Wait for actual approval before entering Phase 2 through Approval Operation steps 2 and 3 (Ask; Wait and resume); request receipt never authorizes implementation. The plan ends with the Close stage (Close): when Direction lacks one, add it as the final stage, and state the commit and, when the user asked for it, the `remote` push that its Git review will cover.
+Lead with the decision to implement the complete proposed plan, the recommended approach and reason, and what approval authorizes (Approval). Make the files to touch, principles applied, how each Binding Decision is honored, the Direction stage to start from and any planned deviation, and the gates to pass available as review detail before approval. For each `Unbound:` line marked delegated, state the choice and its reason. State the grant the plan asks for (Run): its scope, budget and expiry, and pass it to the report's preparation. Group lines awaiting choice into compatible complete plan options, or leave the unresolved portion pending; do not start a serial approval sequence. An argument that names a technology different from a Binding Decision on the same topic is shown as a separately identified Binding Decision change with the D6 options; approving the plan does not approve that change unless the user explicitly selects an action naming it. Request one batch approval to implement all displayed recommendations, select or revise the plan, or hold. After approval, do not ask again per file, task, or resolved choice; later STOPs still apply. Wait for actual approval before entering Phase 2 through Approval Operation steps 2 and 3 (Ask; Wait and resume); request receipt never authorizes implementation. The plan ends with the Close stage (Close): when Direction lacks one, add it as the final stage, and state the commit and, when the user asked for it, the `remote` push that its Git review will cover.
 
 ### Phase 2: IMPLEMENT
 
@@ -58,7 +58,7 @@ Lead with the decision to implement the complete proposed plan, the recommended 
 
 For planned equivalent alignment of Scopes or Validation before a stage gate, follow Notebook.
 
-On first entry, move into `## Binding Decisions` only the delegated `Unbound:` lines whose choice the approved plan stated and the lines the user picked, with Source `approved in /realize plan (<date>)`; write the plan's durable parts under `## Direction` as `Approved plan (<date>)` (Notebook), including the Close stage when the plan added it. Whenever the user approves gates in advance, at the plan or at a later STOP, write `approved in advance (<date>)` after each such gate at once (Notebook).
+On first entry, move into `## Binding Decisions` only the delegated `Unbound:` lines whose choice the approved plan stated and the lines the user picked, with Source `approved in /realize plan (<date>)`; write the plan's durable parts under `## Direction` as `Approved plan (<date>)` (Notebook), including the Close stage when the plan added it. Then start the Run (Run) with one item per lane or stage of the plan, each with its kind, owner files and dependencies; keep each item's status current until Phase 7. Whenever the user approves gates in advance, at the plan or at a later STOP, write `approved in advance (<date>)` after each such gate at once (Notebook).
 
 +++SWARM: 2+ independent scopes or Direction lanes need changes
 
@@ -155,7 +155,7 @@ Choices: use the prepared native question and its exact action labels for one wh
 Outcome: the commit (and push) that closed the work, what now works, and either that nothing remains or what was left with its reason (for example a Binding Drift awaiting the user's choice).
 Recommendation: none after a Close; name a next command only when work this command cannot do itself remains, with the reason (Approval).
 Consequence: this report asks for no approval; a named leftover starts its own workflow only when the user chooses it.
-Review detail: implemented files/scopes and key decisions; Binding Decisions honored or explicitly changed; Direction stages and deviations; mechanical results and actual human gates passed; advance-approved gates and what each would have shown; the Close changes recorded; detections and their resolution. Distinguish native checks from simulated checks and unverified behavior.
+Review detail: implemented files/scopes and key decisions; Binding Decisions honored or explicitly changed; Direction stages and deviations; mechanical results and actual human gates passed; advance-approved gates and what each would have shown; the Close changes recorded; detections and their resolution; the Run's count lines (Run Formats). Distinguish native checks from simulated checks and unverified behavior.
 Choices: none; state that no approval is needed and end the turn.
 
 ## Constraints

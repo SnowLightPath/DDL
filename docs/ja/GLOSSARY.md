@@ -98,8 +98,9 @@
 | tier（protocol の木の二段） | 段 |  | 「二段からなる」。Direction の stage は「段階」 |
 | entry（protocol の入口。`SKILL.md`） | 入口 | エントリ | 命令セット（十の命令の表）と読み込み地図を持つ。読み込み地図は操作、読む場面、実装の 3 列であり、導入されたスキルでは実装の列が操作の Implementation 節か入口の Host 節を指す |
 | reading map | 読み込み地図 | 読み込みマップ |  |
-| operation（protocol の操作。入口の隣の 6 本） | 操作 | 参照資料、例の資料 | approval.md、parallel-work.md、notebook.md、close.md、git-review.md、command-authoring.md。各操作は短い例を一つ持ち、別の例集は無い。節の名前 Operation（動作）とは区別する。Git の action や「外に出る操作」のような一般の「操作」は文脈で区別し、protocol の 6 本を指すときだけ「操作」を節やファイルの種類の名前として使う |
+| operation（protocol の操作。入口の隣の 7 本） | 操作 | 参照資料、例の資料 | approval.md、parallel-work.md、notebook.md、close.md、git-review.md、run.md、command-authoring.md。各操作は短い例を一つ持ち、別の例集は無い。節の名前 Operation（動作）とは区別する。Git の action や「外に出る操作」のような一般の「操作」は文脈で区別し、protocol の 7 本を指すときだけ「操作」を節やファイルの種類の名前として使う |
 | command authoring（操作の名） | コマンド作成 |  | 「コマンド作成の操作」。コマンドのテンプレートはその Example にある |
+| Run（操作の名。承認された計画一つ分の作業も指す） | Run |  | 英字のまま書く。操作を指すときは「Run の操作」、作業を指すときは「セッションまたは Run」のように書く。動詞の run（コマンドを走らせる）とは区別する |
 | command template | コマンドのテンプレート | 雛形 | command-authoring.md の Example にある |
 | Read when / Read before（操作と実装の節） | 読む場面 |  | 操作と実装の 1 番目の節。読み込み地図の 2 列目。節を指すときは Read when と英字で書く |
 | syntax | 構文 |  | 操作の節 Syntax |
@@ -111,8 +112,8 @@
 | Exceptions（操作の節） | 例外 |  | 動作が決めない状況と振る舞いの対 |
 | boundary（一般の境界） | 境界 | 境界線 | 入力の境界など。操作の節は Exceptions（例外） |
 | Implementation（操作の節） | 実装 |  | 操作の 8 番目の節。導入されたスキルではホストの実装（Mapping、Observed、Coverage）がここに畳み込まれる。`hosts/` の実装（ファイル）とは文脈で区別する |
-| `hosts/`（protocol の実装を置くディレクトリ） | `hosts/` |  | ディレクトリ名は英字のまま。正本にだけあり、導入されたプロトコルには無い。中の 8 本は次の行の「実装」 |
-| implementation（`hosts/` の 8 本） | 実装 | 実行環境の資料、ホスト資料 | `hosts/claude/` と `hosts/codex/` の八つ。ホストごとに 4 本であり、導入されたプロトコルに `hosts/` は無く、自分のホストの 4 本を入口と操作に畳み込んで持つ。`start.md` は入口の Host 節に、`approval.md`、`parallel-work.md`、`git-review.md` は同じ名前の操作の Implementation 節に入る。Read when、Mapping、Observed、Coverage を持つ。節の名前の近くでは「`hosts/` の実装」と書く。`hosts/` は英字のまま。旧称 host file、runtime file は使わない |
+| `hosts/`（protocol の実装を置くディレクトリ） | `hosts/` |  | ディレクトリ名は英字のまま。正本にだけあり、導入されたプロトコルには無い。中の 10 本は次の行の「実装」 |
+| implementation（`hosts/` の 10 本） | 実装 | 実行環境の資料、ホスト資料 | `hosts/claude/` と `hosts/codex/` の 10 本。ホストごとに 5 本であり、導入されたプロトコルに `hosts/` は無く、自分のホストの 5 本を入口と操作に畳み込んで持つ。`start.md` は入口の Host 節に、`approval.md`、`parallel-work.md`、`git-review.md`、`run.md` は同じ名前の操作の Implementation 節に入る。Read when、Mapping、Observed、Coverage を持つ。節の名前の近くでは「`hosts/` の実装」と書く。`hosts/` は英字のまま。旧称 host file、runtime file は使わない |
 | the host's `start.md` | ホストの `start.md` |  | 正本では Phase 0 で入口とともに読む実装。導入されたスキルでは入口の Host 節に畳み込まれる。「起動資料」とは訳さない |
 | Host（入口の節） | Host |  | 導入されたスキルの入口にある節。ホストの `start.md` を畳み込んだもの。節を指すときは英字のまま、内容を述べるときは「ホストの実装」 |
 | fold / folded | 畳み込む / 畳み込まれた |  | 導入時にホストの実装を入口の Host 節と操作の Implementation 節に入れること。「統合する」「取り込む」とは訳さない |
@@ -164,6 +165,8 @@
 | typed message | 入力されたメッセージ |  | 質問への回答ではなく、人間が書いて送った発言 |
 | thinking block / signed thinking block | 思考ブロック |  | Claude の記録の thinking。signed は訳さない（帰属表記の行で使わない訳に当たるため）。ゲートは読まない |
 | reasoning item（Codex の記録） | 推論の項目 |  | Codex の記録の reasoning。ゲートは読まない |
+| count lines（ゲートの `report` が出力する 4 行。`Questions` line、`Waiting` line など） | 数の行（`問い` の行、`待ち` の行など） |  | ラベルは英語で `Questions`、`Waiting`、`Denials`、`Grant`、日本語で `問い`、`待ち`、`拒否`、`許諾`。ラベルはゲートが出力するとおりに書き、本文の question は「質問」のままにする。サブコマンドの `report` は英字のままコード体で書き、「報告」とは訳さない |
+| not measured | `未計測` |  | 数の行のうち導き出せない値。推定した値では置き換えない。コード体で書く |
 | check（照らし合わせる） | 照らす / 確かめる |  | 名詞の checks は「検査」 |
 | validation / Validation | 検証 / Validation |  | 節の名前は英字のまま |
 | verbatim | 逐語で / そのまま |  |  |

@@ -5,13 +5,16 @@ Unit tests import the module (shell allowlist, tool classification, the Claude h
 the record readers). End-to-end tests run the hook as a subprocess with `python3 -I`, a private
 state directory, and the hand-written transcript fixtures under tools/fixtures/. Every project the
 gate is expected to act in is a disposable directory carrying an instruction file with the
-`→ DDL-PROTOCOL` line, never this repository's own files.
+`→ DDL-PROTOCOL` line, never this repository's own files. The grant store is a disposable directory
+too, and the suite leaves this repository's tree as its working directory before any gate runs: the
+gate's subcommands take their project, and so their `.ddl/` ledger, from the working directory.
 
 Usage:
   python3 tools/test_ddl_gate.py
   python3 -I tools/test_ddl_gate.py
 """
 import atexit
+import datetime
 import hashlib
 import json
 import os
@@ -22,6 +25,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -110,6 +114,42 @@ PROJECT = pathlib.Path(tempfile.mkdtemp(prefix="ddl-gate-project-"))
 atexit.register(shutil.rmtree, str(PROJECT), True)
 (PROJECT / ".git").mkdir()
 mark_project(PROJECT)
+# No test may write a grant into the real home or a ledger into this repository, whatever environment or
+# working directory it builds for a gate process: both defaults point at disposable directories.
+GRANTS = tempfile.mkdtemp(prefix="ddl-gate-grants-")
+atexit.register(shutil.rmtree, GRANTS, True)
+os.environ["DDL_GATE_GRANT_DIR"] = GRANTS
+os.chdir(str(PROJECT))
+
+
+def grant(**changes):
+    """A valid grant whose expiry lies a month ahead; `changes` replace whole fields."""
+    expires = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=9))) + datetime.timedelta(days=30)
+    data = {"paths": ["skills/**", "protocol/**"], "commands": ["build", "test", "check"], "machines": [],
+            "handover": [], "budget": {"minutes": 360, "fixAttempts": 3},
+            "expires": expires.replace(microsecond=0).isoformat()}
+    data.update(changes)
+    return data
+
+
+def project_key(root):
+    """The grant store's name for the project rooted at `root`."""
+    return hashlib.sha256(os.path.realpath(str(root)).encode("utf-8")).hexdigest()[:16]
+
+
+ISO_UTC = r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$"  # every time the gate writes
+
+
+def events(root, **match):
+    """The ledger lines of the project at `root` whose fields equal `match`."""
+    path = pathlib.Path(root) / ".ddl" / "events.jsonl"
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()] if path.is_file() else []
+    return [row for row in rows if all(row.get(key) == value for key, value in match.items())]
+
+
+def untimed(rows):
+    """Ledger lines without their `ts`, for comparing everything else exactly."""
+    return [{key: value for key, value in row.items() if key != "ts"} for row in rows]
 
 
 def payload(runtime, event="pre-tool-use", transcript=None, session="sess", cwd=None, **extra):
@@ -526,16 +566,26 @@ class GateTest(unittest.TestCase):
         self.tmp = tempfile.mkdtemp(prefix="ddl-gate-e2e-")
         self.addCleanup(shutil.rmtree, self.tmp, True)
         self.state = os.path.join(self.tmp, "state")
+        self.grants = os.path.join(self.tmp, "grants")
 
-    def run_gate(self, event, runtime, data, argv=None):
+    def gate_env(self):
+        return dict(getattr(self, "git_env", os.environ), DDL_GATE_STATE_DIR=self.state, DDL_GATE_GRANT_DIR=self.grants)
+
+    def run_gate(self, event, runtime, data, argv=None, cwd=None):
         stdin = data if isinstance(data, str) else json.dumps(data)
-        env = dict(getattr(self, "git_env", os.environ), DDL_GATE_STATE_DIR=self.state)
         if argv is None:
             argv = [event, "--runtime", runtime]
-        proc = subprocess.run([sys.executable, "-I", GATE] + argv, input=stdin, capture_output=True, text=True, env=env)
+        proc = subprocess.run([sys.executable, "-I", GATE] + argv, input=stdin, capture_output=True, text=True,
+                              env=self.gate_env(), cwd=str(cwd or PROJECT))
         self.assertEqual(proc.returncode, 0, proc.stderr)
         self.assertEqual(proc.stderr, "")
         return proc
+
+    def subcommand(self, argv, data=None, cwd=None):
+        """A subcommand that may fail: the finished process, whatever its exit status."""
+        stdin = data if isinstance(data, str) or data is None else json.dumps(data)
+        return subprocess.run([sys.executable, "-I", GATE] + argv, input=stdin, capture_output=True, encoding="utf-8",
+                              env=self.gate_env(), cwd=str(cwd or PROJECT))
 
     def assert_allowed(self, proc):
         self.assertEqual(proc.stdout, "")
@@ -557,13 +607,13 @@ class GateTest(unittest.TestCase):
         self.assertEqual(list(out), ["systemMessage"])
         return out["systemMessage"]
 
-    def prepare_report(self, runtime, **fields):
+    def prepare_report(self, runtime, cwd=None, **fields):
         data = {"language": "ja", "decision": "README と docs の 3 件の修正を作業ツリーに入れるか",
                 "recommendation": "すべて承認。R1 は版数を 0.7.0 に、R2・R3 はリンクの修正",
                 "consequence": "3 ファイルが変わる（未コミット）",
                 "detail": "## Realize report\n\n- R1 版数\n- R2 リンク\n- R3 リンク\n"}
         data.update(fields)
-        return json.loads(self.run_gate(None, None, data, argv=["prepare-report", "--runtime", runtime]).stdout)
+        return json.loads(self.run_gate(None, None, data, argv=["prepare-report", "--runtime", runtime], cwd=cwd).stdout)
 
     def context(self, proc):
         out = json.loads(proc.stdout)["hookSpecificOutput"]
@@ -792,7 +842,7 @@ class AdapterDispatchTest(GateTest):
         self.root.mkdir()
         self.home = pathlib.Path(self.tmp) / "home"
         self.home.mkdir()
-        self.env = dict(os.environ, DDL_GATE_STATE_DIR=self.state, HOME=str(self.home),
+        self.env = dict(os.environ, DDL_GATE_STATE_DIR=self.state, DDL_GATE_GRANT_DIR=self.grants, HOME=str(self.home),
                         CLAUDE_PROJECT_DIR=str(self.root), GIT_CONFIG_NOSYSTEM="1",
                         GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_SYSTEM=os.devnull)
         proc = subprocess.run(["git", "init", "-q", str(self.root)], capture_output=True, text=True, env=self.env)
@@ -1511,6 +1561,10 @@ class GitReviewTest(GateTest):
         for mode in ("default", "acceptEdits", "bypassPermissions", "dontAsk"):
             with self.subTest(mode=mode):  # the hook asks in every mode; what the host does with it is its own
                 self.pushed("claude", self.check("claude", "git push origin main", permission_mode=mode))
+        self.assertEqual(untimed(events(self.repo, kind="ask"))[0], {
+            "v": 1, "host": "claude", "session": "sess", "kind": "ask", "rule": "git-review", "tool": "Bash",
+            "toolUseId": "toolu_01"})
+        self.assertEqual(events(self.repo, kind="granted"), [])  # a Git review is no grant
         self.assertIn("DDL Git review", self.blocked(self.check("claude", "git push origin main:refs/heads/other")))
 
     def test_push_rejects_commit_created_with_different_message_or_tree(self):
@@ -1569,7 +1623,7 @@ class GitReviewTest(GateTest):
         self.git("add", "-N", "intent.txt")
         proc = subprocess.run([sys.executable, "-I", GATE, "prepare-git-review", "--runtime", "codex"],
                               input=json.dumps({"operations": [{"cwd": str(self.repo), "command": self.command}]}),
-                              capture_output=True, text=True, env=dict(self.git_env, DDL_GATE_STATE_DIR=self.state))
+                              capture_output=True, text=True, env=self.gate_env(), cwd=str(PROJECT))
         self.assertEqual(proc.returncode, 2)
         self.assertIn("intent-to-add", proc.stderr)
 
@@ -1688,10 +1742,10 @@ class GitReviewTest(GateTest):
         self.assertEqual(directory.stat().st_mode & 0o777, 0o700)
 
     def test_cli_preparation_errors_are_nonzero_and_never_approval(self):
-        env = dict(os.environ, DDL_GATE_STATE_DIR=self.state)
         for data in ({"operations": []}, {"operations": [{"cwd": str(self.repo), "command": "git commit -m x"}]}):
             proc = subprocess.run([sys.executable, "-I", GATE, "prepare-git-review", "--runtime", "codex"],
-                                  input=json.dumps(data), capture_output=True, text=True, env=env)
+                                  input=json.dumps(data), capture_output=True, text=True, env=self.gate_env(),
+                                  cwd=str(PROJECT))
             self.assertEqual(proc.returncode, 2)
             self.assertIn("DDL Git review", proc.stderr)
 
@@ -1708,14 +1762,17 @@ READS = {"claude": [("Read", {"file_path": "design.md"}), ("Bash", {"command": "
 SHELL = {"claude": ("Bash", "command"), "codex": ("exec_command", "cmd")}
 
 
-class ReportStopTest(GateTest):
-    """A decision report proved from its prepared question, with the report text recorded only as thinking."""
+def option_label(prepared, index=0):
+    option = prepared["nativeRequest"]["questions"][0]["options"][index]
+    return option["label"] if isinstance(option, dict) else option
 
-    def flow(self, runtime, prepared, stage, answer=0, desktop=False):
+
+class ReportFlowTest(GateTest):
+    """Builds the report_flow transcript of a prepared report; the classes below share it."""
+
+    def flow(self, runtime, prepared, stage, answer=0, desktop=False, mutate=None):
         """The report_flow transcript cut after `stage`: prepared, asked, or answered (option `answer`)."""
-        question = prepared["question"]
-        option = prepared["nativeRequest"]["questions"][0]["options"][answer]
-        label = option["label"] if isinstance(option, dict) else option
+        question, label = prepared["question"], option_label(prepared, answer)
         replacements = {"@PREPARE_COMMAND@": PREPARE_CALL[runtime],
                         "@PREPARE_ARGS_JSON@": json.dumps({"cmd": PREPARE_CALL[runtime]}),
                         "@PREPARED_JSON@": json.dumps(prepared), "@REQUEST@": prepared["nativeRequest"],
@@ -1724,17 +1781,23 @@ class ReportStopTest(GateTest):
         rows = template_rows("report_flow_" + runtime + ".jsonl", replacements)[:FLOW_STAGES[runtime][stage]]
         if desktop:
             rows = codex_desktop_preparation(rows, prepared)
+        if mutate:
+            mutate(rows)
         path = os.path.join(self.tmp, "{}-{}.jsonl".format(runtime, stage))
         write_rows(path, rows)
         return path
 
-    def call(self, runtime, transcript, tool, tool_input, session="sess"):
+    def call(self, runtime, transcript, tool, tool_input, session="sess", **extra):
         return self.run_gate("pre-tool-use", runtime, payload(runtime, transcript=transcript, session=session,
-                                                              tool_name=tool, tool_input=tool_input))
+                                                              tool_name=tool, tool_input=tool_input, **extra))
 
     def scan(self, runtime, transcript):
         with mock.patch.dict(os.environ, {"DDL_GATE_STATE_DIR": self.state}):
             return (ddl_gate.scan_codex if runtime == "codex" else ddl_gate.scan_claude)(transcript)
+
+
+class ReportStopTest(ReportFlowTest):
+    """A decision report proved from its prepared question, with the report text recorded only as thinking."""
 
     def test_prepared_report_holds_writes_until_its_question_is_answered(self):
         for runtime in ("claude", "codex"):
@@ -1887,10 +1950,8 @@ class PrepareReportTest(GateTest):
     BASE = {"language": "ja", "decision": "R1–R3 を作業ツリーに入れるか", "recommendation": "すべて承認",
             "consequence": "3 ファイルが変わる", "detail": "## Report\n"}
 
-    def cli(self, runtime, data):
-        stdin = data if isinstance(data, str) else json.dumps(data)
-        return subprocess.run([sys.executable, "-I", GATE, "prepare-report", "--runtime", runtime], input=stdin,
-                              capture_output=True, text=True, env=dict(os.environ, DDL_GATE_STATE_DIR=self.state))
+    def cli(self, runtime, data, cwd=None):
+        return self.subcommand(["prepare-report", "--runtime", runtime], data, cwd)
 
     def test_output_shape_and_files(self):
         detail = "## Realize report\n\n| ID | 内容 |\n|---|---|\n| R1 | 版数 |\n"
@@ -1954,6 +2015,1502 @@ class PrepareReportTest(GateTest):
                 self.assertTrue(proc.stderr.startswith("DDL STOP: "), proc.stderr)
         self.assertFalse((pathlib.Path(self.state) / "reports").exists())
         self.assertEqual(self.cli("codex", base).returncode, 0)
+
+
+GRANT_LINE = {"ja": "許諾: 編集 2 範囲、命令 build・test・check、マシンなし、360 分、直し 3 回、期限 {}",
+              "en": "Grant: edit 2 scopes; commands build, test, check; no machines; 360 minutes; 3 fix attempts; expires {}"}
+GRANT_BLOCK = {"ja": "```\n範囲: skills/**、protocol/**。命令 build・test・check。マシン なし。引き継ぎ なし\n"
+                     "予算: 360 分。失敗した検査ごとの直し 3 回\n期限: {}\n```",
+               "en": "```\nScope: skills/**, protocol/**; commands build, test, check; machines none; handed over none\n"
+                     "Budget: 360 minutes; 3 fix attempts per failing check\nExpiry: {}\n```"}
+
+
+class GrantReportTest(GateTest):
+    """prepare-report with a grant: validated, hashed with the project key, and rendered by the gate."""
+
+    def cli(self, runtime, data, cwd=None):
+        return self.subcommand(["prepare-report", "--runtime", runtime], data, cwd)
+
+    def stored(self, prepared):
+        return json.loads((pathlib.Path(prepared["report"]).parent / "report.json").read_text(encoding="utf-8"))
+
+    def test_grant_is_stored_hashed_and_rendered(self):
+        given, detail = grant(), "## Plan\n\n- P1 the gate\n"
+        for runtime, language in (("claude", "ja"), ("codex", "en")):
+            with self.subTest(runtime=runtime):
+                out = self.prepare_report(runtime, language=language, detail=detail, grant=given)
+                plain = self.prepare_report(runtime, language=language, detail=detail)
+                self.assertEqual(set(out), {"reportId", "report", "question", "nativeRequest"})  # the output keeps its keys
+                lines, five = out["question"].split("\n"), plain["question"].split("\n")
+                self.assertEqual(len(five), 5)  # no grant, no sixth line
+                self.assertEqual([line.split(": ", 1)[0] for line in lines[:5]], [line.split(": ", 1)[0] for line in five])
+                self.assertEqual(lines[:3], five[:3])
+                self.assertEqual([line.split(": ", 1)[1] for line in lines[3:5]], [out["reportId"], out["report"]])
+                self.assertEqual(lines[5:], [GRANT_LINE[language].format(given["expires"][:10])])
+                self.assertEqual(ddl_gate.question_id(out["question"]), ("R", out["reportId"][2:]))
+                key = "question" if runtime == "claude" else "title"
+                self.assertEqual(out["nativeRequest"]["questions"][0][key], out["question"])
+                record = self.stored(out)
+                self.assertEqual((record["version"], record["grant"], record["projectKey"]),
+                                 (2, given, project_key(PROJECT)))
+                core = {name: record[name] for name in ddl_gate.REPORT_CORE_KEYS}
+                self.assertLessEqual({"grant", "projectKey"}, set(core))
+                self.assertEqual(ddl_gate.review_hash(core)[:ddl_gate.ID_HEX_LENGTH], out["reportId"][2:])
+                text = pathlib.Path(out["report"]).read_text(encoding="utf-8")
+                self.assertEqual(text, out["question"] + "\n\n" + GRANT_BLOCK[language].format(given["expires"])
+                                 + "\n\n" + detail)
+                self.assertEqual(record["reportHash"], hashlib.sha256(text.encode("utf-8")).hexdigest())
+                again = self.prepare_report(runtime, language=language, detail=detail, grant=given)
+                self.assertNotEqual(again["reportId"], out["reportId"])  # a new ID per preparation
+                # Without a grant: `grant` is present and null, and the file keeps its bytes.
+                self.assertEqual((self.stored(plain)["grant"], self.stored(plain)["projectKey"]), (None, project_key(PROJECT)))
+                self.assertEqual(pathlib.Path(plain["report"]).read_text(encoding="utf-8"),
+                                 plain["question"] + "\n\n" + detail)
+        self.assertEqual(ddl_gate.REPORT_VERSION, 2)
+
+    def test_line_and_block_spell_out_each_field(self):
+        given = grant(paths=["tools/ddl_gate.py"], commands=[], machines=["gpu-box", "mac-mini"], handover=["dataset v2"],
+                      budget={"minutes": 1, "fixAttempts": 0}, expires="2099-01-02T03:04:05Z")
+        ja = self.prepare_report("claude", grant=given)
+        self.assertEqual(ja["question"].split("\n")[5],
+                         "許諾: 編集 1 範囲、命令なし、マシン 2 台、引き継ぎ 1 件、1 分、直し 0 回、期限 2099-01-02")
+        self.assertIn("\n\n```\n範囲: tools/ddl_gate.py。命令 なし。マシン gpu-box、mac-mini。引き継ぎ dataset v2\n"
+                      "予算: 1 分。失敗した検査ごとの直し 0 回\n期限: 2099-01-02T03:04:05Z\n```\n\n",
+                      pathlib.Path(ja["report"]).read_text(encoding="utf-8"))
+        en = self.prepare_report("codex", language="en", grant=given)
+        self.assertEqual(en["question"].split("\n")[5],
+                         "Grant: edit 1 scope; no commands; 2 machines; 1 handed over; 1 minute; 0 fix attempts; "
+                         "expires 2099-01-02")
+        self.assertIn("\n\n```\nScope: tools/ddl_gate.py; commands none; machines gpu-box, mac-mini; handed over dataset v2\n"
+                      "Budget: 1 minute; 0 fix attempts per failing check\nExpiry: 2099-01-02T03:04:05Z\n```\n\n",
+                      pathlib.Path(en["report"]).read_text(encoding="utf-8"))
+        # The detail may lack its last newline; the head is the same and the file still loads.
+        bare = self.prepare_report("claude", grant=given, detail="one line")
+        self.assertTrue(pathlib.Path(bare["report"]).read_text(encoding="utf-8").endswith("```\n\none line\n"))
+        asked = payload("claude", transcript=fixture("claude_open.jsonl"), tool_name="AskUserQuestion",
+                        tool_input=bare["nativeRequest"])
+        self.assert_allowed(self.run_gate("pre-tool-use", "claude", asked))
+
+    def test_malformed_grants_exit_2_and_prepare_nothing(self):
+        base, good = PrepareReportTest.BASE, grant()
+        bad = [[], "everything", 1, True, {key: value for key, value in good.items() if key != "handover"},
+               dict(good, extra=1),
+               dict(good, paths=[]), dict(good, paths=["p{}".format(i) for i in range(33)]), dict(good, paths="skills/**"),
+               dict(good, paths=["/etc/**"]), dict(good, paths=["~/notes/**"]), dict(good, paths=["skills/../../x"]),
+               dict(good, paths=[".."]), dict(good, paths=["a\\..\\b"]), dict(good, paths=["C:/x"]),
+               dict(good, paths=["a\nb"]), dict(good, paths=["a\tb"]), dict(good, paths=[1]), dict(good, paths=[""]),
+               dict(good, paths=[" skills/**"]), dict(good, paths=["a", "a"]),
+               dict(good, commands=["deploy"]), dict(good, commands=["build", "build"]), dict(good, commands="build"),
+               dict(good, commands=[True]),
+               dict(good, machines=["m" * 81]), dict(good, machines=[str(i) for i in range(9)]), dict(good, machines=[""]),
+               dict(good, machines=["a", "a"]), dict(good, machines=None),
+               dict(good, handover=["h" * 81]), dict(good, handover=["one\ntwo"]), dict(good, handover={}),
+               dict(good, budget={"minutes": 360}), dict(good, budget={"minutes": 360, "fixAttempts": 3, "hours": 6}),
+               dict(good, budget={"minutes": 0, "fixAttempts": 3}), dict(good, budget={"minutes": 10081, "fixAttempts": 3}),
+               dict(good, budget={"minutes": True, "fixAttempts": 3}), dict(good, budget={"minutes": 360, "fixAttempts": False}),
+               dict(good, budget={"minutes": 1.5, "fixAttempts": 3}), dict(good, budget={"minutes": "360", "fixAttempts": 3}),
+               dict(good, budget={"minutes": 360, "fixAttempts": -1}), dict(good, budget={"minutes": 360, "fixAttempts": 11}),
+               dict(good, budget=[360, 3]),
+               dict(good, expires="2099-12-23"), dict(good, expires="2099-12-23T00:00:00"),
+               dict(good, expires="2020-01-01T00:00:00+09:00"), dict(good, expires="2020-01-01T00:00:00Z"),
+               dict(good, expires="tomorrow"), dict(good, expires=4102412400), dict(good, expires=None),
+               dict(good, expires="2099-13-01T00:00:00Z"), dict(good, expires="2099-01-01T00:00:00+25:00"),
+               dict(good, expires="2099-01-01 00:00:00+09:00")]
+        for value in bad:
+            with self.subTest(grant=value):
+                proc = self.cli("claude", dict(base, grant=value))
+                self.assertEqual((proc.returncode, proc.stdout), (2, ""))
+                self.assertTrue(proc.stderr.startswith("DDL STOP: "), proc.stderr)
+        for runtime, data, cwd in (("claude", dict(base, grant=good, multiSelect=True), None),  # one answer approves
+                                   ("claude", dict(base, grant=good), self.tmp)):  # a grant belongs to a DDL project
+            with self.subTest(data=data, cwd=cwd):
+                proc = self.cli(runtime, data, cwd)
+                self.assertEqual((proc.returncode, proc.stdout), (2, ""))
+                self.assertTrue(proc.stderr.startswith("DDL STOP: "), proc.stderr)
+        self.assertFalse((pathlib.Path(self.state) / "reports").exists())
+        self.assertFalse(os.path.exists(self.grants))  # preparing never touches the grant store
+        # Accepted spellings of the expiry: `Z` (which Python 3.9's fromisoformat rejects), minutes only, a fraction.
+        for expires in ("2099-01-01T00:00:00Z", "2099-01-01T00:00+09:00", "2099-01-01T00:00:00.5-08:00"):
+            with self.subTest(expires=expires):
+                self.assertEqual(self.cli("codex", dict(base, grant=dict(good, expires=expires))).returncode, 0)
+        self.assertEqual(self.cli("claude", dict(base, grant=None)).returncode, 0)  # null is no grant
+        outside = self.cli("claude", base, self.tmp)  # without a grant a report needs no project
+        self.assertEqual(outside.returncode, 0, outside.stderr)
+        self.assertIsNone(self.stored(json.loads(outside.stdout))["projectKey"])
+
+    def test_changed_report_files_are_rejected(self):
+        for runtime in ("claude", "codex"):
+            with self.subTest(runtime=runtime):
+                opened, tool, key = fixture(runtime + "_open.jsonl"), QUESTION_TOOL[runtime], QUESTION_KEY[runtime]
+
+                def ask(prepared):
+                    return self.run_gate("pre-tool-use", runtime, payload(runtime, transcript=opened, tool_name=tool,
+                                                                          tool_input=prepared["nativeRequest"]))
+
+                def files(prepared):
+                    directory = pathlib.Path(prepared["report"]).parent
+                    return directory / "report.json", directory / "report.md"
+
+                def agree(prepared, text):  # rewrite report.md and make the stored hash agree with it
+                    record_path, report = files(prepared)
+                    record = json.loads(record_path.read_text(encoding="utf-8"))
+                    report.write_text(text, encoding="utf-8")
+                    record["reportHash"] = hashlib.sha256(text.encode("utf-8")).hexdigest()
+                    record_path.write_text(json.dumps(record), encoding="utf-8")
+
+                intact = self.prepare_report(runtime, grant=grant())
+                self.assert_allowed(ask(intact))
+                wider = self.prepare_report(runtime, grant=grant())  # the stored grant widened
+                record = self.stored(wider)
+                record["grant"]["paths"].append("**")
+                files(wider)[0].write_text(json.dumps(record), encoding="utf-8")
+                self.assert_reason(ask(wider), ddl_gate.NOT_PREPARED.format(wider["reportId"]))
+                moved = self.prepare_report(runtime, grant=grant())  # the project it belongs to changed
+                record = self.stored(moved)
+                record["projectKey"] = "0" * 16
+                files(moved)[0].write_text(json.dumps(record), encoding="utf-8")
+                self.assert_reason(ask(moved), ddl_gate.NOT_PREPARED.format(moved["reportId"]))
+                narrowed = self.prepare_report(runtime, grant=grant())  # the block the human reads narrowed
+                text = files(narrowed)[1].read_text(encoding="utf-8")
+                shown = text.replace("範囲: skills/**、protocol/**", "範囲: skills/**")
+                self.assertNotEqual(shown, text)
+                agree(narrowed, shown)
+                self.assert_reason(ask(narrowed), ddl_gate.NOT_PREPARED.format(narrowed["reportId"]))
+                edited = self.prepare_report(runtime, grant=grant())  # the detail changed, hash made to agree
+                agree(edited, files(edited)[1].read_text(encoding="utf-8") + "- R4 added after preparation\n")
+                self.assert_reason(ask(edited), ddl_gate.NOT_PREPARED.format(edited["reportId"]))
+                touched = self.prepare_report(runtime, grant=grant())  # report.md alone changed
+                files(touched)[1].write_text("changed", encoding="utf-8")
+                self.assert_reason(ask(touched), ddl_gate.NOT_PREPARED.format(touched["reportId"]))
+                older = self.prepare_report(runtime)  # a report of the schema before the grant
+                record = self.stored(older)
+                del record["grant"], record["projectKey"]
+                files(older)[0].write_text(json.dumps(dict(record, version=1)), encoding="utf-8")
+                self.assert_reason(ask(older), ddl_gate.NOT_PREPARED.format(older["reportId"]))
+                altered = json.loads(json.dumps(intact["nativeRequest"]))  # the asked grant line differs
+                altered["questions"][0][key] = altered["questions"][0][key].replace("編集 2 範囲", "編集 1 範囲")
+                self.assertNotEqual(altered, intact["nativeRequest"])
+                self.assert_reason(ask(dict(intact, nativeRequest=altered)), ddl_gate.ASK_UNCHANGED.format(intact["reportId"]))
+                self.assert_allowed(ask(intact))
+
+
+class GrantFlowTest(ReportFlowTest):
+    """A project of its own, and the steps from a prepared report with a grant to its record."""
+
+    def setUp(self):
+        super().setUp()
+        self.root, self.cwd = self.project(design=False, git=True)
+        self.store = pathlib.Path(self.grants) / project_key(self.root) / "grants"
+
+    def prepared(self, runtime, **fields):
+        fields.setdefault("grant", grant())
+        return self.prepare_report(runtime, cwd=self.cwd, **fields)
+
+    def tool(self, runtime, transcript, session="sess", tool=None, tool_input=None, **extra):
+        """A PreToolUse call in this project; by default the runtime's first write tool."""
+        name, default = WRITES[runtime][0]
+        return self.call(runtime, transcript, tool or name, default if tool is None else tool_input, session,
+                         cwd=self.cwd, **extra)
+
+    def ask(self, runtime, prepared, session="sess", request=None):
+        """The prepared question passes the guard, which arms the session for its answer."""
+        return self.tool(runtime, self.flow(runtime, prepared, "prepared"), session, QUESTION_TOOL[runtime],
+                         request or prepared["nativeRequest"], tool_use_id="report-question")
+
+    def prompt(self, runtime, transcript, text, session="sess"):
+        return self.run_gate("user-prompt-submit", runtime,
+                             payload(runtime, "user-prompt-submit", transcript, session, self.cwd, prompt=text))
+
+    def reply(self, prepared, answer=0, session="sess"):
+        """Codex delivers a submitted answer as a prompt: the reply envelope."""
+        text = codex_reply("report-question", prepared["question"], option_label(prepared, answer))
+        return self.prompt("codex", self.flow("codex", prepared, "asked"), text, session)
+
+    def approve(self, runtime, prepared, answer=0, session="sess", mutate=None):
+        """Ask, let the human submit option `answer`, and make the next tool call; returns that call."""
+        self.assert_allowed(self.ask(runtime, prepared, session))
+        if runtime == "codex":
+            self.assert_allowed(self.reply(prepared, answer, session))
+        return self.tool(runtime, self.flow(runtime, prepared, "answered", answer, mutate=mutate), session)
+
+    def stop(self, runtime, transcript, session="sess"):
+        return self.run_gate("stop", runtime, payload(runtime, "stop", transcript, session, self.cwd,
+                                                      last_assistant_message=""))
+
+    def start(self, runtime, transcript, source, session="sess"):
+        return self.run_gate("session-start", runtime, payload(runtime, "session-start", transcript, session, self.cwd,
+                                                               source=source))
+
+    def record_path(self, prepared):
+        return self.store / (prepared["reportId"] + ".json")
+
+    def record(self, prepared):
+        path = self.record_path(prepared)
+        return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
+
+    def armed(self, session="sess"):
+        return os.path.exists(os.path.join(self.state, session + ".asked"))
+
+    def armed_ids(self, session="sess"):
+        """The IDs of the questions the session keeps armed, in the marker's order: oldest first."""
+        path = pathlib.Path(self.state) / (session + ".asked")
+        return [entry["id"] for entry in json.loads(path.read_text(encoding="utf-8"))] if path.is_file() else []
+
+    def assert_no_grant(self):
+        self.assertFalse(os.path.exists(self.grants))  # not even the store appears
+
+    def lines(self, session="sess"):
+        return [(row["kind"], row.get("id"), row.get("choice"), row.get("timeout"))
+                for row in events(self.root, session=session)]
+
+    def rows(self, runtime, prepared, stage, answer=0, call="report-question"):
+        """The rows of one flow, its calls named after `call` so that two flows fit into one record."""
+        text = pathlib.Path(self.flow(runtime, prepared, stage, answer)).read_text(encoding="utf-8")
+        text = text.replace("prepare-call", "prepare-" + call).replace("report-question", call)
+        return [json.loads(line) for line in text.splitlines()]
+
+    def record_of(self, name, rows):
+        """A conversation record of its own name: `flow` rewrites one file per runtime and stage."""
+        path = os.path.join(self.tmp, name + ".jsonl")
+        write_rows(path, rows)
+        return path
+
+    def ask_behind(self, first, second, session):
+        """Claude asks `first`, the human approves it, and `second` is asked while the record lags: it still
+        ends at the first question."""
+        self.assert_allowed(self.ask("claude", first, session))
+        self.assert_allowed(self.tool("claude", self.flow("claude", first, "asked"), session, QUESTION_TOOL["claude"],
+                                      second["nativeRequest"], tool_use_id="second-question"))
+
+
+class GrantRecordTest(GrantFlowTest):
+    """The grant record: written once, and only from the human's submitted first option of the unchanged question."""
+
+    def test_first_option_records_the_grant_on_both_hosts(self):
+        for runtime in ("claude", "codex"):
+            with self.subTest(runtime=runtime):
+                given, session = grant(), runtime + "-grant"
+                prepared = self.prepared(runtime, grant=given)
+                ident = prepared["reportId"]
+                self.assert_allowed(self.ask(runtime, prepared, session))
+                self.assertTrue(self.armed(session))
+                self.assertIsNone(self.record(prepared))  # asking records nothing
+                if runtime == "codex":
+                    self.assert_allowed(self.reply(prepared, 0, session))
+                    self.assertIsNone(self.record(prepared))  # nor does the reply: the proof reads the record
+                # The call passes by the gate's silence, as it would without a grant; no decision is printed.
+                self.assert_allowed(self.tool(runtime, self.flow(runtime, prepared, "answered"), session))
+                record = self.record(prepared)
+                self.assertEqual(set(record), {"id", "projectKey", "root", "grant", "approvedAt", "session", "host"})
+                self.assertEqual({key: record[key] for key in ("id", "projectKey", "root", "grant", "session", "host")},
+                                 {"id": ident, "projectKey": project_key(self.root), "root": os.path.realpath(self.root),
+                                  "grant": given, "session": session, "host": runtime})
+                self.assertRegex(record["approvedAt"], ISO_UTC)
+                for directory in (self.store, self.store.parent, self.store.parent.parent):
+                    self.assertEqual(directory.stat().st_mode & 0o777, 0o700)
+                self.assertEqual(self.record_path(prepared).stat().st_mode & 0o777, 0o600)
+                self.assertEqual([path.name for path in self.store.parent.iterdir()], ["grants"])  # no uses/ yet
+                self.assertEqual([(row["kind"], row.get("id"), row.get("toolUseId"), row.get("choice"), row.get("timeout"))
+                                  for row in events(self.root, session=session)],
+                                 [("asked", ident, "report-question", None, None),
+                                  ("answered", ident, "report-question", 0, False),
+                                  ("granted", ident, "report-question", None, None)])
+                self.assertEqual(events(self.root, session=session, kind="answered")[0]["label"], option_label(prepared))
+                self.assertFalse(self.armed(session))
+
+    def test_the_host_time_of_the_answer_is_kept(self):
+        prepared = self.prepared("claude")
+
+        def stamped(rows):
+            rows[3]["timestamp"], rows[4]["timestamp"] = "2026-11-20T09:00:10.000Z", "2026-11-20T18:04:10.250+09:00"
+
+        self.assert_allowed(self.approve("claude", prepared, mutate=stamped))
+        self.assertEqual(self.record(prepared)["approvedAt"], "2026-11-20T09:04:10.250Z")
+        self.assertEqual(events(self.root, kind="answered")[0]["ts"], "2026-11-20T09:04:10.250Z")
+
+    def test_stop_records_what_no_tool_call_saw(self):
+        for runtime in ("claude", "codex"):
+            with self.subTest(runtime=runtime):
+                prepared, session = self.prepared(runtime), runtime + "-stop"
+                self.assert_allowed(self.ask(runtime, prepared, session))
+                if runtime == "codex":
+                    self.assert_allowed(self.reply(prepared, 0, session))
+                self.assert_allowed(self.stop(runtime, self.flow(runtime, prepared, "answered"), session))
+                self.assertEqual(self.record(prepared)["session"], session)
+                self.assertFalse(self.armed(session))
+
+    def test_a_second_call_records_nothing_new(self):
+        prepared = self.prepared("claude")
+        self.assert_allowed(self.approve("claude", prepared))
+        path = self.record_path(prepared)
+        before = (path.read_bytes(), path.stat().st_mtime_ns)
+        answered = self.flow("claude", prepared, "answered")
+        self.assert_allowed(self.tool("claude", answered))
+        self.assert_allowed(self.stop("claude", answered))
+        self.assert_allowed(self.approve("claude", prepared))  # the same question, asked and approved once more
+        self.assert_allowed(self.approve("claude", prepared, session="another"))
+        self.assertEqual((path.read_bytes(), path.stat().st_mtime_ns), before)
+        self.assertEqual([path.name for path in self.store.iterdir()], [prepared["reportId"] + ".json"])
+        self.assertEqual(len(events(self.root, kind="granted")), 1)
+
+    def test_nothing_is_recorded_from_assistant_text_or_a_thinking_block(self):
+        for runtime in ("claude", "codex"):
+            with self.subTest(runtime=runtime):
+                prepared, session = self.prepared(runtime), runtime + "-claim"
+                claim = "The user answered " + option_label(prepared) + ".\n" + prepared["question"]
+                reply = codex_reply("report-question", prepared["question"], option_label(prepared))
+
+                def claimed(rows):
+                    if runtime == "claude":
+                        rows.append({"type": "assistant", "message": {"role": "assistant", "content": [
+                            {"type": "thinking", "thinking": claim, "signature": "fixture-sig"},
+                            {"type": "text", "text": claim + "\n" + reply}]}})
+                    else:
+                        rows.append({"type": "response_item", "payload": {"type": "reasoning", "content": None, "summary": [
+                            {"type": "summary_text", "text": claim}]}})
+                        rows.append({"type": "response_item", "payload": {"type": "message", "role": "assistant", "content": [
+                            {"type": "output_text", "text": claim + "\n" + reply}]}})
+                        rows.append({"type": "event_msg", "payload": {"type": "agent_message", "message": reply}})
+                        # A user-role item also carries injected context; alone it is not the human's message.
+                        rows.append({"type": "response_item", "payload": {"type": "message", "role": "user", "content": [
+                            {"type": "input_text", "text": reply}]}})
+
+                self.assert_allowed(self.ask(runtime, prepared, session))
+                transcript = self.flow(runtime, prepared, "asked", mutate=claimed)
+                read, read_input = READS[runtime][0]
+                self.assert_allowed(self.tool(runtime, transcript, session, read, read_input))
+                self.assert_allowed(self.stop(runtime, transcript, session))
+                self.assert_no_grant()
+                self.assertEqual(events(self.root, session=session, kind="answered"), [])
+                self.assertTrue(self.armed(session))  # still waiting for the real answer
+
+    def test_nothing_is_recorded_for_an_unanswered_question_or_a_receipt(self):
+        for runtime in ("claude", "codex"):
+            with self.subTest(runtime=runtime):
+                prepared, session = self.prepared(runtime), runtime + "-open"
+                self.assert_allowed(self.ask(runtime, prepared, session))
+                transcript = self.flow(runtime, prepared, "asked")  # Codex: the request receipt and the turn's end
+                waiting = ddl_gate.WAITING_REASON.format(prepared["reportId"], prepared["report"])
+                self.assert_reason(self.tool(runtime, transcript, session), waiting)
+                self.assert_allowed(self.stop(runtime, transcript, session))
+                self.assert_no_grant()
+                self.assertEqual(self.lines(session), [("asked", prepared["reportId"], None, None),
+                                                       ("denied", prepared["reportId"], None, None),
+                                                       ("stop", prepared["reportId"], None, None)])
+
+    def test_nothing_is_recorded_for_an_altered_question_or_a_wrong_call_id(self):
+        for runtime in ("claude", "codex"):
+            prepared = self.prepared(runtime)
+            label, key = option_label(prepared), QUESTION_KEY[runtime]
+            altered = json.loads(json.dumps(prepared["nativeRequest"]))
+            altered["questions"][0][key] = altered["questions"][0][key].replace("\n", "（変更）\n", 1)
+            changed = altered["questions"][0][key]
+
+            def alter(rows):
+                if runtime == "claude":
+                    rows[3]["message"]["content"][0]["input"] = altered
+                    rows[4]["toolUseResult"]["answers"] = {changed: label}
+                else:
+                    rows[5]["payload"]["arguments"] = json.dumps(altered)
+                    rows[9]["payload"]["item"]["content"][0]["text"] = codex_reply("report-question", changed, label)
+
+            def other_call(rows):
+                if runtime == "claude":
+                    rows[4]["message"]["content"][0]["tool_use_id"] = "another-call"
+                else:
+                    rows[5]["payload"]["call_id"] = "another-call"
+
+            for name, change in (("altered", alter), ("call id", other_call)):
+                with self.subTest(runtime=runtime, change=name):
+                    session = "{}-{}".format(runtime, name.replace(" ", "-"))
+                    self.assert_allowed(self.approve(runtime, prepared, session=session, mutate=change))
+                    self.assert_allowed(self.stop(runtime, self.flow(runtime, prepared, "answered", mutate=change), session))
+                    self.assert_no_grant()
+                    self.assertEqual(events(self.root, session=session, kind="granted"), [])
+            self.assert_reason(self.ask(runtime, prepared, request=altered), ddl_gate.ASK_UNCHANGED.format(prepared["reportId"]))
+
+    def test_nothing_is_recorded_for_another_option(self):
+        for runtime in ("claude", "codex"):
+            for answer in (1, 2):
+                with self.subTest(runtime=runtime, answer=answer):
+                    prepared, session = self.prepared(runtime), "{}-option-{}".format(runtime, answer)
+                    self.assert_allowed(self.approve(runtime, prepared, answer, session))
+                    self.assert_allowed(self.stop(runtime, self.flow(runtime, prepared, "answered", answer), session))
+                    self.assert_no_grant()
+                    self.assertEqual(self.lines(session), [("asked", prepared["reportId"], None, None),
+                                                           ("answered", prepared["reportId"], answer, False)])
+                    self.assertFalse(self.armed(session))
+
+    def test_nothing_is_recorded_for_an_idle_timeout_or_a_non_human_source(self):
+        prepared = self.prepared("claude")
+        waiting = ddl_gate.WAITING_REASON.format(prepared["reportId"], prepared["report"])
+
+        def timed_out(rows):
+            rows[4]["toolUseResult"]["afkTimeoutMs"] = 60000  # the host submitted the selection after the idle wait
+
+        def configured(rows):
+            rows[4]["permissionDecision"]["source"] = "config"
+
+        for session, change, logged in (("timeout", timed_out, [("answered", prepared["reportId"], 0, True)]),
+                                        ("config", configured, [])):
+            with self.subTest(change=session):
+                self.assert_reason(self.approve("claude", prepared, session=session, mutate=change), waiting)
+                self.assert_allowed(self.stop("claude", self.flow("claude", prepared, "answered", mutate=change), session))
+                self.assert_no_grant()
+                self.assertEqual([line for line in self.lines(session) if line[0] == "answered"], logged)
+                self.assertFalse(self.armed(session))  # the question is closed; nothing is retried
+
+    def test_nothing_is_recorded_for_a_report_older_than_the_epoch(self):
+        for runtime in ("claude", "codex"):
+            for source in ("resume", "compact", "fork", "clear"):
+                with self.subTest(runtime=runtime, source=source):
+                    prepared, session = self.prepared(runtime), "{}-{}".format(runtime, source)
+                    self.assert_allowed(self.ask(runtime, prepared, session))
+                    self.start(runtime, self.flow(runtime, prepared, "asked"), source, session)
+                    self.assertFalse(self.armed(session))
+                    if runtime == "codex":
+                        self.reply(prepared, 0, session)
+                    answered = self.flow(runtime, prepared, "answered")
+                    self.assert_allowed(self.tool(runtime, answered, session))
+                    self.assert_allowed(self.stop(runtime, answered, session))
+                    self.assert_no_grant()
+        # The proof itself refuses such a report, whether or not the session is still armed.
+        prepared = self.prepared("claude")
+        self.assert_allowed(self.ask("claude", prepared))
+        (pathlib.Path(self.state) / "sess.git-epoch").write_text(str(time.time() + 60))
+        answered = self.flow("claude", prepared, "answered")
+        self.assert_allowed(self.tool("claude", answered))
+        self.assert_no_grant()
+        with mock.patch.dict(os.environ, {"DDL_GATE_STATE_DIR": self.state, "DDL_GATE_GRANT_DIR": self.grants}):
+            with self.assertRaisesRegex(ValueError, "predates"):
+                ddl_gate.approved_report_grant("claude", {"session_id": "sess", "transcript_path": answered})
+            fresh = {"session_id": "fresh", "transcript_path": answered}
+            self.assertEqual(ddl_gate.approved_report_grant("claude", fresh)["id"], prepared["reportId"][2:])
+            with mock.patch("time.time", return_value=time.time() + 40 * 86400):  # past the grant's expiry
+                with self.assertRaisesRegex(ValueError, "not in the future"):
+                    ddl_gate.approved_report_grant("claude", fresh)
+
+    def test_nothing_is_recorded_for_a_typed_message(self):
+        for runtime in ("claude", "codex"):
+            with self.subTest(runtime=runtime):
+                prepared, session = self.prepared(runtime), runtime + "-typed"
+                typed = (user("OK, approved.", **HUMAN_ORIGIN) if runtime == "claude" else
+                         {"type": "event_msg", "payload": {"type": "item_completed", "item": {
+                             "type": "UserMessage", "content": [{"type": "text", "text": "OK, approved."}]}}})
+                transcript = self.flow(runtime, prepared, "asked", mutate=lambda rows: rows.append(typed))
+                self.assert_allowed(self.ask(runtime, prepared, session))
+                self.assert_allowed(self.prompt(runtime, transcript, "OK, approved.", session))
+                self.assertFalse(self.armed(session))
+                self.assert_allowed(self.tool(runtime, transcript, session))
+                # Even an answer recorded before the typed message proves nothing once that message is the latest.
+                late = self.flow(runtime, prepared, "answered", mutate=lambda rows: rows.append(typed))
+                self.assert_allowed(self.ask(runtime, self.prepared(runtime), session))  # armed again, for another report
+                self.assert_allowed(self.tool(runtime, late, session))
+                self.assert_allowed(self.stop(runtime, late, session))
+                self.assert_no_grant()
+                self.assertEqual([line[0] for line in self.lines(session)], ["asked", "prompt", "asked"])
+
+    def test_nothing_is_recorded_without_a_grant_or_for_another_project(self):
+        for runtime in ("claude", "codex"):
+            with self.subTest(runtime=runtime):
+                plain, session = self.prepare_report(runtime, cwd=self.cwd), runtime + "-plain"
+                self.assert_allowed(self.approve(runtime, plain, session=session))
+                foreign = self.prepare_report(runtime, grant=grant())  # prepared in the default project
+                self.assert_allowed(self.approve(runtime, foreign, session=session))
+                self.assert_allowed(self.stop(runtime, self.flow(runtime, foreign, "answered"), session))
+                self.assert_no_grant()
+                # The approving answer of a grant that is not recorded leaves a line that says why.
+                self.assertEqual([line[0] for line in self.lines(session)], ["asked", "answered", "asked", "answered", "warn"])
+                self.assertEqual(untimed(events(self.root, session=session, kind="warn")), [
+                    {"v": 1, "host": runtime, "session": session, "kind": "warn", "id": foreign["reportId"],
+                     "rule": "grant-proof", "toolUseId": "report-question"}])
+
+    def test_a_codex_reply_to_a_report_does_not_revoke_it(self):
+        def epoch(session):
+            return pathlib.Path(self.state) / (session + ".git-epoch")
+
+        prepared = self.prepared("codex")
+        self.assert_allowed(self.ask("codex", prepared, "kept"))
+        self.assert_allowed(self.reply(prepared, 0, "kept"))
+        self.assertFalse(epoch("kept").exists())  # the approving reply spares the epoch, like a Git review's
+        self.assert_allowed(self.tool("codex", self.flow("codex", prepared, "answered"), "kept"))
+        self.assertIsNotNone(self.record(prepared))
+        self.assert_allowed(self.ask("codex", prepared, "kept"))  # and its question is still the prepared one
+        plain = self.prepare_report("codex", cwd=self.cwd)  # the same holds for a report without a grant
+        self.assert_allowed(self.ask("codex", plain, "kept"))
+        self.assert_allowed(self.reply(plain, 0, "kept"))
+        self.assertFalse(epoch("kept").exists())
+        # Another option, a reply to a changed question, and typed text still move the epoch and retire the report.
+        for name, text in (("revised", lambda p: codex_reply("report-question", p["question"], option_label(p, 1))),
+                           ("held", lambda p: codex_reply("report-question", p["question"], option_label(p, 2))),
+                           ("changed", lambda p: codex_reply("report-question", p["question"] + " ", option_label(p))),
+                           ("typed", lambda p: option_label(p))):
+            with self.subTest(prompt=name):
+                other = self.prepared("codex")
+                self.assert_allowed(self.ask("codex", other, name))
+                self.assert_allowed(self.prompt("codex", self.flow("codex", other, "asked"), text(other), name))
+                self.assertTrue(epoch(name).exists())
+                self.assert_reason(self.ask("codex", other, name), ddl_gate.PREDATES.format(other["reportId"]))
+                self.assertIsNone(self.record(other))
+
+    def test_a_recorded_grant_survives_a_prompt_a_resume_and_a_new_session(self):
+        for runtime in ("claude", "codex"):
+            with self.subTest(runtime=runtime):
+                given = grant()
+                prepared = self.prepared(runtime, grant=given)
+                self.assert_allowed(self.approve(runtime, prepared, session=runtime))
+                before = self.record_path(prepared).read_bytes()
+                answered, opened = self.flow(runtime, prepared, "answered"), fixture(runtime + "_open.jsonl")
+                self.prompt(runtime, answered, "Now something else.", runtime)
+                for source in ("resume", "compact", "fork", "clear"):
+                    self.start(runtime, answered, source, runtime)
+                self.start(runtime, opened, "startup", "next-" + runtime)
+                self.assert_allowed(self.tool(runtime, opened, "next-" + runtime))
+                self.assert_allowed(self.stop(runtime, opened, "next-" + runtime))
+                self.assertEqual(self.record_path(prepared).read_bytes(), before)
+                line = "Grant: {} (expires {}, valid)\n".format(prepared["reportId"], given["expires"][:10])
+                self.assertIn(line, self.subcommand(["status", "--cwd", self.cwd]).stdout)
+                report = self.subcommand(["report", "--session", runtime], cwd=self.cwd).stdout.splitlines()
+                self.assertEqual(report[3], "許諾: {}（期限 {}、有効）".format(prepared["reportId"], given["expires"][:10]))
+
+    def test_status_lists_grants_and_marks_an_expired_one(self):
+        first = "DDL project: yes ({}:3)\n".format(self.root / ".claude" / "CLAUDE.md")
+        self.assertEqual(self.subcommand(["status", "--cwd", self.cwd]).stdout, first)  # no grant: today's bytes
+        self.assert_no_grant()  # and status creates nothing
+        given = grant()
+        prepared = self.prepared("claude", grant=given)
+        self.assert_allowed(self.approve("claude", prepared))
+        old = {"id": "R-" + "e" * 16, "projectKey": project_key(self.root), "root": os.path.realpath(self.root),
+               "grant": grant(expires="2020-01-01T00:00:00+09:00"), "approvedAt": "2019-12-01T00:00:00.000Z",
+               "session": "old", "host": "codex"}
+        (self.store / (old["id"] + ".json")).write_text(json.dumps(old), encoding="utf-8")
+        (self.store / "notes.txt").write_text("not a record", encoding="utf-8")
+        (self.store / ("R-" + "f" * 16 + ".json")).write_text("{torn", encoding="utf-8")
+        proc = self.subcommand(["status", "--cwd", self.cwd])
+        self.assertEqual((proc.returncode, proc.stderr), (0, ""))
+        self.assertEqual(proc.stdout, first + "Grant: {} (expires 2020-01-01, expired)\n".format(old["id"])
+                         + "Grant: {} (expires {}, valid)\n".format(prepared["reportId"], given["expires"][:10]))
+        # Another project has its own key and sees none of them.
+        self.assertEqual(self.subcommand(["status", "--cwd", str(PROJECT)]).stdout,
+                         "DDL project: yes ({}:3)\n".format(PROJECT / ".claude" / "CLAUDE.md"))
+
+    def test_a_recorded_grant_allows_nothing_and_denies_nothing(self):
+        for runtime in ("claude", "codex"):
+            with self.subTest(runtime=runtime):
+                prepared = self.prepared(runtime, grant=grant(paths=["**"], commands=list(ddl_gate.GRANT_COMMANDS)))
+                self.assert_allowed(self.approve(runtime, prepared, session=runtime))
+                self.assertIsNotNone(self.record(prepared))
+                (shell, key), opened, closed = SHELL[runtime], fixture(runtime + "_open.jsonl"), fixture(runtime + "_closed_in_turn.jsonl")
+                calls = WRITES[runtime] + READS[runtime] + [(shell, {key: command}) for command in (
+                    "touch skills/x", "python3 tools/build.py", "git commit --cleanup=verbatim -m x", "git push origin main")]
+                for transcript in (opened, closed):
+                    for tool, tool_input in calls:
+                        with self.subTest(transcript=os.path.basename(transcript), tool=tool, tool_input=tool_input):
+                            granted = self.tool(runtime, transcript, runtime, tool, tool_input).stdout
+                            # The same call in a project without any grant: the decision is the same, byte for byte.
+                            bare = self.call(runtime, transcript, tool, tool_input, "bare-" + runtime).stdout
+                            self.assertEqual(granted, bare)
+                            self.assertNotIn("allow", granted)
+                            if granted:
+                                self.assertEqual(json.loads(granted)["hookSpecificOutput"]["permissionDecision"], "deny")
+                            mutating = (tool, tool_input) not in READS[runtime]
+                            if mutating and (transcript == closed or "git " in str(tool_input)):
+                                self.assertTrue(granted)  # a pending STOP and the Git review hold inside the granted scope
+
+    def test_a_reply_to_a_report_without_options_still_moves_the_epoch(self):
+        """A report record written by hand can agree with its own ID and offer no option to compare a reply with."""
+        prepared = self.prepare_report("codex", cwd=self.cwd)
+        directory = pathlib.Path(prepared["report"]).parent
+        record = json.loads((directory / "report.json").read_text(encoding="utf-8"))
+        detail = (directory / "report.md").read_text(encoding="utf-8")[len(prepared["question"]) + 2:]
+        record["options"] = []
+        record["id"] = ddl_gate.review_hash({key: record[key] for key in ddl_gate.REPORT_CORE_KEYS})[:ddl_gate.ID_HEX_LENGTH]
+        forged = directory.parent / record["id"]
+        forged.mkdir()
+        question, request = ddl_gate.report_question(record, forged / "report.md")
+        text = question + "\n\n" + detail
+        (forged / "report.md").write_text(text, encoding="utf-8")
+        record.update(question=question, nativeRequest=request, reportHash=hashlib.sha256(text.encode("utf-8")).hexdigest())
+        (forged / "report.json").write_text(json.dumps(record), encoding="utf-8")
+        with mock.patch.dict(os.environ, {"DDL_GATE_STATE_DIR": self.state}):
+            self.assertEqual(ddl_gate.load_report(record["id"], "codex")["options"], [])  # it loads: every hash agrees
+        waiting = self.prepared("codex")
+        self.assert_allowed(self.ask("codex", waiting, "forged"))
+        reply = codex_reply("report-question", question, "Approve all (Recommended)")
+        # No internal error is printed, and the prompt counts as typed text: the epoch moves and the asked question retires.
+        self.assert_allowed(self.prompt("codex", fixture("codex_open.jsonl"), reply, "forged"))
+        self.assertTrue((pathlib.Path(self.state) / "forged.git-epoch").exists())
+        self.assertFalse(self.armed("forged"))
+        self.assertEqual([line[0] for line in self.lines("forged")], ["asked", "prompt"])
+        self.assert_reason(self.ask("codex", waiting, "forged"), ddl_gate.PREDATES.format(waiting["reportId"]))
+
+    def test_a_store_that_cannot_take_the_record_leaves_a_warning(self):
+        pathlib.Path(self.grants).write_text("a file where the grant store belongs")
+        for runtime in ("claude", "codex"):
+            for seen_by in ("tool", "stop"):
+                with self.subTest(runtime=runtime, seen_by=seen_by):
+                    prepared, session = self.prepared(runtime), "{}-{}-blocked".format(runtime, seen_by)
+                    ident = prepared["reportId"]
+                    self.assert_allowed(self.ask(runtime, prepared, session))
+                    if runtime == "codex":
+                        self.assert_allowed(self.reply(prepared, 0, session))
+                    answered = self.flow(runtime, prepared, "answered")
+                    # No decision changes: the call after the answer passes in silence, a pending STOP still denies.
+                    if seen_by == "tool":
+                        self.assert_allowed(self.tool(runtime, answered, session))
+                    else:
+                        self.assert_allowed(self.stop(runtime, answered, session))
+                    self.assertFalse(self.armed(session))
+                    self.assert_denied(self.tool(runtime, fixture(runtime + "_closed_in_turn.jsonl"), session))
+                    self.assert_allowed(self.tool(runtime, answered, session))  # and nothing is tried again
+                    self.assert_allowed(self.stop(runtime, answered, session))
+                    self.assertEqual(self.lines(session), [("asked", ident, None, None), ("answered", ident, 0, False),
+                                                           ("warn", ident, None, None), ("denied", None, None, None)])
+                    self.assertEqual(untimed(events(self.root, session=session, kind="warn")), [
+                        {"v": 1, "host": runtime, "session": session, "kind": "warn", "id": ident, "rule": "grant-store",
+                         "toolUseId": "report-question"}])
+                    report = self.subcommand(["report", "--session", session], cwd=self.cwd).stdout.splitlines()
+                    self.assertEqual(report[3], "許諾: なし")
+        self.assertTrue(pathlib.Path(self.grants).is_file())  # no record anywhere
+        self.assertEqual(events(self.root, kind="granted"), [])
+
+    def test_a_lagging_record_does_not_cost_the_first_question_its_grant(self):
+        """Claude Code writes its record asynchronously: the first answer can be missing from it when the next
+        prepared question is asked. That question joins the first one instead of taking its place."""
+        first, second, session = self.prepared("claude"), self.prepare_report("claude", cwd=self.cwd), "lag"
+        self.ask_behind(first, second, session)
+        self.assertIsNone(self.record(first))
+        # The record catches up with the first answer before it holds the second question.
+        read, read_input = READS["claude"][0]
+        self.assert_allowed(self.tool("claude", self.flow("claude", first, "answered"), session, read, read_input))
+        self.assertEqual((self.record(first) or {}).get("session"), session)  # lost when the second question took the marker
+        self.assertEqual(self.armed_ids(session), [second["reportId"]])
+        # The second question closes with its own answer, read by its own call.
+        both = self.record_of("both", self.rows("claude", first, "answered")
+                              + self.rows("claude", second, "answered", 1, "second-question")[1:])
+        self.assert_allowed(self.tool("claude", both, session, read, read_input))
+        self.assertFalse(self.armed(session))
+        self.assertEqual([(row["kind"], row["id"], row.get("toolUseId"), row.get("choice")) for row in events(self.root, session=session)],
+                         [("asked", first["reportId"], "report-question", None),
+                          ("asked", second["reportId"], "second-question", None),
+                          ("answered", first["reportId"], "report-question", 0),
+                          ("granted", first["reportId"], "report-question", None),
+                          ("answered", second["reportId"], "second-question", 1)])
+
+    def test_two_waiting_codex_questions_each_keep_their_answer(self):
+        """Codex asks without waiting, so two prepared questions can be open at once; the reply to the first
+        one must find it still armed."""
+        first, second, session = self.prepared("codex"), self.prepare_report("codex", cwd=self.cwd), "two"
+        one, two = self.rows("codex", first, "answered"), self.rows("codex", second, "asked", call="second-question")
+        self.assert_allowed(self.ask("codex", first, session))
+        self.assert_allowed(self.tool("codex", self.record_of("second-prepared", one[:7] + two[3:5]), session,
+                                      QUESTION_TOOL["codex"], second["nativeRequest"], tool_use_id="second-question"))
+        self.assert_allowed(self.reply(first, 0, session))
+        # Both calls, both receipts, the end of that turn, and the reply to the first question.
+        replied = self.record_of("first-replied", one[:7] + two[3:7] + one[7:])
+        self.assert_allowed(self.tool("codex", replied, session))
+        self.assertEqual((self.record(first) or {}).get("session"), session)  # lost when the second question took the marker
+        self.assertEqual(self.armed_ids(session), [second["reportId"]])  # still waiting for its own reply
+        self.assertEqual(self.lines(session), [("asked", first["reportId"], None, None), ("asked", second["reportId"], None, None),
+                                               ("answered", first["reportId"], 0, False),
+                                               ("granted", first["reportId"], None, None)])
+        # Any other reply moves the epoch, and with it every question that still waits.
+        self.assert_allowed(self.prompt("codex", replied, codex_reply("second-question", second["question"],
+                                                                      option_label(second, 1)), session))
+        self.assertFalse(self.armed(session))
+
+    def test_an_answer_behind_a_later_one_is_logged_and_its_grant_is_not_proved(self):
+        """The proof reads the latest submitted answer. When the record first shows the first answer behind the
+        second one, the first question gets its `answered` line and a warning; the second grant keeps its own time."""
+        first, second, session = self.prepared("claude"), self.prepared("claude"), "behind"
+        self.ask_behind(first, second, session)
+        one, two = self.rows("claude", first, "answered"), self.rows("claude", second, "answered", call="second-question")
+        one[4]["timestamp"], two[4]["timestamp"] = "2026-11-20T09:04:10.000Z", "2026-11-20T09:30:00.000Z"
+        self.assert_allowed(self.tool("claude", self.record_of("both", one + two[1:]), session))
+        self.assertFalse(self.armed(session))
+        self.assertIsNone(self.record(first))
+        self.assertEqual(self.record(second)["approvedAt"], "2026-11-20T09:30:00.000Z")
+        self.assertEqual([(row["kind"], row["id"], row.get("rule")) for row in events(self.root, session=session)],
+                         [("asked", first["reportId"], None), ("asked", second["reportId"], None),
+                          ("answered", first["reportId"], None), ("warn", first["reportId"], "grant-proof"),
+                          ("answered", second["reportId"], None), ("granted", second["reportId"], None)])
+        self.assertEqual(events(self.root, session=session, kind="answered")[0]["ts"], "2026-11-20T09:04:10.000Z")
+
+    def test_a_prompt_a_compaction_and_a_resume_retire_every_armed_question(self):
+        retire = {"prompt": lambda record, session: self.prompt("claude", record, "Something else first.", session),
+                  "compact": lambda record, session: self.start("claude", record, "compact", session),
+                  "resume": lambda record, session: self.start("claude", record, "resume", session)}
+        for name, event in retire.items():
+            with self.subTest(event=name):
+                first, second = self.prepared("claude"), self.prepared("claude")
+                self.ask_behind(first, second, name)
+                self.assertEqual(self.armed_ids(name), [first["reportId"], second["reportId"]])  # both wait, oldest first
+                event(self.flow("claude", first, "asked"), name)
+                self.assertFalse(self.armed(name))
+                both = self.record_of("both-" + name, self.rows("claude", first, "answered")
+                                      + self.rows("claude", second, "answered", call="second-question")[1:])
+                self.assert_allowed(self.tool("claude", both, name))
+                self.assert_allowed(self.stop("claude", both, name))
+                self.assertEqual(events(self.root, session=name, kind="answered"), [])
+        self.assert_no_grant()
+
+    def test_the_marker_of_an_older_gate_is_still_read(self):
+        prepared = self.prepared("claude")
+        self.assert_allowed(self.ask("claude", prepared))
+        marker = pathlib.Path(self.state) / "sess.asked"
+        (entry,) = json.loads(marker.read_text(encoding="utf-8"))
+        self.assertEqual(set(entry), {"id", "options", "grant", "toolUseId"})
+        marker.write_text(json.dumps(entry), encoding="utf-8")  # one bare object: the marker before it held a list
+        self.assert_allowed(self.tool("claude", self.flow("claude", prepared, "answered")))
+        self.assertIsNotNone(self.record(prepared))
+        self.assertFalse(self.armed())
+        # A marker that holds no question is dropped at the first look, and the next call costs one stat again.
+        marker.write_text("{torn", encoding="utf-8")
+        self.assert_allowed(self.tool("claude", fixture("claude_open.jsonl")))
+        self.assertFalse(self.armed())
+
+    def test_the_marker_keeps_the_newest_questions_past_its_limit(self):
+        os.makedirs(self.state)
+        entries = [{"id": "R-{:016x}".format(number), "options": ["A", "B"], "grant": False, "toolUseId": None}
+                   for number in range(ddl_gate.ARMED_LIMIT + 2)]
+        with mock.patch.dict(os.environ, {"DDL_GATE_STATE_DIR": self.state}):
+            ddl_gate.arm("many", entries)
+            self.assertEqual(ddl_gate.armed_questions("many"), entries[2:])  # oldest first, the two oldest let go
+            ddl_gate.arm("many", [])
+            self.assertEqual((ddl_gate.armed_questions("many"), os.listdir(self.state)), ([], []))  # nothing left behind
+
+    def test_a_call_with_nothing_armed_costs_one_stat(self):
+        data = payload("claude", transcript=fixture("claude_open.jsonl"), session="quiet", cwd=self.cwd)
+        marker = os.path.join(os.path.abspath(self.state), "quiet.asked")
+        with mock.patch.dict(os.environ, {"DDL_GATE_STATE_DIR": self.state}), \
+                mock.patch.object(os.path, "exists", wraps=os.path.exists) as exists, \
+                mock.patch("builtins.open", side_effect=AssertionError("a call with nothing armed opens no file")), \
+                mock.patch.object(ddl_gate, "ledger_root", side_effect=AssertionError("nor does it look for the ledger")):
+            ddl_gate.tool_note("claude", data, {"ddl": True, "cwd": self.cwd}, None, {"state": False})
+        self.assertEqual(exists.call_args_list, [mock.call(marker)])
+
+    def test_a_leftover_file_at_the_records_name_is_no_grant_and_gives_way_to_the_record(self):
+        other = {"id": "R-" + "0" * 16, "projectKey": project_key(self.root), "root": "/synthetic", "grant": grant()}
+        leftovers = {"empty": lambda ident: "",  # what an interrupted write of the gate before this one left
+                     "torn": lambda ident: '{"id": "' + ident,
+                     "another record": lambda ident: json.dumps(other),
+                     "no grant": lambda ident: json.dumps({"id": ident, "grant": None})}
+        self.store.mkdir(parents=True)
+        for number, (name, leftover) in enumerate(leftovers.items()):
+            with self.subTest(leftover=name):
+                runtime, session = ("claude", "codex")[number % 2], "left-{}".format(number)
+                prepared = self.prepared(runtime)
+                path, ident = self.record_path(prepared), prepared["reportId"]
+                path.write_text(leftover(ident), encoding="utf-8")
+                # Every reader agrees that this is no grant.
+                self.assertNotIn(ident, self.subcommand(["status", "--cwd", self.cwd]).stdout)
+                with mock.patch.dict(os.environ, {"DDL_GATE_GRANT_DIR": self.grants}):
+                    self.assertNotIn(ident, [record["id"] for record in ddl_gate.grant_records()])
+                    self.assertIsNone(ddl_gate.read_grant(str(path), ident))
+                # The approval then writes the record over it, whole and private.
+                self.assert_allowed(self.approve(runtime, prepared, session=session))
+                self.assertEqual((self.record(prepared)["id"], self.record(prepared)["session"]), (ident, session))
+                self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+                self.assertEqual(len(events(self.root, session=session, kind="granted")), 1)
+                self.assertIn("Grant: {} ".format(ident), self.subcommand(["status", "--cwd", self.cwd]).stdout)
+        self.assertEqual(len(list(self.store.iterdir())), len(leftovers))  # the records, and no temporary file
+
+    def test_a_record_is_written_whole_or_not_at_all(self):
+        body = {"id": "R-" + "5" * 16, "projectKey": "0" * 16, "root": "/synthetic", "grant": grant(),
+                "approvedAt": "2026-11-20T09:04:10.000Z", "session": "S", "host": "claude"}
+        directory = pathlib.Path(self.grants) / body["projectKey"] / "grants"
+        with mock.patch.dict(os.environ, {"DDL_GATE_GRANT_DIR": self.grants}):
+            for name in ("write", "link"):  # the disk fills up; the file system knows no hard link
+                with self.subTest(fails=name):
+                    with mock.patch.object(os, name, side_effect=OSError("synthetic failure")):
+                        with self.assertRaises(OSError):
+                            ddl_gate.store_grant(body)
+                    self.assertEqual(os.listdir(directory), [])  # neither half a record nor the temporary file
+            self.assertIs(ddl_gate.store_grant(body), True)
+            self.assertIs(ddl_gate.store_grant(dict(body, approvedAt="2026-11-21T00:00:00.000Z")), False)  # written once
+            self.assertEqual(os.listdir(directory), [body["id"] + ".json"])
+            self.assertEqual(ddl_gate.read_grant(str(directory / (body["id"] + ".json")), body["id"]), body)
+            self.assertIsNone(ddl_gate.read_grant(str(directory / (body["id"] + ".json")), "R-" + "6" * 16))
+
+    def test_the_run_of_an_approved_plan_counts_the_plans_own_question(self):
+        """The plan is asked, answered and granted before `run-start`; its Run counts that question too."""
+        given = grant()
+        plan = self.prepared("claude", grant=given)
+        self.assert_allowed(self.approve("claude", plan))
+        started = self.subcommand(["run-start"], {"report": plan["reportId"], "items": []}, cwd=self.cwd)
+        self.assertEqual((started.returncode, started.stderr), (0, ""))
+        run = json.loads(pathlib.Path(json.loads(started.stdout)["path"]).read_text(encoding="utf-8"))
+        self.assertEqual(run["grant"], plan["reportId"])
+        later = self.prepare_report("claude", cwd=self.cwd)
+        self.assert_allowed(self.approve("claude", later, 1))
+        self.assertEqual(self.lines()[:3], [("asked", plan["reportId"], None, None), ("answered", plan["reportId"], 0, False),
+                                            ("granted", plan["reportId"], None, None)])
+        report = self.subcommand(["report", "--run", run["id"]], cwd=self.cwd)
+        self.assertEqual(report.stdout.splitlines(), [
+            "問い: 2 件（承認 1、見直し 1、時間切れ 0）", "待ち: 人間 0 分（答えまで中央値 0 分、最長 0 分）", "拒否: 0 件",
+            "許諾: {}（期限 {}、有効）".format(plan["reportId"], given["expires"][:10])])
+
+
+class GrantStoreTest(GrantFlowTest):
+    """Where the grant store lives: DDL_GATE_GRANT_DIR, else XDG_STATE_HOME/ddl-gate, else HOME/.local/state/ddl-gate."""
+
+    def setUp(self):
+        super().setUp()
+        self.home, self.variables = os.path.join(self.tmp, "home"), {}
+        os.mkdir(self.home)
+
+    def gate_env(self):
+        """The store's variables are the test's own, and HOME is never the real one: the last fallback writes below it."""
+        env = {name: value for name, value in super().gate_env().items()
+               if name not in ("DDL_GATE_GRANT_DIR", "XDG_STATE_HOME")}
+        env.update(self.variables, HOME=self.home)
+        return env
+
+    def test_each_fallback_holds_the_record_and_is_where_readers_look(self):
+        named, xdg = os.path.join(self.tmp, "named"), os.path.join(self.tmp, "xdg")
+        below_home = os.path.join(self.home, ".local")
+        # A relative value is taken from the working directory of the gate process: a disposable project here.
+        relative = os.path.join(os.getcwd(), "rel")
+        self.assertEqual(os.path.realpath(relative), os.path.realpath(str(PROJECT / "rel")))
+        self.addCleanup(shutil.rmtree, relative, True)
+        cases = [("the variable", {"DDL_GATE_GRANT_DIR": named}, named, named),
+                 ("the variable before the others", {"DDL_GATE_GRANT_DIR": named, "XDG_STATE_HOME": xdg}, named, named),
+                 ("XDG_STATE_HOME", {"XDG_STATE_HOME": xdg}, os.path.join(xdg, "ddl-gate"), xdg),
+                 ("an empty variable is unset", {"DDL_GATE_GRANT_DIR": "", "XDG_STATE_HOME": xdg},
+                  os.path.join(xdg, "ddl-gate"), xdg),
+                 ("neither variable", {}, os.path.join(below_home, "state", "ddl-gate"), below_home),
+                 ("both empty", {"DDL_GATE_GRANT_DIR": "", "XDG_STATE_HOME": ""},
+                  os.path.join(below_home, "state", "ddl-gate"), below_home),
+                 ("a relative value", {"DDL_GATE_GRANT_DIR": os.path.join("rel", "store")},
+                  os.path.join(relative, "store"), relative)]
+        for number, (name, variables, store, top) in enumerate(cases):
+            with self.subTest(case=name):
+                self.variables = variables
+                with mock.patch.dict(os.environ, self.gate_env(), clear=True):
+                    self.assertEqual(ddl_gate.grant_store(), store)  # the path alone: asking for it creates nothing
+                self.assertEqual([path for path in (named, xdg, below_home, relative) if os.path.exists(path)], [])
+                prepared, session = self.prepared("claude"), "store-{}".format(number)
+                self.assert_allowed(self.approve("claude", prepared, session=session))
+                path = pathlib.Path(store) / project_key(self.root) / "grants" / (prepared["reportId"] + ".json")
+                self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["session"], session)
+                self.assertEqual([path for path in (named, xdg, below_home, relative) if os.path.exists(path)], [top])
+                self.assertIn("Grant: {} ".format(prepared["reportId"]), self.subcommand(["status", "--cwd", self.cwd]).stdout)
+                shutil.rmtree(top)
+        self.assertFalse(os.path.exists(self.grants))  # the suite's default store was never used
+
+
+class LedgerTest(ReportFlowTest):
+    """Where the ledger lives, what the hook writes into it, and that it never touches a decision."""
+
+    def pre(self, runtime, transcript, session, cwd, **extra):
+        return self.run_gate("pre-tool-use", runtime, payload(runtime, transcript=transcript, session=session, cwd=cwd,
+                                                              **extra))
+
+    def test_linked_work_trees_resolve_to_one_ledger_root_and_one_project_key(self):
+        env = dict(os.environ, GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
+        main, linked = pathlib.Path(self.tmp) / "main tree", pathlib.Path(self.tmp) / "linked tree"
+        main.mkdir()
+
+        def git(*args):
+            proc = subprocess.run(["git", "-C", str(main), *args], capture_output=True, text=True, env=env)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+
+        git("init", "-q", "-b", "main")
+        git("config", "user.email", "fixture@example.invalid")
+        git("config", "user.name", "DDL fixture")
+        git("config", "commit.gpgSign", "false")
+        (main / "sample.txt").write_text("base\n")
+        git("add", "sample.txt")
+        git("commit", "-q", "-m", "base")
+        git("worktree", "add", "-q", "-b", "side", str(linked))
+        self.assertTrue((linked / ".git").is_file())  # a linked work tree: `.git` names its own Git directory
+        for tree in (main, linked):
+            mark_project(tree)
+            (tree / "src" / "pkg").mkdir(parents=True)
+        real = os.path.realpath(main)
+        for cwd in (main, main / "src" / "pkg", linked, linked / "src" / "pkg"):
+            with self.subTest(cwd=cwd):
+                root = ddl_gate.ledger_root(ddl_gate.project_decision(str(cwd)))
+                self.assertEqual((root, ddl_gate.project_key(root)), (real, project_key(main)))
+        # One ledger: a denial in the linked tree is written under the main one, which ignores itself.
+        self.assert_denied(self.pre("claude", fixture("claude_closed_in_turn.jsonl"), "linked", str(linked / "src" / "pkg")))
+        self.assert_denied(self.pre("claude", fixture("claude_closed_in_turn.jsonl"), "main", str(main)))
+        self.assertEqual([row["session"] for row in events(main, kind="denied")], ["linked", "main"])
+        self.assertEqual((main / ".ddl" / ".gitignore").read_text(), "*\n")
+        self.assertFalse((linked / ".ddl").exists())
+        status = subprocess.run(["git", "-C", str(main), "status", "--porcelain", "--untracked-files=all"],
+                                capture_output=True, text=True, env=env)
+        self.assertNotIn(".ddl", status.stdout)
+        # One project key: a report prepared in either tree carries it, and one grant store directory serves both.
+        for cwd in (main, linked / "src"):
+            prepared = self.prepare_report("claude", cwd=cwd, grant=grant())
+            record = json.loads((pathlib.Path(prepared["report"]).parent / "report.json").read_text(encoding="utf-8"))
+            self.assertEqual(record["projectKey"], project_key(main))
+
+    def test_root_falls_back_to_the_directory_that_carries_the_marker(self):
+        def root_of(cwd):
+            return ddl_gate.ledger_root(ddl_gate.project_decision(str(cwd)))
+
+        base = pathlib.Path(self.tmp)
+        for name in ("CLAUDE.md", ".claude/CLAUDE.md", "AGENTS.md"):  # no repository at all
+            with self.subTest(name=name):
+                project = base / ("bare-" + name.replace("/", "_"))
+                (project / "deep").mkdir(parents=True)
+                mark_project(project, name)
+                self.assertEqual(root_of(project / "deep"), os.path.realpath(project))
+        module = base / "super" / "module"  # a submodule: its Git directory is not named `.git`
+        (base / "super" / ".git" / "modules" / "module").mkdir(parents=True)
+        (module / "src").mkdir(parents=True)
+        (module / ".git").write_text("gitdir: ../.git/modules/module\n")
+        mark_project(module, "AGENTS.md")
+        self.assertEqual(root_of(module / "src"), os.path.realpath(module))
+        nested = base / "repo" / "tool"  # the marker below the repository root: the ledger sits at the root
+        (base / "repo" / ".git").mkdir(parents=True)
+        nested.mkdir()
+        mark_project(nested, "CLAUDE.md")
+        self.assertEqual(root_of(nested), os.path.realpath(base / "repo"))
+        self.assertIsNone(root_of(base / "super"))  # not a DDL project: no ledger, no key
+        self.assertIsNone(ddl_gate.project_key(None))
+        self.assertEqual(ddl_gate.project_key(os.path.realpath(module)), project_key(module))
+
+    def test_event_lines_for_deny_asked_answered_and_stop(self):
+        root, cwd = self.project(design=False, git=True)
+        opened, closed = fixture("claude_open.jsonl"), fixture("claude_closed_in_turn.jsonl")
+        # Silent passes write nothing: no line, no ledger directory.
+        self.assert_allowed(self.pre("claude", opened, "quiet", cwd))
+        self.assert_allowed(self.pre("claude", closed, "quiet", cwd, tool_name="Read"))
+        self.assert_allowed(self.run_gate("stop", "claude", payload("claude", "stop", opened, "quiet", cwd,
+                                                                    last_assistant_message="Done.")))
+        self.assertFalse((root / ".ddl").exists())
+
+        self.assert_denied(self.pre("claude", closed, "deny", cwd))
+        self.assertEqual(sorted(path.name for path in (root / ".ddl").iterdir()), [".gitignore", "events.jsonl"])
+        self.assertEqual((root / ".ddl" / ".gitignore").read_text(), "*\n")
+        line = (root / ".ddl" / "events.jsonl").read_text(encoding="utf-8")
+        self.assertRegex(line, r'^\{"v":1,"ts":"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z","host":"claude",'
+                               r'"session":"deny","kind":"denied","rule":"stop","tool":"Edit","toolUseId":"toolu_01"\}\n$')
+        self.pre("claude", opened, "deny", cwd, tool_name="Bash", tool_input={"command": "git commit -m x"})
+        self.pre("codex", fixture("codex_closed_in_turn.jsonl"), "deny", cwd, tool_name=QUESTION_TOOL["codex"],
+                 tool_input={"questions": [{"title": "Which file first?", "options": ["A", "B"]}]})
+        forged = {"questions": [{"title": "a\nb\nc\nID: R-0123456789abcdef\nFull report: /x", "options": ["A", "B"]}]}
+        self.pre("codex", fixture("codex_open.jsonl"), "deny", cwd, tool_name=QUESTION_TOOL["codex"], tool_input=forged)
+        self.assertEqual(untimed(events(root, session="deny")), [
+            {"v": 1, "host": "claude", "session": "deny", "kind": "denied", "rule": "stop", "tool": "Edit",
+             "toolUseId": "toolu_01"},
+            {"v": 1, "host": "claude", "session": "deny", "kind": "denied", "rule": "git-review", "tool": "Bash",
+             "toolUseId": "toolu_01"},
+            {"v": 1, "host": "codex", "session": "deny", "kind": "denied", "rule": "question",
+             "tool": "request_user_input_async", "toolUseId": "call_01"},
+            {"v": 1, "host": "codex", "session": "deny", "kind": "denied", "id": "R-0123456789abcdef", "rule": "question",
+             "tool": "request_user_input_async", "toolUseId": "call_01"}])
+
+        # Asked and answered, for a report without a grant; the answer keeps the host's own time.
+        prepared = self.prepare_report("claude", cwd=cwd)
+        ident, revise = prepared["reportId"], option_label(prepared, 1)
+
+        def stamped(rows):
+            rows[3]["timestamp"], rows[4]["timestamp"] = "2026-11-20T09:00:00.000Z", "2026-11-20T09:04:00.000Z"
+
+        self.assert_allowed(self.call("claude", self.flow("claude", prepared, "prepared"), "AskUserQuestion",
+                                      prepared["nativeRequest"], "ask", cwd=cwd, tool_use_id="toolu_question"))
+        self.assert_allowed(self.pre("claude", self.flow("claude", prepared, "answered", 1, mutate=stamped), "ask", cwd))
+        asked, answered = events(root, session="ask")
+        self.assertRegex(asked.pop("ts"), ISO_UTC)
+        self.assertEqual(asked, {"v": 1, "host": "claude", "session": "ask", "kind": "asked", "id": ident,
+                                 "tool": "AskUserQuestion", "toolUseId": "toolu_question"})
+        self.assertEqual(answered, {"v": 1, "ts": "2026-11-20T09:04:00.000Z", "host": "claude", "session": "ask",
+                                    "kind": "answered", "id": ident, "toolUseId": "report-question", "choice": 1,
+                                    "label": revise, "timeout": False})
+
+        # Stop, with the pending ID when the record names one; a prompt; a session start; the one warning.
+        waiting = self.prepare_report("codex", cwd=cwd)
+        for session, transcript, last in (("stop-text", opened, REPORT_TEXT),
+                                          ("stop-id", self.flow("codex", waiting, "asked"), "")):
+            runtime = "codex" if session == "stop-id" else "claude"
+            self.run_gate("stop", runtime, payload(runtime, "stop", transcript, session, cwd, last_assistant_message=last))
+        self.assertEqual(untimed(events(root, kind="stop")), [
+            {"v": 1, "host": "claude", "session": "stop-text", "kind": "stop"},
+            {"v": 1, "host": "codex", "session": "stop-id", "kind": "stop", "id": waiting["reportId"]}])
+        self.run_gate("user-prompt-submit", "claude", payload("claude", "user-prompt-submit", opened, "life", cwd, prompt="go"))
+        self.run_gate("session-start", "claude", payload("claude", "session-start", opened, "life", cwd, source="startup"))
+        for _ in range(2):  # the warning is given once per session, and logged once
+            self.pre("claude", os.path.join(self.tmp, "no-such-record.jsonl"), "life", cwd)
+        self.assertEqual(untimed(events(root, session="life")), [
+            {"v": 1, "host": "claude", "session": "life", "kind": "prompt"},
+            {"v": 1, "host": "claude", "session": "life", "kind": "session-start", "rule": "startup"},
+            {"v": 1, "host": "claude", "session": "life", "kind": "warn", "rule": "unreadable-record", "tool": "Edit",
+             "toolUseId": "toolu_01"}])
+        # A preparation is logged too, by the subcommand, in the project of its working directory.
+        self.assertEqual(untimed(events(root, kind="prepared")), [
+            {"v": 1, "host": "claude", "session": None, "kind": "prepared", "id": ident},
+            {"v": 1, "host": "codex", "session": None, "kind": "prepared", "id": waiting["reportId"]}])
+        self.assertEqual({row["kind"] for row in events(root)} - set(
+            "prepared asked answered granted denied ask stop prompt session-start warn".split()), set())
+
+    def test_push_form_denial_names_its_rule(self):
+        note = {}
+        data = payload("codex", transcript=fixture("codex_open.jsonl"), tool_name="exec_command",
+                       tool_input={"cmd": "git -C /repo push origin main"})
+        with mock.patch.dict(os.environ, {"DDL_GATE_STATE_DIR": self.state}), \
+                mock.patch.object(ddl_gate, "git_review_guard", return_value=None):
+            decision = ddl_gate.tool_decision("codex", data, note)
+        self.assertEqual(decision, ddl_gate.deny(ddl_gate.PUSH_FORM_REASON))
+        self.assertEqual((note["rule"], note["state"]), ("push-form", False))
+
+    def test_a_failed_write_changes_no_decision(self):
+        root, cwd = self.project(design=False, git=True)
+        (root / ".ddl").write_text("a file where the ledger directory belongs")
+        opened, closed = fixture("claude_open.jsonl"), fixture("claude_closed_in_turn.jsonl")
+        self.assert_denied(self.pre("claude", closed, "blocked", cwd))
+        self.assert_allowed(self.pre("claude", opened, "blocked", cwd))
+        self.assert_allowed(self.run_gate("stop", "claude", payload("claude", "stop", closed, "blocked", cwd,
+                                                                    last_assistant_message=REPORT_TEXT)))
+        self.assertTrue(self.marker("blocked").exists())
+        self.assert_allowed(self.run_gate("user-prompt-submit", "claude", payload("claude", "user-prompt-submit", opened,
+                                                                                  "blocked", cwd, prompt="go")))
+        self.assert_allowed(self.run_gate("session-start", "claude", payload("claude", "session-start", opened, "blocked",
+                                                                             cwd, source="startup")))
+        prepared = self.prepare_report("claude", cwd=cwd, grant=grant())  # prepared although its line is lost
+        self.assert_allowed(self.call("claude", self.flow("claude", prepared, "prepared"), "AskUserQuestion",
+                                      prepared["nativeRequest"], "blocked", cwd=cwd))
+        self.assert_allowed(self.pre("claude", self.flow("claude", prepared, "answered"), "blocked", cwd))
+        self.assertTrue((root / ".ddl").is_file())
+        # The grant does not depend on the ledger; and a store that cannot be created changes nothing either.
+        store = pathlib.Path(self.grants) / project_key(root) / "grants"
+        self.assertEqual([path.name for path in store.iterdir()], [prepared["reportId"] + ".json"])
+        shutil.rmtree(self.grants)
+        pathlib.Path(self.grants).write_text("a file where the grant store belongs")
+        again = self.prepare_report("claude", cwd=cwd, grant=grant())
+        self.assert_allowed(self.call("claude", self.flow("claude", again, "prepared"), "AskUserQuestion",
+                                      again["nativeRequest"], "blocked", cwd=cwd))
+        self.assert_allowed(self.pre("claude", self.flow("claude", again, "answered"), "blocked", cwd))
+        self.assert_denied(self.pre("claude", closed, "blocked", cwd))
+        self.assertTrue(pathlib.Path(self.grants).is_file())
+
+    def test_the_ignore_file_is_written_whenever_it_is_missing_and_never_rewritten(self):
+        root, cwd = self.project(design=False, git=True)
+        closed, ledger = fixture("claude_closed_in_turn.jsonl"), root / ".ddl"
+        ignore = ledger / ".gitignore"
+        ledger.mkdir()  # a directory that was there before the gate first wrote into it
+        self.assert_denied(self.pre("claude", closed, "one", cwd))
+        self.assertEqual(ignore.read_text(), "*\n")
+        self.assertEqual(sorted(path.name for path in ledger.iterdir()), [".gitignore", "events.jsonl"])
+        ignore.unlink()  # an earlier write that failed, or a file somebody removed
+        self.assert_denied(self.pre("claude", closed, "two", cwd))
+        self.assertEqual(ignore.read_text(), "*\n")
+        ignore.write_text("*\n!runs/\n")  # the project's own file stays as it is
+        before = ignore.stat().st_mtime_ns
+        self.assert_denied(self.pre("claude", closed, "three", cwd))
+        self.assertEqual((ignore.read_text(), ignore.stat().st_mtime_ns), ("*\n!runs/\n", before))
+        self.assertEqual([row["session"] for row in events(root, kind="denied")], ["one", "two", "three"])
+        # The subcommands write through the same directory.
+        prepared = self.prepare_report("claude", cwd=cwd)
+        ignore.unlink()
+        started = self.subcommand(["run-start"], {"report": prepared["reportId"], "items": []}, cwd=cwd)
+        self.assertEqual((started.returncode, started.stderr), (0, ""))
+        self.assertEqual(ignore.read_text(), "*\n")
+        self.assertEqual(sorted(path.name for path in ledger.iterdir()), [".gitignore", "events.jsonl", "runs"])
+        # While the file cannot be written, no line enters a ledger that would not ignore itself; nothing is raised.
+        ignore.unlink()
+        lines = len(events(root))
+        with mock.patch.object(ddl_gate, "write_whole", side_effect=OSError("synthetic failure")):
+            ddl_gate.ledger_event(os.path.realpath(root), "claude", "four", "denied")
+        self.assertEqual((len(events(root)), ignore.exists()), (lines, False))
+        ddl_gate.ledger_event(os.path.realpath(root), "claude", "four", "denied")
+        self.assertEqual((len(events(root)), ignore.read_text()), (lines + 1, "*\n"))
+
+    def test_a_ledger_directory_that_is_a_symbolic_link_is_not_followed(self):
+        """Following the link would write the ignore file and the events outside the project."""
+        root, cwd = self.project(design=False, git=True)
+        outside = pathlib.Path(tempfile.mkdtemp(prefix="ddl-gate-elsewhere-"))
+        self.addCleanup(shutil.rmtree, outside, True)
+        (root / ".ddl").symlink_to(outside, target_is_directory=True)
+        closed = fixture("claude_closed_in_turn.jsonl")
+        self.assert_denied(self.pre("claude", closed, "one", cwd))  # the decision stands; nothing is written
+        self.assertEqual(list(outside.iterdir()), [])
+        prepared = self.prepare_report("claude", cwd=cwd)
+        started = self.subcommand(["run-start"], {"report": prepared["reportId"], "items": []}, cwd=cwd)
+        self.assertEqual(started.returncode, 2)
+        self.assertIn("symbolic link", started.stderr)
+        self.assertEqual(list(outside.iterdir()), [])
+
+
+COUNT_SAMPLE = {"ja": ["問い: 3 件（承認 2、見直し 1、時間切れ 0）", "待ち: 人間 12 分（答えまで中央値 4 分、最長 7 分）", "拒否: 2 件"],
+                "en": ["Questions: 3 (approved 2, revised 1, timed out 0)",
+                       "Waiting: human 12 min (median to answer 4 min, longest 7 min)", "Denials: 2"]}
+
+
+class CountReportTest(ReportFlowTest):
+    """`report`: the four count lines, from a conversation record, a session's ledger events, or a Run."""
+
+    def lines(self, *argv, cwd=None):
+        proc = self.subcommand(["report", *argv], cwd=cwd)
+        self.assertEqual((proc.returncode, proc.stderr), (0, ""))
+        return proc.stdout.splitlines()
+
+    def write_grant(self, ident, key="0" * 16, session="S", **changes):
+        """A grant record written by hand; returns its expiry date."""
+        given = grant(**changes)
+        directory = pathlib.Path(self.grants) / key / "grants"
+        directory.mkdir(parents=True, exist_ok=True)
+        record = {"id": ident, "projectKey": key, "root": "/synthetic", "grant": given,
+                  "approvedAt": "2026-11-20T09:04:10.000Z", "session": session, "host": "claude"}
+        (directory / (ident + ".json")).write_text(json.dumps(record), encoding="utf-8")
+        return given["expires"][:10]
+
+    def event(self, clock, kind, session="S", **fields):
+        return dict({"v": 1, "ts": "2026-11-20T" + clock + ".000Z", "host": "claude", "session": session, "kind": kind},
+                    **fields)
+
+    def ledger(self, root, rows, torn=True):
+        (root / ".ddl").mkdir(exist_ok=True)
+        text = "".join(json.dumps(row) + "\n" for row in rows) + ('{"v":1,"ts":"2026-11-20T10:' if torn else "")
+        (root / ".ddl" / "events.jsonl").write_text(text, encoding="utf-8")
+
+    def sample(self):
+        """One session's events: four questions (two approved, one revised, one timed out), duplicates from a
+        second install, and denials of this and of another session."""
+        return [
+            self.event("10:00:00", "asked", id="R-" + "a" * 16, tool="AskUserQuestion", toolUseId="c1"),
+            self.event("10:00:00", "asked", id="R-" + "a" * 16, tool="AskUserQuestion", toolUseId="c1"),  # the other install
+            self.event("10:04:00", "answered", id="R-" + "a" * 16, toolUseId="c1", choice=0, label="Approve", timeout=False),
+            self.event("10:06:00", "denied", tool="Edit", toolUseId="d1", rule="stop"),
+            self.event("10:06:00", "denied", tool="Edit", toolUseId="d1", rule="stop"),
+            self.event("10:07:00", "denied", tool="Bash", toolUseId="d2", rule="git-review"),
+            self.event("10:08:00", "denied", session="OTHER", tool="Edit", toolUseId="d1", rule="stop"),
+            self.event("10:10:00", "asked", id="G-" + "b" * 16, tool="AskUserQuestion", toolUseId="c2"),
+            self.event("10:11:00", "answered", id="G-" + "b" * 16, toolUseId="c2", choice=1, label="Revise", timeout=False),
+            self.event("10:20:00", "asked", id="R-" + "c" * 16, tool="AskUserQuestion", toolUseId="c3"),
+            self.event("10:21:00", "answered", id="R-" + "c" * 16, toolUseId="c3", timeout=True),
+            self.event("10:30:00", "asked", id="R-" + "d" * 16, tool="AskUserQuestion", toolUseId="c4"),
+            # The answer's call ID differs from the asked one: joined by the question's ID alone.
+            self.event("10:37:00", "answered", id="R-" + "d" * 16, toolUseId="c4-other", choice=0, label="Approve",
+                       timeout=False),
+            self.event("10:38:00", "stop", id="R-" + "d" * 16), self.event("10:39:00", "prompt"),
+            {"v": 2, "ts": "2026-11-20T10:40:00.000Z", "session": "S", "kind": "denied", "toolUseId": "future"},
+        ]
+
+    def test_claude_and_codex_transcripts_with_a_timeout_counted_apart(self):
+        claude = ["--transcript", fixture("report_count_claude.jsonl"), "--runtime", "claude"]
+        self.assertEqual(self.lines(*claude), ["問い: 5 件（承認 2、見直し 1、時間切れ 1）",
+                                               "待ち: 人間 12 分（答えまで中央値 4 分、最長 7 分）", "拒否: 未計測", "許諾: なし"])
+        self.assertEqual(self.lines(*claude, "--language", "ja"), self.lines(*claude))
+        self.assertEqual(self.lines("--language=en", "--runtime=claude", "--transcript=" + fixture("report_count_claude.jsonl")),
+                         ["Questions: 5 (approved 2, revised 1, timed out 1)",
+                          "Waiting: human 12 min (median to answer 4 min, longest 7 min)", "Denials: not measured",
+                          "Grant: none"])
+        codex = ["--transcript", fixture("report_count_codex.jsonl"), "--runtime", "codex"]
+        self.assertEqual(self.lines(*codex), ["問い: 3 件（承認 1、見直し 1、時間切れ 0）",
+                                              "待ち: 人間 7 分（答えまで中央値 4 分、最長 5 分）", "拒否: 未計測", "許諾: なし"])
+        self.assertEqual(self.lines(*codex, "--language", "en"), [
+            "Questions: 3 (approved 1, revised 1, timed out 0)", "Waiting: human 7 min (median to answer 4 min, longest 5 min)",
+            "Denials: not measured", "Grant: none"])
+        self.assertFalse(os.path.exists(self.grants))  # reading creates no store
+        # The grant line: the latest record among the reports the record asked about, whatever its project.
+        day = self.write_grant("R-1111111111111111")
+        self.assertEqual(self.lines(*claude)[3], "許諾: R-1111111111111111（期限 {}、有効）".format(day))
+        self.assertEqual(self.lines(*claude, "--language", "en")[3], "Grant: R-1111111111111111 (expires {}, valid)".format(day))
+        self.write_grant("R-9999999999999999")  # a grant of a report this record never asked about
+        self.write_grant("R-bbbbbbbbbbbbbbbb", key="1" * 16, expires="2020-01-01T00:00:00Z")
+        self.assertEqual(self.lines(*claude)[3], "許諾: R-1111111111111111（期限 {}、有効）".format(day))
+        self.assertEqual(self.lines(*codex)[3], "許諾: R-bbbbbbbbbbbbbbbb（期限 2020-01-01、期限切れ）")
+        self.assertEqual(self.lines(*codex, "--language", "en")[3], "Grant: R-bbbbbbbbbbbbbbbb (expires 2020-01-01, expired)")
+
+    def test_a_value_that_cannot_be_derived_is_not_measured(self):
+        for runtime in ("claude", "codex"):
+            with self.subTest(runtime=runtime):
+                prepared = self.prepare_report(runtime)
+                # These records carry no timestamps: the answer is counted, its time is not estimated.
+                answered = self.lines("--transcript", self.flow(runtime, prepared, "answered"), "--runtime", runtime)
+                self.assertEqual(answered, ["問い: 1 件（承認 1、見直し 0、時間切れ 0）", "待ち: 未計測", "拒否: 未計測", "許諾: なし"])
+                # An unanswered question waited for nobody's answer yet.
+                asked = self.lines("--transcript", self.flow(runtime, prepared, "asked"), "--runtime", runtime, "--language", "en")
+                self.assertEqual(asked, ["Questions: 1 (approved 0, revised 0, timed out 0)",
+                                         "Waiting: human 0 min (median to answer not measured, longest not measured)",
+                                         "Denials: not measured", "Grant: none"])
+                missing = os.path.join(self.tmp, "no-such-record.jsonl")
+                self.assertEqual(self.lines("--transcript", missing, "--runtime", runtime),
+                                 ["問い: 未計測", "待ち: 未計測", "拒否: 未計測", "許諾: 未計測"])
+                self.assertEqual(self.lines("--transcript", missing, "--runtime", runtime, "--language", "en"),
+                                 ["Questions: not measured", "Waiting: not measured", "Denials: not measured",
+                                  "Grant: not measured"])
+        root, cwd = self.project(design=False, git=True)
+        # A session of a project without a ledger (an older gate, or nothing logged yet), and outside any project.
+        self.assertEqual(self.lines("--session", "S", cwd=cwd), ["問い: 未計測", "待ち: 未計測", "拒否: 未計測", "許諾: なし"])
+        self.assertEqual(self.lines("--session", "S", cwd=self.tmp), ["問い: 未計測", "待ち: 未計測", "拒否: 未計測", "許諾: 未計測"])
+        self.assertFalse((root / ".ddl").exists())  # reading creates no ledger
+
+    def test_session_counts_come_from_the_ledger(self):
+        root, cwd = self.project(design=False, git=True)
+        self.ledger(root, self.sample())
+        self.assertEqual(self.lines("--session", "S", cwd=cwd), [
+            "問い: 4 件（承認 2、見直し 1、時間切れ 1）", COUNT_SAMPLE["ja"][1], "拒否: 2 件", "許諾: なし"])
+        self.assertEqual(self.lines("--session=S", "--language=en", "--runtime", "claude", cwd=os.path.join(cwd, ".claude")), [
+            "Questions: 4 (approved 2, revised 1, timed out 1)", COUNT_SAMPLE["en"][1], "Denials: 2", "Grant: none"])
+        self.assertEqual(self.lines("--session", "OTHER", cwd=cwd), [
+            "問い: 0 件（承認 0、見直し 0、時間切れ 0）", "待ち: 人間 0 分（答えまで中央値 未計測、最長 未計測）", "拒否: 1 件", "許諾: なし"])
+        # The grant line: the session's own record in this project's store, the latest when it has several.
+        day = self.write_grant("R-" + "a" * 16, key=project_key(root))
+        self.write_grant("R-" + "9" * 16, key=project_key(root), session="OTHER")
+        self.write_grant("R-" + "8" * 16, session="S")  # another project's
+        self.assertEqual(self.lines("--session", "S", cwd=cwd)[3], "許諾: R-{}（期限 {}、有効）".format("a" * 16, day))
+        # The contract's own sample, line for line.
+        rows = [row for row in self.sample() if row.get("id") != "R-" + "c" * 16]
+        self.ledger(root, rows, torn=False)
+        self.assertEqual(self.lines("--session", "S", cwd=cwd), COUNT_SAMPLE["ja"] + ["許諾: R-{}（期限 {}、有効）".format("a" * 16, day)])
+        self.assertEqual(self.lines("--session", "S", "--language", "en", cwd=cwd),
+                         COUNT_SAMPLE["en"] + ["Grant: R-{} (expires {}, valid)".format("a" * 16, day)])
+
+    def test_run_counts_cover_its_start_until_the_next_run(self):
+        root, cwd = self.project(design=False, git=True)
+        self.ledger(root, self.sample())
+        runs = {"N-000000000001": ("10:05:00", "R-" + "a" * 16), "N-000000000002": ("10:25:00", "R-" + "7" * 16)}
+        for run_id, (clock, report) in runs.items():
+            directory = root / ".ddl" / "runs" / run_id
+            directory.mkdir(parents=True)
+            (directory / "run.json").write_text(json.dumps({
+                "id": run_id, "report": report, "grant": None, "startedAt": "2026-11-20T" + clock + ".000Z", "items": []}))
+        day = self.write_grant("R-" + "a" * 16, key=project_key(root), session="planner")
+        # The first Run: every session's lines from its start to the second Run's start, and the question of its
+        # own plan, which was asked at 10:00 and answered at 10:04, before the Run started.
+        self.assertEqual(self.lines("--run", "N-000000000001", cwd=cwd), [
+            "問い: 3 件（承認 1、見直し 1、時間切れ 1）", "待ち: 人間 5 分（答えまで中央値 3 分、最長 4 分）", "拒否: 3 件",
+            "許諾: R-{}（期限 {}、有効）".format("a" * 16, day)])
+        self.assertEqual(self.lines("--run=N-000000000002", "--language", "en", cwd=cwd), [
+            "Questions: 1 (approved 1, revised 0, timed out 0)", "Waiting: human 7 min (median to answer 7 min, longest 7 min)",
+            "Denials: 0", "Grant: none"])
+        os.unlink(root / ".ddl" / "events.jsonl")  # the Run is known, its events are not
+        self.assertEqual(self.lines("--run", "N-000000000001", cwd=cwd), [
+            "問い: 未計測", "待ち: 未計測", "拒否: 未計測", "許諾: R-{}（期限 {}、有効）".format("a" * 16, day)])
+
+    def test_a_run_counts_the_question_of_its_own_plan(self):
+        """A plan is asked, answered and granted before `run-start`: its lines carry the report's ID, not the
+        Run's dates."""
+        root, cwd = self.project(design=False, git=True)
+        plan, review, other = "R-" + "a" * 16, "G-" + "b" * 16, "R-" + "c" * 16
+        run, following = "N-000000000001", "N-000000000002"
+        self.ledger(root, [
+            self.event("09:40:00", "asked", id=other, tool="AskUserQuestion", toolUseId="c0"),  # the plan before this one
+            self.event("09:41:00", "answered", id=other, toolUseId="c0", choice=1, label="Revise", timeout=False),
+            self.event("09:50:00", "prepared", session=None, id=plan),
+            self.event("09:51:00", "denied", tool="Edit", toolUseId="d0", rule="stop"),  # before the Run, about no report
+            self.event("09:52:00", "asked", id=plan, tool="AskUserQuestion", toolUseId="c1"),
+            self.event("09:52:00", "asked", id=plan, tool="AskUserQuestion", toolUseId="c1"),  # the other install's copy
+            self.event("09:53:00", "denied", id=plan, tool="Edit", toolUseId="d1", rule="stop"),  # held while the plan waited
+            self.event("09:58:00", "answered", id=plan, toolUseId="c1", choice=0, label="Approve", timeout=False),
+            self.event("09:58:00", "granted", id=plan, toolUseId="c1"),
+            self.event("10:00:00", "prepared", session=None, id=run, run=run),
+            self.event("10:10:00", "asked", id=review, tool="AskUserQuestion", toolUseId="c2"),
+            self.event("10:12:00", "answered", id=review, toolUseId="c2", choice=0, label="Commit", timeout=False),
+            self.event("10:30:00", "prepared", session=None, id=following, run=following),
+            self.event("10:40:00", "denied", tool="Edit", toolUseId="d2", rule="stop")])
+        for run_id, clock, report in ((run, "10:00:00", plan), (following, "10:30:00", "R-" + "7" * 16)):
+            directory = root / ".ddl" / "runs" / run_id
+            directory.mkdir(parents=True)
+            (directory / "run.json").write_text(json.dumps({
+                "id": run_id, "report": report, "grant": None, "startedAt": "2026-11-20T" + clock + ".000Z", "items": []}))
+        day = self.write_grant(plan, key=project_key(root))
+        # Both questions, each once; the waiting covers both: 6 minutes for the plan and 2 for the review.
+        self.assertEqual(self.lines("--run", run, cwd=cwd), [
+            "問い: 2 件（承認 2、見直し 0、時間切れ 0）", "待ち: 人間 8 分（答えまで中央値 4 分、最長 6 分）", "拒否: 1 件",
+            "許諾: {}（期限 {}、有効）".format(plan, day)])
+        # The Run after it counts neither that plan's question nor anything dated before its own start.
+        self.assertEqual(self.lines("--run", following, cwd=cwd), [
+            "問い: 0 件（承認 0、見直し 0、時間切れ 0）", "待ち: 人間 0 分（答えまで中央値 未計測、最長 未計測）", "拒否: 1 件",
+            "許諾: なし"])
+
+    def test_a_run_reports_in_the_language_of_its_plan(self):
+        root, cwd = self.project(design=False, git=True)
+        english = ["Questions: 0 (approved 0, revised 0, timed out 0)",
+                   "Waiting: human 0 min (median to answer not measured, longest not measured)", "Denials: 0", "Grant: none"]
+        japanese = ["問い: 0 件（承認 0、見直し 0、時間切れ 0）", "待ち: 人間 0 分（答えまで中央値 未計測、最長 未計測）", "拒否: 0 件",
+                    "許諾: なし"]
+
+        def started(language):
+            prepared = self.prepare_report("claude", cwd=cwd, language=language)
+            proc = self.subcommand(["run-start"], {"report": prepared["reportId"], "items": []}, cwd=cwd)
+            self.assertEqual((proc.returncode, proc.stderr), (0, ""))
+            return json.loads(proc.stdout)
+
+        for language, lines in (("en", english), ("en-US", english), ("fr", english), ("ja", japanese), ("ja-JP", japanese)):
+            with self.subTest(language=language):
+                out = started(language)
+                self.assertEqual(json.loads(pathlib.Path(out["path"]).read_text(encoding="utf-8"))["language"], language)
+                self.assertEqual(self.lines("--run", out["run"], cwd=cwd), lines)  # the plan's language without the flag
+                self.assertEqual(self.lines("--run", out["run"], "--language", "ja", cwd=cwd), japanese)  # the flag wins
+                self.assertEqual(self.lines("--language=en", "--run", out["run"], cwd=cwd), english)
+        # A Run that names no language (one written before the key existed) reports in Japanese.
+        out = started("en")
+        path = pathlib.Path(out["path"])
+        run = json.loads(path.read_text(encoding="utf-8"))
+        for stored in ({}, {"language": None}, {"language": 7}):
+            with self.subTest(stored=stored):
+                path.write_text(json.dumps(dict({key: value for key, value in run.items() if key != "language"}, **stored)))
+                self.assertEqual(self.lines("--run", out["run"], cwd=cwd), japanese)
+                self.assertEqual(self.lines("--run", out["run"], "--language", "en", cwd=cwd), english)
+        # The other two sources keep Japanese as their default.
+        self.assertEqual(self.lines("--session", "S", cwd=cwd)[2], "拒否: 0 件")
+        self.assertEqual(self.lines("--transcript", fixture("report_count_claude.jsonl"), "--runtime", "claude")[2], "拒否: 未計測")
+
+    def test_usage_errors_exit_2(self):
+        root, cwd = self.project(design=False, git=True)
+        record = fixture("report_count_claude.jsonl")
+        for argv in ([], ["--language", "ja"], ["--transcript", record], ["--transcript", record, "--runtime", "gemini"],
+                     ["--transcript", record, "--runtime", "claude", "--session", "S"], ["--session", "S", "--run", "N-000000000001"],
+                     ["--session"], ["--session", ""], ["--session", "S", "--language", "fr"], ["--session", "S", "--session", "T"],
+                     ["--session", "S", "--verbose"], ["S"], ["--run", "N-1"], ["--run", "R-0123456789abcdef"],
+                     ["--run", "N-00000000000G"], ["--run", "N-000000000009"]):
+            with self.subTest(argv=argv):
+                proc = self.subcommand(["report", *argv], cwd=cwd)
+                self.assertEqual((proc.returncode, proc.stdout), (2, ""))
+                self.assertTrue(proc.stderr.startswith("DDL report: "), proc.stderr)
+        outside = self.subcommand(["report", "--run", "N-000000000001"], cwd=self.tmp)  # a Run lives in a project's ledger
+        self.assertEqual((outside.returncode, outside.stdout), (2, ""))
+        self.assertFalse((root / ".ddl").exists())
+
+
+class RunTest(GateTest):
+    """`run-start` and `run-item`: the Run's record in the ledger. No hook reads it."""
+
+    ITEMS = [{"id": "I1", "kind": "write", "files": ["tools/ddl_gate.py", "tools/test_ddl_gate.py"]},
+             {"id": "I2", "kind": "verify", "after": ["I1"]}, {"id": "I3", "kind": "explore"},
+             {"id": "I4", "kind": "compute", "files": [], "after": ["I2", "I3"]}]
+
+    def setUp(self):
+        super().setUp()
+        self.root, self.cwd = self.project(design=False, git=True)
+
+    def start(self, data, *argv, cwd=None):
+        return self.subcommand(["run-start", *argv], data, cwd or self.cwd)
+
+    def item(self, *argv, cwd=None):
+        return self.subcommand(["run-item", *argv], cwd=cwd or self.cwd)
+
+    def started(self, runtime="claude", **fields):
+        prepared = self.prepare_report(runtime, cwd=self.cwd, **fields)
+        proc = self.start({"report": prepared["reportId"], "items": self.ITEMS})
+        self.assertEqual((proc.returncode, proc.stderr), (0, ""))
+        return prepared, json.loads(proc.stdout)
+
+    def test_run_start_writes_the_run_and_appends_an_event(self):
+        prepared, out = self.started()
+        self.assertEqual(set(out), {"run", "path"})
+        self.assertRegex(out["run"], r"^N-[0-9a-f]{12}$")
+        path = pathlib.Path(os.path.realpath(self.root)) / ".ddl" / "runs" / out["run"] / "run.json"
+        self.assertEqual(out["path"], str(path))
+        run = json.loads(path.read_text(encoding="utf-8"))
+        self.assertRegex(run.pop("startedAt"), ISO_UTC)
+        self.assertEqual(run, {"id": out["run"], "report": prepared["reportId"], "grant": None, "language": "ja", "items": [
+            {"id": "I1", "kind": "write", "files": ["tools/ddl_gate.py", "tools/test_ddl_gate.py"], "after": [], "status": "ready"},
+            {"id": "I2", "kind": "verify", "files": [], "after": ["I1"], "status": "ready"},
+            {"id": "I3", "kind": "explore", "files": [], "after": [], "status": "ready"},
+            {"id": "I4", "kind": "compute", "files": [], "after": ["I2", "I3"], "status": "ready"}]})
+        self.assertEqual(untimed(events(self.root, run=out["run"])), [
+            {"v": 1, "host": "claude", "session": None, "kind": "prepared", "id": out["run"], "run": out["run"]}])
+        self.assertEqual((self.root / ".ddl" / ".gitignore").read_text(), "*\n")
+        # One Run per approved plan: a second start for the same report is refused and names the first.
+        again = self.start({"report": prepared["reportId"], "items": []})
+        self.assertEqual((again.returncode, again.stdout), (2, ""))
+        self.assertIn(out["run"], again.stderr)
+        self.assertEqual(os.listdir(self.root / ".ddl" / "runs"), [out["run"]])
+
+    def test_run_names_the_grant_only_when_its_record_exists(self):
+        granted = self.prepare_report("codex", cwd=self.cwd, grant=grant())
+        store = pathlib.Path(self.grants) / project_key(self.root) / "grants"
+        store.mkdir(parents=True)
+        (store / (granted["reportId"] + ".json")).write_text(json.dumps({"id": granted["reportId"], "grant": grant()}))
+        proc = self.start({"report": granted["reportId"], "items": []}, "--runtime", "codex")
+        self.assertEqual((proc.returncode, proc.stderr), (0, ""))
+        run = json.loads(pathlib.Path(json.loads(proc.stdout)["path"]).read_text(encoding="utf-8"))
+        self.assertEqual((run["grant"], run["report"], run["items"]), (granted["reportId"], granted["reportId"], []))
+        self.assertEqual(events(self.root, kind="prepared", run=run["id"])[0]["host"], "codex")
+        unapproved = self.prepare_report("claude", cwd=self.cwd, grant=grant())  # prepared, never approved: no record
+        proc = self.start({"report": unapproved["reportId"], "items": []})
+        self.assertIsNone(json.loads(pathlib.Path(json.loads(proc.stdout)["path"]).read_text(encoding="utf-8"))["grant"])
+        # A file at the record's name is the grant only when it parses as that grant's record.
+        for name, leftover in (("empty", lambda ident: ""), ("torn", lambda ident: '{"id": "' + ident),
+                               ("another record", lambda ident: json.dumps({"id": granted["reportId"], "grant": grant()})),
+                               ("no grant", lambda ident: json.dumps({"id": ident, "grant": None})),
+                               ("a list", lambda ident: json.dumps([ident]))):
+            with self.subTest(leftover=name):
+                prepared = self.prepare_report("claude", cwd=self.cwd, grant=grant())
+                (store / (prepared["reportId"] + ".json")).write_text(leftover(prepared["reportId"]), encoding="utf-8")
+                proc = self.start({"report": prepared["reportId"], "items": []})
+                self.assertEqual((proc.returncode, proc.stderr), (0, ""))
+                run = json.loads(pathlib.Path(json.loads(proc.stdout)["path"]).read_text(encoding="utf-8"))
+                self.assertIsNone(run["grant"])
+                report = self.subcommand(["report", "--run", run["id"]], cwd=self.cwd)
+                self.assertEqual(report.stdout.splitlines()[3], "許諾: なし")
+
+    def test_run_start_input_errors_exit_2_and_write_nothing(self):
+        prepared = self.prepare_report("claude", cwd=self.cwd)
+        elsewhere = self.prepare_report("claude")  # prepared in the default project
+        report, item = prepared["reportId"], {"id": "I1", "kind": "write"}
+        cases = ["not json", [], {}, {"report": report}, {"items": []}, {"report": report, "items": [], "extra": 1},
+                 {"report": "R-0123", "items": []}, {"report": "G-0123456789abcdef", "items": []},
+                 {"report": "R-0123456789abcdef", "items": []}, {"report": elsewhere["reportId"], "items": []},
+                 {"report": report, "items": {}}, {"report": report, "items": ["I1"]},
+                 {"report": report, "items": [{"id": "I1"}]}, {"report": report, "items": [dict(item, kind="deploy")]},
+                 {"report": report, "items": [dict(item, id="")]}, {"report": report, "items": [dict(item, id="a b")]},
+                 {"report": report, "items": [dict(item, status="done")]}, {"report": report, "items": [item, item]},
+                 {"report": report, "items": [dict(item, files="x.py")]}, {"report": report, "items": [dict(item, files=["a\nb"])]},
+                 {"report": report, "items": [dict(item, after=["I0"])]},  # a dependency outside this Run
+                 {"report": report, "items": [dict(item, after=["I1"])]},
+                 {"report": report, "items": [dict(item, after=["I2"]), {"id": "I2", "kind": "verify", "after": ["I1"]}]}]
+        for data in cases:
+            with self.subTest(data=data):
+                proc = self.start(data)
+                self.assertEqual((proc.returncode, proc.stdout), (2, ""))
+                self.assertTrue(proc.stderr.startswith("DDL run: "), proc.stderr)
+        for argv, cwd in ((["--runtime", "codex"], self.cwd), (["--runtime", "gemini"], self.cwd), (["--force"], self.cwd),
+                          ([], self.tmp)):  # the report's own runtime; a known runtime; no other flag; a DDL project
+            with self.subTest(argv=argv, cwd=cwd):
+                proc = self.start({"report": report, "items": [item]}, *argv, cwd=cwd)
+                self.assertEqual((proc.returncode, proc.stdout), (2, ""))
+        self.assertFalse((self.root / ".ddl" / "runs").exists())
+        self.assertEqual(self.start({"report": report, "items": [item]}, "--runtime=claude").returncode, 0)
+
+    def test_run_item_sets_one_status(self):
+        _, out = self.started()
+        path = pathlib.Path(out["path"])
+        for status in ddl_gate.ITEM_STATUSES:
+            with self.subTest(status=status):
+                proc = self.item(out["run"], "I2", status)
+                self.assertEqual((proc.returncode, proc.stderr), (0, ""))
+                self.assertEqual(json.loads(proc.stdout), {"run": out["run"], "item": "I2", "status": status})
+                run = json.loads(path.read_text(encoding="utf-8"))
+                self.assertEqual([item["status"] for item in run["items"]], ["ready", status, "ready", "ready"])
+        self.assertEqual(os.listdir(path.parent), ["run.json"])  # replaced in place, nothing left beside it
+        before = path.read_bytes()
+        for argv in ([], [out["run"]], [out["run"], "I2"], [out["run"], "I2", "done", "extra"], [out["run"], "I2", "passed"],
+                     [out["run"], "I9", "done"], ["N-000000000000", "I2", "done"], ["N-1", "I2", "done"],
+                     ["R-0123456789abcdef", "I2", "done"]):
+            with self.subTest(argv=argv):
+                proc = self.item(*argv)
+                self.assertEqual((proc.returncode, proc.stdout), (2, ""))
+                self.assertTrue(proc.stderr.startswith("DDL run: "), proc.stderr)
+        self.assertEqual(self.item(out["run"], "I2", "done", cwd=self.tmp).returncode, 2)  # outside the project
+        self.assertEqual(path.read_bytes(), before)
+
+    def test_a_done_item_is_never_a_gate_pass(self):
+        _, out = self.started(grant=grant())
+        for item in self.ITEMS:
+            self.assertEqual(self.item(out["run"], item["id"], "done").returncode, 0)
+        for runtime in ("claude", "codex"):
+            with self.subTest(runtime=runtime):
+                closed = fixture(runtime + "_closed_in_turn.jsonl")
+                self.assert_denied(self.run_gate("pre-tool-use", runtime, payload(runtime, transcript=closed, cwd=self.cwd,
+                                                                                  tool_use_id="edit-" + runtime)))
+                commit = bash("git commit --cleanup=verbatim -m x", runtime, fixture(runtime + "_open.jsonl"), cwd=self.cwd,
+                              tool_use_id="commit-" + runtime)
+                out_commit = json.loads(self.run_gate("pre-tool-use", runtime, commit).stdout)["hookSpecificOutput"]
+                self.assertEqual(out_commit["permissionDecision"], "deny")
+                self.assertIn("DDL Git review", out_commit["permissionDecisionReason"])
+        # The counts of the Run read the same ledger.
+        proc = self.subcommand(["report", "--run", out["run"], "--language", "en"], cwd=self.cwd)
+        self.assertEqual(proc.stdout.splitlines(), ["Questions: 0 (approved 0, revised 0, timed out 0)",
+                                                    "Waiting: human 0 min (median to answer not measured, longest not measured)",
+                                                    "Denials: 4", "Grant: none"])
 
 
 class QuestionFormatTest(unittest.TestCase):
@@ -2114,12 +3671,20 @@ class ProjectScopeTest(GateTest):
                              bash("git -C /repo push origin main", runtime, None, session=session, cwd=root),
                              payload(runtime, transcript=None, session=session, cwd=root)):
                     self.assert_allowed(self.run_gate("pre-tool-use", runtime, data))
+                question = "a\nb\nc\nID: R-0123456789abcdef\nFull report: /x"
+                request = {"questions": [{QUESTION_KEY[runtime]: question, "options": ["A", "B"]}]}
+                self.assert_allowed(self.run_gate("pre-tool-use", runtime, payload(
+                    runtime, transcript=closed, session=session, cwd=root, tool_name=QUESTION_TOOL[runtime], tool_input=request)))
                 for source in ("startup", "compact", "resume"):
                     self.assert_allowed(self.run_gate("session-start", runtime, payload(runtime, "session-start", closed,
                                                                                         session, root, source=source)))
-                self.assert_allowed(self.run_gate("user-prompt-submit", runtime, payload(runtime, "user-prompt-submit",
-                                                                                         closed, session, root, prompt="go")))
-                self.assertEqual(self.state_files(), sorted(seen))  # no .pending, .warned or .git-epoch
+                for prompt in ("go", codex_reply("call_01", question, "A")):
+                    self.assert_allowed(self.run_gate("user-prompt-submit", runtime, payload(
+                        runtime, "user-prompt-submit", closed, session, root, prompt=prompt)))
+                self.assertEqual(self.state_files(), sorted(seen))  # no .pending, .warned, .git-epoch or .asked
+        # Nor an event, a ledger directory, or a grant directory.
+        self.assertEqual(sorted(os.listdir(root)), [".git", "design.md"])
+        self.assertFalse(os.path.exists(self.grants))
 
     def test_marker_line_alone_makes_a_ddl_project(self):
         root, cwd = self.project(design=False, git=True)
@@ -2212,15 +3777,15 @@ class ProjectScopeTest(GateTest):
 
     def test_non_ddl_path_loads_no_heavy_module(self):
         root = str(self.plain())
-        heavy = {"subprocess", "hashlib", "shlex", "shutil", "secrets", "pathlib", "urllib", "urllib.parse", "typing"}
+        heavy = {"subprocess", "hashlib", "shlex", "shutil", "secrets", "pathlib", "urllib", "urllib.parse", "typing",
+                 "datetime"}
         for runtime in ("claude", "codex"):
             for event in ("pre-tool-use", "stop", "user-prompt-submit", "session-start"):
                 with self.subTest(runtime=runtime, event=event):
                     data = payload(runtime, event, fixture(runtime + "_closed_in_turn.jsonl"), "lean", root, source="startup",
                                    last_assistant_message=REPORT_TEXT, prompt="go")
                     proc = subprocess.run([sys.executable, "-I", "-X", "importtime", GATE, event, "--runtime", runtime],
-                                          input=json.dumps(data), capture_output=True, text=True,
-                                          env=dict(os.environ, DDL_GATE_STATE_DIR=self.state))
+                                          input=json.dumps(data), capture_output=True, text=True, env=self.gate_env())
                     self.assertEqual((proc.returncode, proc.stdout), (0, ""))
                     loaded = {line.rsplit("|", 1)[1].strip() for line in proc.stderr.splitlines() if line.startswith("import time:")}
                     self.assertTrue(loaded, proc.stderr)

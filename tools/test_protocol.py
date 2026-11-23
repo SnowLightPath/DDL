@@ -7,7 +7,7 @@ generates for each host (one file per action: the implementations folded into th
 section and the operations' Implementation sections, linked by fragment) and over the source
 protocol with its {host} placeholders rendered and its hosts/<host>/ files beside it. The
 structure checks run against a minimal conforming source tree (skills/, protocol/, hosts/) and
-seventeen mutations of it (negative tests), so each check is shown to fail on the unit it counts.
+thirty mutations of it (negative tests), so each check is shown to fail on the unit it counts.
 Installation checks build dist/ in a fixture repository and exercise the installer with disposable
 homes and projects; they do not claim that either host loaded a skill, trusted a hook or displayed
 a native UI.
@@ -165,7 +165,7 @@ def local_link_errors(bundle):
 
 def render_source(repo, host, out):
     """The protocol a host reads, assembled from the source without the generator: the entry and the operations
-    with {host} and {Host} rendered, and that host's four implementations under hosts/<host>/."""
+    with {host} and {Host} rendered, and that host's five implementations under hosts/<host>/."""
     for path in sorted((repo / check_ddl.PROTOCOL).glob("*.md")):
         write(out / path.name, check_ddl.render(path.read_text(encoding="utf-8"), host))
     for operation in HOST_OPERATIONS:
@@ -276,11 +276,23 @@ def host_text(host, operation):
 
 def implementation_cell(name):
     """The Reading map's third cell: one link to the host's implementation, with the placeholder."""
-    if name in ("approval", "parallel-work", "git-review"):
+    if name in ("approval", "parallel-work", "git-review", "run"):
         return "[{Host}](hosts/{host}/" + name + ".md)"
     if name == "close":
         return "Git review's: [{Host}](hosts/{host}/git-review.md)"
     return "[{Host}](hosts/{host}/start.md) (at Start)"
+
+
+# The Run row as the protocol source writes it, and the form the generator renders it to for a host.
+RUN_ROW = "| [Run](run.md) | A plan's grant; the Run it starts and reports | [{Host}](hosts/{host}/run.md) |"
+RUN_ROW_FOLDED = "| [Run](run.md) | A plan's grant; the Run it starts and reports | [{Host}](run.md#implementation) |"
+
+
+def reading_map_row(name):
+    """The cells of an operation's Reading map row; Run's are those of RUN_ROW."""
+    if name == "run":
+        return ("[Run](run.md)", "A plan's grant; the Run it starts and reports", implementation_cell(name))
+    return (f"[{name}]({name}.md)", f"a {name}", implementation_cell(name))
 
 
 ENTRY = ("---\nname: ddl-protocol\nuser-invocable: false\ndescription: test\n---\n\n# DDL protocol\n\n## Start\n\n"
@@ -300,7 +312,7 @@ ENTRY = ("---\nname: ddl-protocol\nuser-invocable: false\ndescription: test\n---
          "- The fenced block after `+++SWARM:` holds operands.\n\n## Pending STOP\n\nNo mutation while a STOP is pending.\n\n"
          "## Reading map\n\n"
          + md_table(("Operation", "Read before", "Implementation"),
-                    [(f"[{name}]({name}.md)", f"a {name}", implementation_cell(name)) for name in check_ddl.OPERATIONS])
+                    [reading_map_row(name) for name in check_ddl.OPERATIONS])
          + "\n\n## Interruption\n\nReconstruct state from the notebook.\n")
 
 SWARM_SYNTAX = ("````\n+++SWARM: 2+ scopes in design.md\n\n```\n  team: command-phase\n  spawn: role-{scope}\n"
@@ -352,6 +364,16 @@ REFERENCE_FIXTURES = {
         example="```markdown\n" + md_table(("Stage", "Work (parallel lanes)", "Human sees", "Gate"),
                                            [("S0", "work", "diff", "approval")]) + "\n```",
         implementation="Loading is the host's part: " + implementation_links("start")),
+    "run": dict(
+        title="Run",
+        syntax="```\nScope: <path globs>\nBudget: <minutes> minutes\nExpiry: <timestamp>\n```",
+        operands=(("Subcommand", "Reads", "Writes"),
+                  [("`run-start`", "the report and the items", "the Run"), ("`run-item`", "one status", "the Run"),
+                   ("`report`", "the events", "the count lines")]),
+        operation=["**Grant:** state the grant in the plan.", "**Start:** start the Run on the approved report.",
+                   "**Track:** set the status of each item.", "**Report:** print the count lines."],
+        example="```\nQuestions: 3 (approved 2, revised 1, timed out 0)\nDenials: not measured\n```",
+        implementation=implementation_links("run")),
     "command-authoring": dict(
         title="Authoring a DDL command", syntax="```\n### Phase N: NAME\n+++DETECT:\n  D1: name — trigger\n```",
         operands=(("Role", "Phase name", "Required"),
@@ -364,8 +386,8 @@ REFERENCE_FIXTURES = {
 
 
 def write_protocol_fixture(repo):
-    """The whole source tree that passes every source check: protocol/ (the entry and six operations with {host}
-    placeholders), hosts/<host>/ (four link-free implementations, the guidance twin and the adapter files),
+    """The whole source tree that passes every source check: protocol/ (the entry and seven operations with {host}
+    placeholders), hosts/<host>/ (five link-free implementations, the guidance twin and the adapter files),
     skills/ (eight commands) and tools/ddl_gate.py. Returns the protocol directory."""
     bundle = repo / check_ddl.PROTOCOL
     write(bundle / "SKILL.md", ENTRY)
@@ -458,6 +480,9 @@ class ProtocolTest(unittest.TestCase):
                 self.assertIn(f"[{title}](#host)", entry)
                 self.assertIn(f"[{title}](approval.md#implementation)", entry)
                 self.assertIn(f"Git review's: [{title}](git-review.md#implementation)", entry)
+                # The Run row is the one the protocol source carries, its link pointed at the folded section.
+                self.assertIn(RUN_ROW, ENTRY)
+                self.assertIn(RUN_ROW_FOLDED.replace("{Host}", title), entry)
                 for operation in check_ddl.OPERATIONS:
                     self.assertIn(f"{protocol}/{operation}.md", files)
                     text = files[f"{protocol}/{operation}.md"].decode("utf-8")
@@ -510,6 +535,9 @@ class ProtocolTest(unittest.TestCase):
                 # sections, linked from the entry, the operations and within the folded operations themselves.
                 self.assertIn("(#host)", (bundle / "SKILL.md").read_text(encoding="utf-8"))
                 self.assertIn("(#implementation)", (bundle / "approval.md").read_text(encoding="utf-8"))
+                title = check_ddl.HOST_TITLES[host]
+                self.assertIn(f"[{title}](run.md#implementation)", (bundle / "SKILL.md").read_text(encoding="utf-8"))
+                self.assertIn(f"[{title}](#implementation)", (bundle / "run.md").read_text(encoding="utf-8"))
                 self.assertEqual(sorted(p.name for p in bundle.rglob("*.md")),
                                  sorted(["SKILL.md"] + [f"{n}.md" for n in check_ddl.OPERATIONS]))
 
@@ -682,6 +710,24 @@ class ProtocolTest(unittest.TestCase):
             self.assert_check(check_ddl.check_protocol(), "P1",
                               "Reading map row 'git-review': Implementation link must be hosts/{host}/<operation>.md with the placeholder, got hosts/codex/git-review.md")
 
+    def test_p1_rejects_reading_map_without_the_run_row(self):
+        entry = write_protocol_fixture(self.repo) / "SKILL.md"
+        self.mutate(entry, RUN_ROW + "\n", "")
+        with mock.patch.object(check_ddl, "ROOT", self.repo):
+            self.assertEqual(check_ddl.check_protocol(), [
+                "P1: SKILL.md: Reading map needs at least 7 rows, got 6",
+                "P1: SKILL.md: Reading map needs a row whose Operation cell links to run.md"])
+
+    def test_p1_rejects_reading_map_that_routes_one_operation_twice(self):
+        """Seven rows are not enough: each operation needs its own row."""
+        entry = write_protocol_fixture(self.repo) / "SKILL.md"
+        text = entry.read_text(encoding="utf-8")
+        row = next(line for line in text.splitlines() if line.startswith("| [git-review](git-review.md)"))
+        self.mutate(entry, RUN_ROW + "\n", row + "\n")
+        with mock.patch.object(check_ddl, "ROOT", self.repo):
+            self.assertEqual(check_ddl.check_protocol(),
+                             ["P1: SKILL.md: Reading map needs a row whose Operation cell links to run.md"])
+
     def test_p11_rejects_detection_lines_without_detect_header(self):
         write_protocol_fixture(self.repo)
         self.mutate(self.repo / "skills/draft/SKILL.md", "+++DETECT:\n", "")
@@ -765,9 +811,37 @@ class ProtocolTest(unittest.TestCase):
         with mock.patch.object(check_ddl, "ROOT", self.repo):
             self.assertEqual(check_ddl.check_protocol(), [])
             errors = check_ddl.check_dist()
-            self.assert_check(errors, "P13", "claude validate:", "codex validate:", "bytes exceeds 20000",
+            self.assert_check(errors, "P13", "claude validate:", "codex validate:", "bytes exceeds 20250",
                               "(SKILL.md + approval.md)")
             self.assertFalse([e for e in errors if not e.startswith("P13:")], errors)
+
+    def test_p13_rejects_oversized_run_on_realize_plan_path(self):
+        """run.md is read on the realize-plan path and counts toward the execution total, not before."""
+        bundle = write_protocol_fixture(self.repo)
+        run = bundle / "run.md"
+        run.write_text(run.read_text(encoding="utf-8") + "\n```\n" + "x" * 62_000 + "\n```\n", encoding="utf-8")
+        build_module("generate")
+        with mock.patch.object(check_ddl, "ROOT", self.repo):
+            self.assertEqual(check_ddl.check_protocol(), [])
+            errors = check_ddl.check_dist()
+            self.assert_check(errors, "P13", "claude realize-plan:", "codex realize-plan:", "bytes exceeds 46000",
+                              "(SKILL.md + approval.md + notebook.md + parallel-work.md + run.md)",
+                              "claude realize-close:", "codex realize-close:", "bytes exceeds 60500",
+                              "claude execution total:", "codex execution total:", "bytes exceeds 62000")
+            self.assertFalse([e for e in errors if not e.startswith("P13:")], errors)
+            self.assertFalse([e for e in errors if " validate:" in e or " draft:" in e], errors)
+
+    def test_p13_rejects_generated_run_over_its_own_limit(self):
+        """The generated run.md has a limit of its own, below the cumulative paths it is read on."""
+        bundle = write_protocol_fixture(self.repo)
+        run = bundle / "run.md"
+        run.write_text(run.read_text(encoding="utf-8") + "\n```\n" + "x" * 7_500 + "\n```\n", encoding="utf-8")
+        build_module("generate")
+        with mock.patch.object(check_ddl, "ROOT", self.repo):
+            self.assertEqual(check_ddl.check_protocol(), [])
+            errors = check_ddl.check_dist()
+            self.assert_check(errors, "P13", "claude run.md:", "codex run.md:", "bytes exceeds 7500")
+            self.assertFalse([e for e in errors if not e.startswith("P13:") or " run.md: " not in e], errors)
 
     def test_p9_rejects_folded_entry_without_mapping(self):
         """The generated entry's Host section must carry the start Mapping: a start implementation without one
@@ -786,6 +860,23 @@ class ProtocolTest(unittest.TestCase):
             self.assert_check(errors, "P9", "dist claude: SKILL.md: Host: H3 sections must be ['Mapping', 'Observed', 'Coverage'], got ['Observed', 'Coverage']",
                               "dist claude: SKILL.md: Host: Mapping table header must be | Concern | Implementation |")
             self.assertFalse([e for e in errors if not e.startswith("P9: dist claude: SKILL.md: Host:")], errors)
+
+    def test_p9_rejects_run_implementation_without_a_concern_row(self):
+        """Each host's run implementation maps the four concerns, in the source and folded into the generated run.md."""
+        write_protocol_fixture(self.repo)
+        build_module("generate")
+        self.assertEqual(len(check_ddl.CONCERNS["run"]), 4)
+        for host in HOST_NAMES:
+            path = self.repo / "hosts" / host / "run.md"
+            original = path.read_text(encoding="utf-8")
+            for concern in check_ddl.CONCERNS["run"]:
+                with self.subTest(host=host, concern=concern):
+                    self.mutate(path, f"| {concern} | The host tool. |\n", "")
+                    message = f"Mapping needs a row whose first cell mentions {concern!r}"
+                    with mock.patch.object(check_ddl, "ROOT", self.repo):
+                        self.assertEqual(check_ddl.check_protocol(), [f"P9: hosts/{host}/run.md: {message}"])
+                        self.assertEqual(check_ddl.check_dist(), [f"P9: dist {host}: run.md: Implementation: {message}"])
+                    path.write_text(original, encoding="utf-8")
 
     def test_p14_rejects_sentence_duplicated_into_second_file(self):
         bundle = write_protocol_fixture(self.repo)
@@ -813,6 +904,64 @@ class ProtocolTest(unittest.TestCase):
             errors = check_ddl.check_protocol()
             self.assert_check(errors, "P8", "needs a ````markdown fence under ## Example")
             self.assert_check(errors, "P2", "command-authoring.md: Example needs a fenced block")
+
+    def assert_only_p15(self, message):
+        """The protocol check reports exactly one error, the P15 message for run.md."""
+        with mock.patch.object(check_ddl, "ROOT", self.repo):
+            self.assertEqual(check_ddl.check_protocol(), [f"P15: run.md: {message}"])
+
+    def test_p15_rejects_missing_run_id_format(self):
+        bundle = write_protocol_fixture(self.repo)
+        self.mutate(bundle / "run.md", "- `N-<id>`\n", "")
+        self.assert_only_p15("Formats must contain 'N-<id>'")
+
+    def test_p15_rejects_formats_without_the_grant_input_key(self):
+        """A lowercase "grant" in prose does not define the input key: Formats names it in backticks."""
+        bundle = write_protocol_fixture(self.repo)
+        self.mutate(bundle / "run.md", "- ``grant``\n", "- a report carries a grant\n")
+        self.assert_only_p15("Formats must contain '`grant`'")
+
+    def test_p15_rejects_missing_count_label_in_either_language(self):
+        bundle = write_protocol_fixture(self.repo)
+        self.mutate(bundle / "run.md", "- `Waiting`\n", "")
+        self.assert_only_p15("Formats must contain 'Waiting'")
+        self.mutate(bundle / "run.md", "- `未計測`\n", "")
+        with mock.patch.object(check_ddl, "ROOT", self.repo):
+            self.assertEqual(check_ddl.check_protocol(), ["P15: run.md: Formats must contain 'Waiting'",
+                                                          "P15: run.md: Formats must contain '未計測'"])
+
+    def test_p15_rejects_syntax_fence_without_a_grant_label(self):
+        bundle = write_protocol_fixture(self.repo)
+        self.mutate(bundle / "run.md", "Budget: <minutes> minutes\n", "Limit: <minutes> minutes\n")
+        self.assert_only_p15("Syntax fence needs a line starting with Budget:")
+
+    def test_p15_rejects_missing_expired_exception(self):
+        bundle = write_protocol_fixture(self.repo)
+        self.mutate(bundle / "run.md", "| expired | Behavior. |\n", "")
+        self.assert_only_p15("Exceptions needs a row whose first cell mentions 'expired'")
+
+    def test_p15_rejects_reordered_or_extra_operation_steps(self):
+        run = write_protocol_fixture(self.repo) / "run.md"
+        original = run.read_text(encoding="utf-8")
+        message = "Operation needs exactly 4 steps named ['Grant', 'Start', 'Track', 'Report'] in order"
+        self.mutate(run, "2. **Start:**", "2. **Track:**")
+        self.mutate(run, "3. **Track:**", "3. **Start:**")
+        self.assert_only_p15(message)
+        run.write_text(original, encoding="utf-8")
+        self.mutate(run, "4. **Report:** print the count lines.\n", "4. **Report:** print the count lines.\n5. Refill the budget.\n")
+        self.assert_only_p15(message)
+
+    def test_p15_rejects_operands_written_as_none(self):
+        run = write_protocol_fixture(self.repo) / "run.md"
+        text = run.read_text(encoding="utf-8")
+        start = text.index("## Operands\n\n") + len("## Operands\n\n")
+        run.write_text(text[:start] + "None." + text[text.index("\n\n## Operation\n", start):], encoding="utf-8")
+        self.assert_only_p15("Operands needs a table with at least one row (None. is not accepted)")
+
+    def test_p15_rejects_implementation_link_to_another_operation(self):
+        bundle = write_protocol_fixture(self.repo)
+        self.mutate(bundle / "run.md", implementation_links("run"), implementation_links("start"))
+        self.assert_only_p15("Implementation needs exactly one link to hosts/{host}/run.md, got 0")
 
 
 if __name__ == "__main__":

@@ -24,14 +24,34 @@ Usage (the same command serves Claude Code and Codex CLI; the hook payload JSON 
   python3 tools/ddl_gate.py prepare-report     --runtime claude|codex
   python3 tools/ddl_gate.py prepare-git-review --runtime claude|codex
   python3 tools/ddl_gate.py status [--cwd DIR]
+  python3 tools/ddl_gate.py run-start                              (JSON on stdin)
+  python3 tools/ddl_gate.py run-item <N-id> <item id> <status>
+  python3 tools/ddl_gate.py report (--transcript FILE --runtime claude|codex | --session ID | --run N-ID)
+                                   [--language ja|en]
 
 prepare-report reads JSON {language, decision, recommendation, consequence, detail, options?,
-multiSelect?} on stdin, writes report.md and report.json under `<state dir>/reports/<id>/`, and
-prints {reportId, report, question, nativeRequest}. prepare-git-review reads JSON
+multiSelect?, grant?} on stdin, writes report.md and report.json under `<state dir>/reports/<id>/`,
+and prints {reportId, report, question, nativeRequest}. prepare-git-review reads JSON
 {language: en|ja, operations: [{cwd, command}, ...]}, snapshots the staged changes and push
 targets, writes review detail in the private state directory, and prints the same shape with
 reviewId. Neither creates approval; invalid input prints `DDL STOP: …` / `DDL Git review: …` on
 stderr and exits 2.
+
+Grant, ledger and counts (recorded and reported; no hook decision reads any of them): a report
+may carry a `grant` {paths, commands, machines, handover, budget {minutes, fixAttempts}, expires}.
+It is hashed into the report ID with the project key, adds one generated line to the question and
+a block to report.md, and is written once to the user-level store ($DDL_GATE_GRANT_DIR, else
+$XDG_STATE_HOME/ddl-gate, else $HOME/.local/state/ddl-gate) as `<project key>/grants/R-<id>.json`
+when the record proves that the human submitted the first option of the unchanged question; after
+that only its expiry ends it. The record appears whole or not at all, and a file that does not parse
+as that grant's record is no grant. In a DDL project the gate appends one JSON line per event to
+`.ddl/events.jsonl` at the root of the main work tree (a silent pass writes nothing; an approved
+grant that was not recorded leaves a `warn` line whose rule is `grant-proof` or `grant-store`),
+`run-start` writes `.ddl/runs/<N-id>/run.json` from {report, items}, `run-item` sets one item's
+status, and `report` prints four lines: questions, waiting, denials, grant. A Run's lines count its
+plan's own question too, in the plan's language unless `--language` names one. A value that cannot
+be derived is printed as `未計測` (`not measured`). The three subcommands take the project from the
+working directory and exit 2 on a usage error.
 
 Scope: the hook acts only in a DDL project, one whose instruction file (CLAUDE.md, .claude/CLAUDE.md
 or AGENTS.md in the event's `cwd` or a parent, up to the directory holding `.git` and below $HOME)
@@ -49,6 +69,7 @@ Decisions (JSON on stdout; the exit status is always 0):
                       claude answers a reviewed ordinary push with "ask" (native confirmation)
                       codex also denies unsupported push forms in confirmation-enabled modes
   stop                writes the marker file when the turn ended with a report; prints nothing
+                      (it also records an approved grant the tool path has not seen yet)
   user-prompt-submit  removes the marker (a human spoke); prints nothing
   session-start       compact/resume while CLOSED -> additionalContext with a notice (naming the
                       pending ID and report when known);
@@ -62,8 +83,10 @@ until the marker is cleared. An answered AskUserQuestion and an approved plan co
 the transcript asynchronously, so a continuation in the same turn can escape the gate; the rule then holds as
 an instruction. A marker file `<state dir>/<session_id>.pending` carries the signal across
 turns and for runtimes whose record is unreadable, and `<state dir>/<session_id>.warned` makes
-the unreadable-record warning appear once per session; the state dir is $DDL_GATE_STATE_DIR,
-else $TMPDIR/ddl-gate, else /tmp/ddl-gate. Wire all four events, or the marker is never cleared.
+the unreadable-record warning appear once per session; `<state dir>/<session_id>.asked` lists the
+prepared questions that await their answers, so a call with nothing asked costs one stat. The state
+dir is $DDL_GATE_STATE_DIR, else $TMPDIR/ddl-gate, else /tmp/ddl-gate. Wire all four events, or
+the marker is never cleared.
 
 The general STOP gate fails open on internal errors. Recognized Git commit/push review failures
 instead deny the operation; an unreadable or changed review never creates permission. The shell
@@ -115,8 +138,9 @@ class _Pattern:
         return getattr(pattern, attr)
 
 
-hashlib, pathlib, re, secrets, shlex, shutil, subprocess, time = (
-    _Lazy(name) for name in ("hashlib", "pathlib", "re", "secrets", "shlex", "shutil", "subprocess", "time"))
+datetime, hashlib, pathlib, re, secrets, shlex, shutil, subprocess, time = (
+    _Lazy(name) for name in ("datetime", "hashlib", "pathlib", "re", "secrets", "shlex", "shutil", "subprocess",
+                             "time"))
 urlparse = _Lazy("urllib.parse", "urlparse")
 
 EVENTS = ("pre-tool-use", "session-start", "stop", "user-prompt-submit")
@@ -183,12 +207,14 @@ SHORT_SHA_LENGTH = 7  # Git's default abbreviation; it only names a pushed commi
 # A BCP 47-style language tag: a two-to-eight-letter primary subtag, then optional subtags.
 LANGUAGE_CODE = _Pattern("LANGUAGE_CODE", r"[A-Za-z]{2,8}(?:[-_][A-Za-z0-9]{1,8})*")
 MIN_OPTIONS, MAX_OPTIONS = 2, 4  # the bounds of one native Claude question's options
-REPORT_VERSION = 1  # the report.json schema; a change of fields bumps it
-REPORT_INPUT_KEYS = {"language", "decision", "recommendation", "consequence", "detail", "options", "multiSelect"}
+REPORT_VERSION = 2  # the report.json schema; a change of fields bumps it (2: grant and projectKey)
+REPORT_INPUT_KEYS = {"language", "decision", "recommendation", "consequence", "detail", "options", "multiSelect",
+                     "grant"}
 REPORT_LINE_KEYS = ("decision", "recommendation", "consequence")
 # The fields the report ID hashes; report.json adds id, question, nativeRequest and reportHash.
+# `grant` is None for a report without one; `projectKey` is None when it was prepared outside a DDL project.
 REPORT_CORE_KEYS = ("version", "runtime", "language", "nonce", "createdAt", *REPORT_LINE_KEYS,
-                    "options", "multiSelect", "detailHash")
+                    "options", "multiSelect", "detailHash", "grant", "projectKey")
 DEFAULT_OPTIONS = {
     "ja": [{"label": "すべて承認（推奨）", "description": "表示した推奨をすべて適用する"},
            {"label": "一部・修正", "description": "項目を選ぶか修正を求める。報告を作り直して聞き直す"},
@@ -213,6 +239,48 @@ ENVELOPE_DEPTH = 4
 PREPARE_HEAD = _Pattern("PREPARE_HEAD", r"python3(?:[ \t]+-I)?[ \t]+(.+?)[ \t]+(?:prepare-report|prepare-git-review)"
                                         r"[ \t]+--runtime(?:[ \t]+|=)(?:claude|codex)[ \t]*<<[ \t]*(['\"])"
                                         r"([A-Za-z_][A-Za-z0-9_]*)\2[ \t]*")
+
+
+# --- the grant, the ledger and the counts ------------------------------------------------------
+# A plan's approval can name a grant: where the Run may edit, the command classes, machines and
+# handed-over data it may use, its budget and its expiry. This stage records and reports it; no
+# decision of the hook reads a grant, a ledger line or a Run.
+GRANT_KEYS = ("paths", "commands", "machines", "handover", "budget", "expires")
+GRANT_COMMANDS = ("build", "test", "check", "snapshot", "remote-run")
+GRANT_LISTS = {"paths": (1, 32), "commands": (0, 8), "machines": (0, 8), "handover": (0, 8)}  # entries per list
+GRANT_BUDGET = {"minutes": (1, 10080), "fixAttempts": (0, 10)}
+GRANT_NAME_LIMIT = 80  # characters of one machine or handed-over entry
+# The question's extra line, then the three lines of the block in report.md.
+GRANT_LABELS = {"ja": ("許諾", "範囲", "予算", "期限"), "en": ("Grant", "Scope", "Budget", "Expiry")}
+PROJECT_KEY_LENGTH = 16  # hex digits of the SHA-256 of the resolved ledger root
+LEDGER = ".ddl"  # at the root of the main work tree; it ignores itself
+EVENT_VERSION = 1
+EVENT_TEXT_LIMIT = 200  # characters kept of a label, tool name or rule in one ledger line
+ARMED_LIMIT = 8  # prepared questions one session keeps waiting for their answers; past it the oldest is let go
+RUN_ID_BYTES = 6  # a Run ID is N- and these random bytes in hex
+RUN_ID = _Pattern("RUN_ID", r"N-[0-9a-f]{%d}" % (2 * RUN_ID_BYTES))
+ITEM_ID = _Pattern("ITEM_ID", r"[A-Za-z0-9][A-Za-z0-9._-]{0,31}")
+ITEM_KEYS = {"id", "kind", "files", "after"}
+ITEM_KINDS = ("write", "verify", "explore", "compute")
+ITEM_STATUSES = ("ready", "running", "done", "failed", "dropped")
+MAX_RUN_ITEMS = 200
+# A timestamp the gate reads: date, `T`, time to the minute or finer, then `Z` or `±HH:MM` (group 8, optional
+# here so that the caller can tell a missing offset from a malformed value).
+ISO_TIME = _Pattern("ISO_TIME", r"(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,9}))?)?"
+                                r"(Z|[+-]\d{2}:\d{2})?")
+# The four count lines of `report`: labels, then the body of each line.
+COUNT_TEXT = {
+    "ja": {"labels": ("問い", "待ち", "拒否", "許諾"), "asked": "{} 件（承認 {}、見直し {}、時間切れ {}）",
+           "waiting": "人間 {}（答えまで中央値 {}、最長 {}）", "minutes": "{} 分", "denied": "{} 件",
+           "grant": "{}（期限 {}、{}）", "valid": "有効", "expired": "期限切れ", "none": "なし", "unmeasured": "未計測"},
+    "en": {"labels": ("Questions", "Waiting", "Denials", "Grant"), "asked": "{} (approved {}, revised {}, timed out {})",
+           "waiting": "human {} (median to answer {}, longest {})", "minutes": "{} min", "denied": "{}",
+           "grant": "{} (expires {}, {})", "valid": "valid", "expired": "expired", "none": "none",
+           "unmeasured": "not measured"}}
+REPORT_FLAGS = ("--transcript", "--runtime", "--session", "--run", "--language")
+REPORT_USAGE = ("usage: ddl_gate.py report (--transcript FILE --runtime claude|codex | --session ID | --run N-ID) "
+                "[--language ja|en]")
+RUN_USAGE = "usage: ddl_gate.py run-start (JSON on stdin) | run-item <N-id> <item id> <status>"
 
 
 def review_json(value):
@@ -507,8 +575,8 @@ def question_id(text):
     return (match[1], match[2]) if match else None
 
 
-def asked_question(runtime, request):
-    """The first question's text in a native request (Claude `question`, Codex `title`), or None."""
+def first_question(request):
+    """The first question object of a native request, given as an object or as JSON text; None when it has none."""
     if isinstance(request, str):
         try:
             request = json.loads(request)
@@ -517,8 +585,49 @@ def asked_question(runtime, request):
     questions = request.get("questions") if isinstance(request, dict) else None
     if not isinstance(questions, list) or not questions or not isinstance(questions[0], dict):
         return None
-    text = questions[0].get("question" if runtime == "claude" else "title")
+    return questions[0]
+
+
+def asked_question(runtime, request):
+    """The first question's text in a native request (Claude `question`, Codex `title`), or None."""
+    question = first_question(request)
+    text = question.get("question" if runtime == "claude" else "title") if question else None
     return text if isinstance(text, str) else None
+
+
+def option_labels(request):
+    """The option labels of a native request's first question, in order (Claude lists objects, Codex strings)."""
+    question = first_question(request)
+    options = question.get("options") if question else None
+    return [o.get("label") if isinstance(o, dict) else o for o in options] if isinstance(options, list) else []
+
+
+def iso_seconds(text):
+    """Seconds since the epoch for a timestamp that carries `Z` or a UTC offset, else None.
+
+    Read by hand so that every Python agrees: `datetime.fromisoformat` learned `Z` and short fractions in 3.11."""
+    match = ISO_TIME.fullmatch(text) if isinstance(text, str) else None
+    if not match or not match[8]:
+        return None
+    offset = 0
+    if match[8] != "Z":
+        hours, minutes = int(match[8][1:3]), int(match[8][4:6])
+        if hours > 23 or minutes > 59:
+            return None
+        offset = (hours * 3600 + minutes * 60) * (-1 if match[8][0] == "-" else 1)
+    try:
+        moment = datetime.datetime(*(int(match[i]) for i in range(1, 6)), int(match[6] or 0),
+                                   tzinfo=datetime.timezone.utc)
+    except ValueError:  # no such date or time of day
+        return None
+    return moment.timestamp() + (float("0." + match[7]) if match[7] else 0.0) - offset
+
+
+def utc_stamp(seconds=None):
+    """`seconds` since the epoch (default: now) as ISO 8601 UTC with milliseconds: the form of every time the gate writes."""
+    seconds = time.time() if seconds is None else seconds
+    whole = int(seconds // 1)
+    return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(whole)) + ".{:03d}Z".format(int((seconds - whole) * 1000))
 
 
 def unique(items):
@@ -691,10 +800,101 @@ def report_directory():
     return pathlib.Path(state_directory()) / "reports"
 
 
+def grant_entries(grant, key, check):
+    """One list of a grant: its size, then each entry as one printable line that passes `check`, all different."""
+    values, (low, high) = grant[key], GRANT_LISTS[key]
+    if not isinstance(values, list) or not low <= len(values) <= high:
+        raise ValueError("grant.{} must be a list of {} to {} entries.".format(key, low, high))
+    for value in values:
+        if not one_line(value) or value != value.strip() or not value.isprintable():
+            raise ValueError("grant.{}: each entry is one printable line without surrounding spaces.".format(key))
+        check(value)
+    if len(set(values)) != len(values):
+        raise ValueError("grant.{} entries must differ.".format(key))
+
+
+def validated_grant(grant, now):
+    """The grant unchanged once every field passed; ValueError names the first problem.
+
+    Nothing is repaired or defaulted: the object is hashed into the report ID exactly as it was given."""
+    if not isinstance(grant, dict) or set(grant) != set(GRANT_KEYS):
+        raise ValueError("grant must be an object with exactly these keys: {}.".format(", ".join(GRANT_KEYS)))
+
+    def path(value):
+        if value.startswith(("/", "~", "\\")) or re.match(r"[A-Za-z]:[/\\]", value) or ".." in re.split(r"[/\\]", value):
+            raise ValueError("grant.paths: {!r} must be a relative glob: no leading / or ~, no .. segment.".format(value))
+
+    def command(value):
+        if value not in GRANT_COMMANDS:
+            raise ValueError("grant.commands: {!r} is not one of {}.".format(value, ", ".join(GRANT_COMMANDS)))
+
+    def name(value):
+        if len(value) > GRANT_NAME_LIMIT:
+            raise ValueError("grant.machines and grant.handover entries take at most {} characters.".format(
+                GRANT_NAME_LIMIT))
+
+    for key, check in (("paths", path), ("commands", command), ("machines", name), ("handover", name)):
+        grant_entries(grant, key, check)
+    budget = grant["budget"]
+    if not isinstance(budget, dict) or set(budget) != set(GRANT_BUDGET):
+        raise ValueError("grant.budget must be exactly {}.".format(" and ".join(GRANT_BUDGET)))
+    for key, (low, high) in GRANT_BUDGET.items():
+        if type(budget[key]) is not int or not low <= budget[key] <= high:  # `type is`: True and False are not counts
+            raise ValueError("grant.budget.{} must be an integer from {} to {}.".format(key, low, high))
+    expires = iso_seconds(grant["expires"])
+    if expires is None:
+        raise ValueError("grant.expires must be a timestamp with its UTC offset, such as 2026-12-23T00:00:00+09:00.")
+    if expires <= now:
+        raise ValueError("grant.expires is not in the future.")
+    return grant
+
+
+def grant_line(language, grant):
+    """The value of the question's generated grant line: sizes, command classes, budget and the expiry date.
+
+    Paths, machines and handed-over data are counted here and spelled out in the report's grant block."""
+    budget, day = grant["budget"], grant["expires"][:10]
+    paths, commands, machines, handover = (grant[key] for key in GRANT_KEYS[:4])
+    if is_japanese(language):
+        parts = ["編集 {} 範囲".format(len(paths)), "命令 " + "・".join(commands) if commands else "命令なし",
+                 "マシン {} 台".format(len(machines)) if machines else "マシンなし"]
+        parts += ["引き継ぎ {} 件".format(len(handover))] if handover else []
+        parts += ["{} 分".format(budget["minutes"]), "直し {} 回".format(budget["fixAttempts"]), "期限 " + day]
+        return fit_line("、".join(parts))
+    parts = ["edit " + counted(len(paths), "scope"), "commands " + ", ".join(commands) if commands else "no commands",
+             counted(len(machines), "machine") if machines else "no machines"]
+    parts += ["{} handed over".format(len(handover))] if handover else []
+    parts += [counted(budget["minutes"], "minute"), counted(budget["fixAttempts"], "fix attempt"), "expires " + day]
+    return fit_line("; ".join(parts))
+
+
+def grant_block(language, grant):
+    """The grant in full, as report.md shows it between the question and the detail: Scope, Budget, Expiry.
+
+    A code fence keeps the three lines apart and the globs literal (`**` would otherwise read as emphasis)."""
+    ja = is_japanese(language)
+    _, scope, budget, expiry = GRANT_LABELS["ja" if ja else "en"]
+    comma, none = ("、", "なし") if ja else (", ", "none")
+    paths, commands, machines, handover = ((sep.join(grant[key]) if grant[key] else none)
+                                           for key, sep in zip(GRANT_KEYS[:4], (comma, "・" if ja else ", ", comma, comma)))
+    minutes, fixes = grant["budget"]["minutes"], grant["budget"]["fixAttempts"]
+    if ja:
+        lines = ["{}: {}。命令 {}。マシン {}。引き継ぎ {}".format(scope, paths, commands, machines, handover),
+                 "{}: {} 分。失敗した検査ごとの直し {} 回".format(budget, minutes, fixes)]
+    else:
+        lines = ["{}: {}; commands {}; machines {}; handed over {}".format(scope, paths, commands, machines, handover),
+                 "{}: {}; {} per failing check".format(budget, counted(minutes, "minute"), counted(fixes, "fix attempt"))]
+    return "```\n" + "\n".join(lines + ["{}: {}".format(expiry, grant["expires"])]) + "\n```"
+
+
 def report_question(record, path):
-    """The five-line question and the host's native request for a prepared decision report."""
+    """The question and the host's native request for a prepared decision report: five lines, and a sixth,
+    generated from the grant, when the report carries one. The first five keep their positions."""
     values = [record[key] for key in REPORT_LINE_KEYS] + ["R-" + record["id"], str(path)]
     question = question_text(record["language"], values)
+    if record["grant"]:
+        label = GRANT_LABELS["ja" if is_japanese(record["language"]) else "en"][0]
+        question += "\n" + label + ": " + grant_line(record["language"], record["grant"])
     if record["runtime"] == "codex":
         return question, {"questions": [{"title": question, "options": [o["label"] for o in record["options"]]}]}
     return question, {"questions": [{"question": question, "header": "DDL", "multiSelect": record["multiSelect"],
@@ -748,15 +948,28 @@ def prepare_report(runtime, data):
         raise ValueError("multiSelect must be true or false.")
     if multi and runtime == "codex":
         raise ValueError("multiSelect is available on Claude only; a Codex question takes one answer.")
+    created = time.time()
+    try:
+        _, project = cwd_ledger()
+    except OSError:  # no working directory to read: no project
+        project = None
+    grant = data.get("grant")
+    if grant is not None:
+        validated_grant(grant, created)
+        if multi:
+            raise ValueError("a report with a grant takes one answer: its first option approves, so multiSelect is false.")
+        if project is None:
+            raise ValueError("a grant belongs to a DDL project; prepare the report from inside the project.")
     record = {"version": REPORT_VERSION, "runtime": runtime, "language": language,
-              "nonce": secrets.token_hex(NONCE_BYTES), "createdAt": time.time(),
+              "nonce": secrets.token_hex(NONCE_BYTES), "createdAt": created,
               **{key: data[key] for key in REPORT_LINE_KEYS},
               "options": report_options(language, data.get("options")), "multiSelect": multi,
-              "detailHash": hashlib.sha256(detail.encode("utf-8")).hexdigest()}
+              "detailHash": hashlib.sha256(detail.encode("utf-8")).hexdigest(), "grant": grant, "projectKey": project}
     record["id"] = review_hash(record)[:ID_HEX_LENGTH]
     directory = report_directory() / record["id"]
     question, request = report_question(record, directory / "report.md")
-    text = (question + "\n\n" + detail + ("" if detail.endswith("\n") else "\n")).encode("utf-8")
+    # Without a grant the file keeps its bytes: the question, a blank line, the detail.
+    text = (report_head(record, question) + detail + ("" if detail.endswith("\n") else "\n")).encode("utf-8")
     directory.mkdir(parents=True, mode=0o700, exist_ok=False)
     (directory / "report.md").write_bytes(text)
     record.update(question=question, nativeRequest=request, reportHash=hashlib.sha256(text).hexdigest())
@@ -765,16 +978,33 @@ def prepare_report(runtime, data):
             "nativeRequest": request}
 
 
-def load_report(report_id, runtime):
-    """The prepared report record; ValueError when it, its question, or report.md was changed or is foreign."""
+def report_head(record, question):
+    """What the gate writes at the top of report.md: the question and, for a grant, its block; the detail follows."""
+    block = grant_block(record["language"], record["grant"]) + "\n\n" if record["grant"] else ""
+    return question + "\n\n" + block
+
+
+def load_report(report_id, runtime=None):
+    """The prepared report record; ValueError when it, its question, or report.md was changed or is foreign.
+
+    `runtime` None accepts either host's report (the Run subcommands read it outside a hook)."""
     directory = report_directory() / report_id
     record = json.loads((directory / "report.json").read_text(encoding="utf-8"))
     core = {key: record[key] for key in REPORT_CORE_KEYS}
-    if record.get("id") != report_id or review_hash(core)[:ID_HEX_LENGTH] != report_id or record.get("runtime") != runtime:
+    if record.get("id") != report_id or review_hash(core)[:ID_HEX_LENGTH] != report_id \
+            or record.get("runtime") != (runtime or record.get("runtime")):
         raise ValueError("the prepared report was changed or belongs to another runtime.")
     if (record.get("question"), record.get("nativeRequest")) != report_question(record, directory / "report.md"):
         raise ValueError("the prepared question was changed.")
-    if hashlib.sha256((directory / "report.md").read_bytes()).hexdigest() != record.get("reportHash"):
+    text = (directory / "report.md").read_bytes()
+    if hashlib.sha256(text).hexdigest() != record.get("reportHash"):
+        raise ValueError("the report was changed after preparation.")
+    # reportHash sits outside the hashed core, so also tie the file to the ID itself: the gate's own head
+    # (question, grant block), then exactly the hashed detail. What the human reads is what was prepared.
+    head = report_head(record, record["question"]).encode("utf-8")
+    detail = text[len(head):]
+    given = (detail, detail[:-1]) if detail.endswith(b"\n") else (detail,)  # preparation may have added the last newline
+    if not text.startswith(head) or record["detailHash"] not in [hashlib.sha256(d).hexdigest() for d in given]:
         raise ValueError("the report was changed after preparation.")
     return record
 
@@ -899,6 +1129,36 @@ def approved_git_review(runtime, payload):
             raise TimeoutError("the prepared review exceeded the hook time budget.")
         if op["kind"] == "commit" and hashlib.sha256((directory / (str(i) + ".patch")).read_bytes()).hexdigest() != op["patchHash"]:
             raise ValueError("the reviewed diff was changed after preparation.")
+    return record
+
+
+def approved_report_grant(runtime, payload):
+    """The prepared report whose grant the human approved, proved like a Git review: from the question and
+    its answer. ValueError says what is missing.
+
+    The latest human input must be the submitted choice (never an idle timeout, a receipt or typed text) of
+    the first option of the unchanged prepared question, for a report that carries a grant, is not older
+    than the session's epoch, and has not expired. The proof records a grant; it permits nothing."""
+    proof = native_git_choice(runtime, payload.get("transcript_path"))
+    if not proof:
+        raise ValueError("no submitted native answer to a prepared report question is recorded.")
+    request, answer = proof
+    questions = request.get("questions", []) if isinstance(request, dict) else []
+    if len(questions) != 1:
+        raise ValueError("a grant needs one whole-plan native question.")
+    ident = question_id(asked_question(runtime, request))
+    if not ident or ident[0] != "R":
+        raise ValueError("the choice is not for a prepared report.")
+    record = load_report(ident[1], runtime)
+    if request != record["nativeRequest"]:
+        raise ValueError("the question does not match the prepared report.")
+    if not record["grant"] or record["multiSelect"]:
+        raise ValueError("the report carries no grant.")
+    if answer != record["options"][0]["label"]:
+        raise ValueError("the selected option does not approve the plan.")
+    if predates_epoch(payload.get("session_id"), record["createdAt"]):
+        raise ValueError("the report predates the latest user message, resume or compaction.")
+    validated_grant(record["grant"], time.time())  # a record written by hand passes no weaker check; expiry included
     return record
 
 
@@ -1224,9 +1484,14 @@ def record_state_codex(path, turn_id=None) -> bool | None:
 
 # --- marker files -----------------------------------------------------------------------------
 
-def state_directory() -> str:
+def state_base() -> str:
+    """The state directory's absolute path; nothing is created."""
     base = os.environ.get("DDL_GATE_STATE_DIR") or os.path.join(os.environ.get("TMPDIR") or "/tmp", "ddl-gate")
-    base = os.path.abspath(base)  # the question's last line names report.md by its absolute path
+    return os.path.abspath(base)  # the question's last line names report.md by its absolute path
+
+
+def state_directory() -> str:
+    base = state_base()
     os.makedirs(base, exist_ok=True)
     return base
 
@@ -1337,10 +1602,291 @@ def project_status(argv) -> int:
     decision = project_decision(cwd)
     if decision["ddl"]:
         print("DDL project: yes ({}:{})".format(decision["source"], decision["line"]))
+        try:  # one more line per recorded grant; a project without one prints exactly the line above
+            for record in grant_records(project_key(ledger_root(decision))):
+                print("Grant: " + grant_summary(record, "en"))
+        except Exception:
+            pass
     else:
         searched = list(instruction_directories(cwd))
         print('DDL project: no (no "{}" line up to {})'.format(MARKER, searched[-1] if searched else cwd))
     return 0
+
+
+# --- the ledger and the grant store -----------------------------------------------------------
+
+def git_common_directory(top):
+    """The Git common directory of the work tree at `top`, read from `.git` and `commondir`; None without one.
+
+    No Git process runs on the hook path. A linked work tree's `.git` is a file that names its own Git
+    directory, and that directory's `commondir` leads to the repository every work tree shares."""
+    dotgit = os.path.join(top, ".git")
+    if os.path.isdir(dotgit):
+        gitdir = dotgit
+    else:
+        try:
+            with open(dotgit, encoding="utf-8", errors="replace") as fh:
+                head = fh.readline().strip()
+        except OSError:
+            return None
+        if not head.startswith("gitdir:"):
+            return None
+        gitdir = os.path.normpath(os.path.join(top, head[len("gitdir:"):].strip()))
+    try:
+        with open(os.path.join(gitdir, "commondir"), encoding="utf-8", errors="replace") as fh:
+            return os.path.normpath(os.path.join(gitdir, fh.readline().strip()))
+    except OSError:
+        return gitdir  # the main work tree's own `.git` has no `commondir`
+
+
+def ledger_root(decision):
+    """The resolved root of the project's main work tree, where `.ddl/` lives; None outside a DDL project.
+
+    It is the parent of the Git common directory when that directory is named `.git`, so every linked work
+    tree shares one ledger and one project key. Otherwise (no repository, a bare one, a submodule) it is
+    the directory that carries the marker's instruction file."""
+    if not decision.get("ddl"):
+        return None
+    top = None
+    for top in instruction_directories(decision["cwd"]):
+        pass  # the search ends at the directory that holds `.git`, when there is one
+    common = git_common_directory(top) if top else None
+    if common and os.path.basename(common) == ".git":
+        root = os.path.dirname(common)
+    else:
+        source = decision["source"]
+        name = max((n for n in INSTRUCTION_FILES if source.endswith(os.sep + n)), key=len)
+        root = source[:-len(name) - 1]
+    return os.path.realpath(root)
+
+
+def project_key(root):
+    """A project's name in the grant store: the first hex digits of the SHA-256 of its resolved ledger root."""
+    if not root:
+        return None
+    return hashlib.sha256(root.encode("utf-8", "surrogateescape")).hexdigest()[:PROJECT_KEY_LENGTH]
+
+
+def cwd_ledger():
+    """(ledger root, project key) of the working directory, where a subcommand runs; (None, None) outside a
+    DDL project."""
+    root = ledger_root(project_decision(os.getcwd()))
+    return root, project_key(root)
+
+
+def write_whole(path, text):
+    """Make `text` the whole of `path`: a reader sees the file as it was or as it is now, never half of it."""
+    scratch = "{}.{}.tmp".format(path, os.getpid())
+    try:
+        with open(scratch, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        os.replace(scratch, path)
+    except OSError:
+        try:
+            os.unlink(scratch)
+        except OSError:
+            pass
+        raise
+
+
+def ledger_directory(root):
+    """`<root>/.ddl` with a `.gitignore` of `*`: the ledger ignores itself.
+
+    The ignore file is written whenever it is missing (the first use, a `.ddl/` that was there before, an
+    earlier write that failed) and never rewritten once it exists, which costs one stat per ledger write.
+    While it cannot be written this raises, so no line enters a ledger that Git would show. A `.ddl` that
+    is a symbolic link raises too: following it would write outside the project."""
+    directory = os.path.join(root, LEDGER)
+    if os.path.islink(directory):
+        raise OSError("the ledger directory is a symbolic link")
+    ignore = os.path.join(directory, ".gitignore")
+    if not os.path.exists(ignore):
+        try:
+            os.mkdir(directory)
+        except FileExistsError:
+            pass  # it was there already, or another gate process created it a moment ago
+        write_whole(ignore, "*\n")
+    return directory
+
+
+def ledger_event(root, runtime, session, kind, ts=None, **fields):
+    """Append one event line to `<root>/.ddl/events.jsonl`; fields that are None are left out.
+
+    It never raises and prints nothing: a failed write loses the line and changes no decision. One
+    `os.write` per line on an O_APPEND descriptor, no lock, so concurrent hooks interleave whole lines.
+    Two installs can each write the same hook event; a reader counts one kind, id and toolUseId once."""
+    try:
+        if not root:
+            return
+        line = {"v": EVENT_VERSION, "ts": ts or utc_stamp(), "host": runtime, "session": session, "kind": kind}
+        for key, value in fields.items():
+            if value is not None:
+                line[key] = value[:EVENT_TEXT_LIMIT] if isinstance(value, str) else value
+        data = (json.dumps(line, separators=(",", ":")) + "\n").encode("ascii")
+        fd = os.open(os.path.join(ledger_directory(root), "events.jsonl"),
+                     os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+        try:
+            os.write(fd, data)
+        finally:
+            os.close(fd)
+    except Exception:
+        pass
+
+
+def cli_event(runtime, kind, **fields):
+    """A subcommand's ledger line, in the working directory's project; like every ledger write it never raises."""
+    try:
+        ledger_event(cwd_ledger()[0], runtime, None, kind, **fields)
+    except Exception:
+        pass
+
+
+def ledger_lines(root):
+    """The ledger's event objects, first to last; None when the project has no ledger file.
+
+    A line that repeats the session, kind, id and toolUseId of an earlier one is the second install's copy
+    of the same hook event and is dropped. Lines without a toolUseId cannot be told apart and all stay."""
+    events, seen = [], set()
+    try:
+        fh = open(os.path.join(root, LEDGER, "events.jsonl"), encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    with fh:
+        for line in fh:
+            try:
+                event = json.loads(line)
+            except ValueError:
+                continue  # a torn or foreign line; the lines around it still count
+            if not isinstance(event, dict) or event.get("v") != EVENT_VERSION:
+                continue
+            if event.get("toolUseId") is not None:
+                key = json.dumps([event.get(name) for name in ("session", "kind", "id", "toolUseId")])
+                if key in seen:
+                    continue
+                seen.add(key)
+            events.append(event)
+    return events
+
+
+def grant_store():
+    """The durable user-level store of grant records: the path only. Recording a grant creates it."""
+    base = os.environ.get("DDL_GATE_GRANT_DIR")
+    if not base:
+        state = os.environ.get("XDG_STATE_HOME") or os.path.join(os.path.expanduser("~"), ".local", "state")
+        base = os.path.join(state, "ddl-gate")
+    return os.path.abspath(base)
+
+
+def private_directory(path):
+    """Create `path` for its owner alone (0o700) when it is missing; missing parents get the default mode."""
+    if not os.path.isdir(path):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        try:
+            os.mkdir(path, 0o700)
+        except FileExistsError:
+            pass
+
+
+def grant_file(key, ident):
+    """Where the store keeps the record of one grant: `<store>/<project key>/grants/<R-id>.json`."""
+    return os.path.join(grant_store(), key, "grants", ident + ".json")
+
+
+def read_grant(path, ident):
+    """The grant record in `path`, or None unless the file parses as a grant record that carries `ident`.
+
+    Every reader goes through here: an empty or torn file, another record's copy and anything else that
+    sits at a record's name is no grant."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            record = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    if isinstance(record, dict) and record.get("id") == ident and isinstance(record.get("grant"), dict):
+        return record
+    return None
+
+
+def grant_records(key=None):
+    """The readable grant records of one project, or of every project when `key` is None; oldest approval
+    first. Nothing is created, and a file that is not a grant record is skipped."""
+    store, records, suffix = grant_store(), [], ".json"
+    try:
+        keys = sorted(os.listdir(store)) if key is None else [key]
+    except OSError:
+        return records
+    for name in keys:
+        directory = os.path.join(store, name, "grants")
+        try:
+            files = sorted(os.listdir(directory))
+        except OSError:
+            continue
+        for file in files:
+            record = read_grant(os.path.join(directory, file), file[:-len(suffix)]) if file.endswith(suffix) else None
+            if record:
+                records.append(record)
+    return sorted(records, key=lambda record: (str(record.get("approvedAt")), record["id"]))
+
+
+def grant_summary(record, language):
+    """One grant record as a count line shows it: its ID, its expiry date, and whether it is still valid.
+
+    Only the expiry ends a recorded grant: no session, prompt, resume or epoch is consulted here."""
+    text, expires = COUNT_TEXT[language], record["grant"].get("expires")
+    seconds = iso_seconds(expires)
+    state = "valid" if seconds is not None and seconds > time.time() else "expired"
+    return text["grant"].format(record["id"], expires[:10] if isinstance(expires, str) else "?", text[state])
+
+
+def proved_grant(runtime, payload, root, ident, approved_at=None):
+    """The record of the grant the human just approved under `ident`, ready for the store.
+
+    The proof raises when it does not hold. It reads the latest submitted answer, so it also raises when
+    that answer belongs to another question than `ident`, or to a report of another project."""
+    record = approved_report_grant(runtime, payload)
+    key = project_key(root)
+    if "R-" + record["id"] != ident:
+        raise ValueError("the latest submitted answer is for another question.")
+    if not key or record["projectKey"] != key:
+        raise ValueError("the report was prepared in another project.")
+    return {"id": ident, "projectKey": key, "root": root, "grant": record["grant"],
+            "approvedAt": approved_at or utc_stamp(), "session": payload.get("session_id"), "host": runtime}
+
+
+def store_grant(body):
+    """Write one grant record, once: `<store>/<project key>/grants/R-<id>.json`. False when the record is
+    there already (it is never rewritten); OSError when the store cannot take it.
+
+    The record appears whole or not at all: a private temporary file beside it is linked to its name, and
+    the link fails when the name is taken. A file at that name that is no grant record (an empty one that
+    an interrupted write left) is replaced. Later stages keep their use log under `uses/`, beside
+    `grants/`; nothing is created there now."""
+    path = grant_file(body["projectKey"], body["id"])
+    if read_grant(path, body["id"]):
+        return False
+    directory = grant_store()
+    for part in (None, body["projectKey"], "grants"):
+        directory = os.path.join(directory, part) if part else directory
+        private_directory(directory)
+    scratch = "{}.{}.{}.tmp".format(path, os.getpid(), os.urandom(4).hex())
+    fd = os.open(scratch, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        try:
+            os.write(fd, (review_json(body) + "\n").encode("ascii"))
+        finally:
+            os.close(fd)
+        try:
+            os.link(scratch, path)
+        except FileExistsError:
+            if read_grant(path, body["id"]):
+                return False  # another gate process recorded the same approval a moment ago
+            os.replace(scratch, path)
+        return True
+    finally:
+        try:
+            os.unlink(scratch)
+        except OSError:
+            pass  # the replacement above took it
 
 
 # --- shell allowlist --------------------------------------------------------------------------
@@ -1852,12 +2398,13 @@ def pending_state(runtime, payload) -> bool | None:
     return pending_scan(runtime, payload)[0]
 
 
-def question_guard(runtime, payload, state, pending):
+def question_guard(runtime, payload, state, pending, note):
     """Check a native question before the safe-tool shortcut.
 
     A question that carries an ID must equal the request prepared under that ID, in this state
     directory and after the session's last epoch. A question without an ID is an ordinary question,
-    except while a STOP is pending: then only the prepared question may be asked."""
+    except while a STOP is pending: then only the prepared question may be asked. `note` receives what
+    the ledger records: the ID a denial names, or the prepared question that passed (`asked`)."""
     if payload.get("tool_name") not in QUESTION_TOOLS.get(runtime, set()):
         return None
     request = payload.get("tool_input")
@@ -1870,9 +2417,11 @@ def question_guard(runtime, payload, state, pending):
     if ident is None:
         if state is not True:
             return None
+        note.update(rule="question", id=pending["id"] if pending else None)
         return deny(ASK_UNCHANGED.format(pending["id"]) if pending else PREPARE_FIRST)
     kind, prepared_id = ident
     label = kind + "-" + prepared_id
+    note.update(rule="question", id=label)
     try:
         if kind == "R":
             record = load_report(prepared_id, runtime)
@@ -1887,60 +2436,324 @@ def question_guard(runtime, payload, state, pending):
         return deny(PREDATES.format(label))
     if request != expected:
         return deny((GIT_QUESTION_MISMATCH if kind == "G" else ASK_UNCHANGED).format(label))
+    del note["rule"]
+    note["asked"] = {"id": label, "options": option_labels(expected), "grant": kind == "R" and bool(record["grant"])}
     return None  # the prepared question; the host's own policy still applies
 
 
-def handle_pre_tool_use(runtime, payload):
-    if not session_project(payload)["ddl"]:
+def asked_marker(session_id):
+    """`<state dir>/<session>.asked`: the prepared questions this session asked and has not seen closed."""
+    return os.path.join(state_base(), state_name(session_id) + ".asked")
+
+
+def disarm(session_id):
+    """Retire every armed question of the session."""
+    try:
+        os.unlink(asked_marker(session_id))
+    except OSError:
+        pass
+
+
+def armed_questions(session_id):
+    """The questions the marker holds, oldest first; none when it is missing or unreadable.
+
+    Each is {id, options, grant, toolUseId} and, once Codex delivered its approving reply, `answered`. An
+    older gate wrote the one question it kept as a bare object."""
+    try:
+        with open(asked_marker(session_id), encoding="utf-8") as fh:
+            armed = json.load(fh)
+    except (OSError, ValueError):
+        return []
+    armed = [armed] if isinstance(armed, dict) else armed if isinstance(armed, list) else []
+    return [entry for entry in armed
+            if isinstance(entry, dict) and isinstance(entry.get("id"), str) and PREPARED_ID.fullmatch(entry["id"])]
+
+
+def arm(session_id, armed):
+    """Make `armed` the session's armed questions. With none left the marker goes, and the next call costs
+    one stat again."""
+    if armed:
+        write_whole(asked_marker(session_id), json.dumps(armed[-ARMED_LIMIT:]))
+    else:
+        disarm(session_id)
+
+
+def claude_question_close(entry):
+    """(label, timed out) for the Claude tool result that closes a question, or None when it carries neither a
+    submitted answer nor an idle auto-resolution (a rejection, an empty answer, a non-user source)."""
+    result = entry.get("toolUseResult")
+    answers = result.get("answers") if isinstance(result, dict) else None
+    if not isinstance(answers, dict):
         return None
+    labels = [answer for answer in answers.values() if isinstance(answer, str) and answer.strip()]
+    if result.get("afkTimeoutMs") is not None:  # the host resolved it after the idle wait
+        return (labels[0] if len(labels) == 1 else None), True
+    if len(answers) != 1 or len(labels) != 1 or not is_dialog_answer_claude(entry):
+        return None
+    return labels[0], False
+
+
+def entry_blocks(entry):
+    """The dict blocks of a Claude entry's message content."""
+    message = entry.get("message")
+    content = message.get("content") if isinstance(message, dict) else None
+    return [block for block in content if isinstance(block, dict)] if isinstance(content, list) else []
+
+
+def armed_close_claude(path, ident):
+    """How the latest question carrying `ident` was closed: {toolUseId, label, timeout, ts}; False when it
+    closed without an answer; None while it is open or lies before the last typed prompt or compaction."""
+    results = {}
+    for entry in iter_entries_reversed(path, {"lines": 0, "parsed": 0}):
+        if entry.get("isSidechain"):
+            continue
+        if entry.get("isCompactSummary"):
+            return None
+        blocks = entry_blocks(entry)
+        if entry.get("type") == "user":
+            refs = [block.get("tool_use_id") for block in blocks if block.get("type") == "tool_result"]
+            for ref in refs:
+                results.setdefault(ref, entry)
+            if not refs and is_human_prompt_claude(entry):
+                return None
+        elif entry.get("type") == "assistant":
+            for block in blocks:
+                if block.get("type") == "tool_use" and block.get("name") in QUESTION_TOOLS["claude"] \
+                        and question_id(asked_question("claude", block.get("input"))) == ident:
+                    result = results.get(block.get("id"))
+                    if result is None:
+                        return None
+                    close = claude_question_close(result)
+                    return {"toolUseId": block.get("id"), "label": close[0], "timeout": close[1],
+                            "ts": result.get("timestamp")} if close else False
+    return None
+
+
+def armed_close_codex(path, ident):
+    """Same contract as armed_close_claude for a Codex rollout: the reply envelope to the question's call."""
+    reply = stamp = None
+    for entry in iter_entries_reversed(path, {"lines": 0, "parsed": 0}):
+        payload = entry.get("payload")
+        if entry.get("type") == "compacted":
+            return None
+        if not isinstance(payload, dict):
+            continue
+        kind, ptype, item = entry.get("type"), payload.get("type"), payload.get("item")
+        if kind == "event_msg" and ptype == "item_completed" and isinstance(item, dict) and item.get("type") == "UserMessage":
+            if reply is not None:
+                return None
+            reply, stamp = codex_git_reply(codex_text(item)), entry.get("timestamp")
+            if not reply or question_id(reply[1]) != ident:
+                return None  # typed text, or the reply to another question
+        elif kind == "response_item" and ptype == "function_call" and payload.get("name") in QUESTION_TOOLS["codex"]:
+            asked = asked_question("codex", payload.get("arguments"))
+            if question_id(asked) != ident:
+                continue
+            if reply is None or reply[0] != payload.get("call_id"):
+                return None
+            if not isinstance(reply[1], str) or asked.replace("\r\n", "\n") != reply[1].replace("\r\n", "\n"):
+                return False
+            return {"toolUseId": reply[0], "label": reply[2], "timeout": False, "ts": stamp}
+    return None
+
+
+def note_answer(runtime, payload, root, armed, close):
+    """The lines of one closed question: `answered`, unless Codex's reply was logged as it arrived, and for
+    the approving answer of a grant either `granted` or a `warn` that names why no record follows.
+
+    The warning's rule is `grant-proof` when the record does not prove the approval and `grant-store` when
+    the store could not take the record. Nothing is retried: the question is closed either way."""
+    session, ident = payload.get("session_id"), armed["id"]
+    labels, label, seconds = armed.get("options") or [], close["label"], iso_seconds(close["ts"])
+    stamp = None if seconds is None else utc_stamp(seconds)  # the host's own time of the answer, when it wrote one
+    choice = labels.index(label) if label in labels else None
+    if not armed.get("answered"):
+        ledger_event(root, runtime, session, "answered", ts=stamp, id=ident, toolUseId=close["toolUseId"],
+                     choice=choice, label=label, timeout=close["timeout"])
+    if not armed.get("grant") or choice != 0 or close["timeout"]:
+        return
+    rule = "grant-proof"
+    try:
+        body = proved_grant(runtime, payload, root, ident, stamp)
+        rule = "grant-store"
+        written = store_grant(body)
+    except Exception:
+        key = project_key(root)
+        if not key or not read_grant(grant_file(key, ident), ident):  # an earlier approval's record is no loss
+            ledger_event(root, runtime, session, "warn", id=ident, rule=rule, toolUseId=close["toolUseId"])
+        return
+    if written:
+        ledger_event(root, runtime, session, "granted", id=ident, toolUseId=close["toolUseId"])
+
+
+def observe_answers(runtime, payload, root):
+    """Close each armed question whose answer the record now holds: its `answered` line, and its grant
+    record when the proof holds. It decides nothing, and it closes a question at most once.
+
+    With nothing armed this is one stat. A question whose answer the record does not hold yet stays armed,
+    also behind a question asked after it, until a typed prompt, a compaction or a resume retires them all."""
+    session = payload.get("session_id")
+    if not os.path.exists(asked_marker(session)):
+        return
+    find = armed_close_codex if runtime == "codex" else armed_close_claude
+    armed = armed_questions(session)
+    closes = [find(payload.get("transcript_path"), tuple(entry["id"].split("-"))) for entry in armed]
+    if armed and all(close is None for close in closes):
+        return
+    # First, so that a failure below is never retried on every later call.
+    arm(session, [entry for entry, close in zip(armed, closes) if close is None])
+    for entry, close in zip(armed, closes):
+        if close:
+            try:
+                note_answer(runtime, payload, root, entry, close)
+            except Exception:
+                pass  # one question's bookkeeping never costs the next one its lines
+
+
+def tool_note(runtime, payload, project, decision, note):
+    """The ledger's share of one tool call: its line, the asked question, and a grant to record.
+
+    It runs after the decision is made and cannot change it. An ordinary call (nothing asked, nothing
+    decided) writes nothing and costs at most the one stat for the asked question."""
+    session = payload.get("session_id")
+    out = decision.get("hookSpecificOutput") if isinstance(decision, dict) else None
+    verdict = out.get("permissionDecision") if isinstance(out, dict) else None
+    asked = note.get("asked") if verdict is None else None
+    # Look for the answers while the record is OPEN, and when a new question joins the asked ones. A call
+    # that is denied or asked does not wait for that reading: the next call that passes looks.
+    observe = verdict is None and (note.get("state") is False or bool(asked)) \
+        and os.path.exists(asked_marker(session))
+    if not (observe or asked or decision):
+        return
+    root = ledger_root(project)
+    call = {key: value if isinstance(value, str) else None
+            for key, value in (("tool", payload.get("tool_name")), ("toolUseId", payload.get("tool_use_id")))}
+    if observe:
+        try:
+            observe_answers(runtime, payload, root)
+        except Exception:
+            pass
+    if verdict in ("deny", "ask"):
+        ledger_event(root, runtime, session, "denied" if verdict == "deny" else "ask", id=note.get("id"),
+                     rule=note.get("rule"), **call)
+    elif asked:
+        ledger_event(root, runtime, session, "asked", id=asked["id"], **call)
+        # Behind the questions that have not closed: a record that lags must not cost an earlier question its
+        # answer. Asked again, a question takes its new call's place.
+        waiting = [entry for entry in armed_questions(session) if entry["id"] != asked["id"]]
+        arm(session, waiting + [dict(asked, toolUseId=call["toolUseId"])])
+    if isinstance(decision, dict) and "systemMessage" in decision:
+        ledger_event(root, runtime, session, "warn", rule=note.get("rule"), **call)
+
+
+def tool_decision(runtime, payload, note):
+    """The PreToolUse decision; `note` collects what the ledger records about it (state, rule, id, asked)."""
     git_review = git_review_guard(runtime, payload)
     try:
         state, pending = pending_scan(runtime, payload)
     except Exception:
         if git_review is not None:
+            note["rule"] = "git-review"
             return git_review
         raise
-    asked = question_guard(runtime, payload, state, pending)
+    note["state"] = state
+    asked = question_guard(runtime, payload, state, pending, note)
     if asked is not None:
         return asked
     if state is True:
         mutating, segment = is_mutating(runtime, payload.get("tool_name"), payload.get("tool_input"))
         if mutating and not gate_preparation(runtime, payload):
+            note.update(rule="stop", id=pending["id"] if pending else None)
             reason = WAITING_REASON.format(pending["id"], pending["report"]) if pending else DENY_REASON
             return deny(reason + (" Shell segment is not read-only: `{}`.".format(segment) if segment else ""))
     if git_review is not None:
+        note["rule"] = "git-review"
         return git_review
     outward = push_guard(runtime, payload)
     if outward is not None:
+        note["rule"] = "push-form"
         return outward
     if state is None:
         warned = session_file(payload.get("session_id"), ".warned")
         if warned.exists():
             return None  # warn once per session; the rule still holds by instruction
         warned.write_text(str(time.time()))
+        note["rule"] = "unreadable-record"
         return {"systemMessage": UNREADABLE}
     return None  # never emit an affirmative allow that could replace the harness's decision
 
 
+def handle_pre_tool_use(runtime, payload):
+    project = session_project(payload)
+    if not project["ddl"]:
+        return None
+    note = {}
+    decision = tool_decision(runtime, payload, note)
+    try:  # the ledger and the grant record come after the decision and never change it
+        tool_note(runtime, payload, project, decision, note)
+    except Exception:
+        pass
+    return decision
+
+
 def handle_stop(runtime, payload):
-    if not session_project(payload)["ddl"]:
+    project = session_project(payload)
+    if not project["ddl"]:
         return None
     # The last message is the cheap signal; the record catches a report emitted earlier in the same turn,
     # including one that is recorded only as a prepared question or the preparation output.
-    closed = has_report(payload.get("last_assistant_message")) or record_state(runtime, payload) is True
+    pending = None
+    closed = has_report(payload.get("last_assistant_message"))
+    if not closed:
+        state, pending = record_scan(runtime, payload)
+        closed = state is True
     if closed:
         marker_path(payload.get("session_id")).write_text(str(time.time()))
+    try:  # the fallback for an answer no tool call has seen: the turn can end right after it
+        root = ledger_root(project) if closed or os.path.exists(asked_marker(payload.get("session_id"))) else None
+        if closed:
+            ledger_event(root, runtime, payload.get("session_id"), "stop", id=pending["id"] if pending else None)
+        observe_answers(runtime, payload, root)
+    except Exception:
+        pass
     return None
 
 
+def prompt_note(runtime, payload, project, answered):
+    """The ledger's share of one submitted prompt. `answered` is (ID, reply, option labels) when the prompt
+    is Codex's reply envelope to the unchanged prepared question, else None: typed text."""
+    session, root = payload.get("session_id"), ledger_root(project)
+    if answered is None:
+        disarm(session)  # a typed prompt retires the asked questions: their reports now predate the epoch
+        ledger_event(root, runtime, session, "prompt")
+        return
+    label, reply, labels = answered
+    choice = labels.index(reply[2]) if reply[2] in labels else None
+    ledger_event(root, runtime, session, "answered", id=label, toolUseId=reply[0], choice=choice, label=reply[2],
+                 timeout=False)
+    if choice != 0:
+        disarm(session)  # any other reply moved the epoch, as typed text does
+        return
+    # The approving reply spared the epoch, so the other questions keep waiting. Its own question stays only
+    # for a grant, which still needs its proof from the record at the next tool call; its line is done.
+    armed = armed_questions(session)
+    kept = [dict(entry, answered=True) if entry["id"] == label else entry
+            for entry in armed if entry["id"] != label or entry.get("grant")]
+    if kept != armed:
+        arm(session, kept)
+
+
 def handle_user_prompt_submit(runtime, payload):
-    if not session_project(payload, refresh=True)["ddl"]:
+    project = session_project(payload, refresh=True)
+    if not project["ddl"]:
         return None
     marker_path(payload.get("session_id")).unlink(missing_ok=True)
-    # Revoke older Git preparations immediately, even if the new prompt has not reached the
+    # Revoke older preparations immediately, even if the new prompt has not reached the
     # asynchronous transcript yet. A possible matching native submission is not itself a grant:
     # PreToolUse must still prove its request/result association from the conversation record.
-    matching_submission = False
+    # The reply that approves a prepared report is spared like the one that approves a Git review:
+    # bumping the epoch for it would retire the very report it answers before its grant is proved.
+    matching_submission, answered = False, None
     if runtime == "codex":
         try:
             reply = codex_git_reply(payload.get("prompt"))
@@ -1948,11 +2761,21 @@ def handle_user_prompt_submit(runtime, payload):
             if ident and ident[0] == "G":
                 record, _ = load_git_review(ident[1], runtime)
                 q = review_question(record)
-                matching_submission = reply[1].replace("\r\n", "\n") == q["title"] and reply[2] == q["options"][0]
-        except (OSError, ValueError, TypeError, KeyError, AttributeError):
-            pass
+                title, labels = q["title"], q["options"]
+            elif ident:
+                record = load_report(ident[1], runtime)
+                title, labels = record["question"], [option["label"] for option in record["options"]]
+            if ident and reply[1].replace("\r\n", "\n") == title:
+                matching_submission = reply[2] == labels[0]
+                answered = ("-".join(ident), reply, labels)
+        except (OSError, ValueError, TypeError, KeyError, IndexError, AttributeError):
+            pass  # no usable record of that question (IndexError: one without options): the epoch moves
     if not matching_submission:
         session_file(payload.get("session_id"), ".git-epoch").write_text(str(time.time()))
+    try:
+        prompt_note(runtime, payload, project, answered)
+    except Exception:
+        pass
     return None
 
 
@@ -1976,11 +2799,18 @@ def find_design_md(cwd) -> pathlib.Path | None:
 
 
 def handle_session_start(runtime, payload):
-    if not session_project(payload, refresh=True)["ddl"]:
+    project = session_project(payload, refresh=True)
+    if not project["ddl"]:
         return None
-    parts = []
-    if payload.get("source") in ("compact", "resume", "fork", "clear"):
+    parts, source = [], payload.get("source")
+    if source in ("compact", "resume", "fork", "clear"):
         session_file(payload.get("session_id"), ".git-epoch").write_text(str(time.time()))
+        disarm(payload.get("session_id"))  # the asked report now predates the epoch; a recorded grant stays
+    try:
+        ledger_event(ledger_root(project), runtime, payload.get("session_id"), "session-start",
+                     rule=source if isinstance(source, str) else None)
+    except Exception:
+        pass
     if payload.get("source") in ("compact", "resume"):
         state, pending = pending_scan(runtime, payload)
         if state is True:
@@ -1992,6 +2822,329 @@ def handle_session_start(runtime, payload):
     if not parts:
         return None
     return {"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": "\n\n".join(parts)}}
+
+
+# --- counts and the Run -----------------------------------------------------------------------
+# Subcommands, run outside a hook. They read what the hook recorded and the conversation record; nothing
+# here is read back by a hook decision.
+
+def question_outcome(labels, label, timeout):
+    """`timeout`, `approved` (the first option was submitted) or `revised` (anything else was)."""
+    return "timeout" if timeout else "approved" if labels and label == labels[0] else "revised"
+
+
+def refused_by_hook(entry):
+    """True when the host recorded that a hook refused the call: such a question was never shown."""
+    decision = entry.get("permissionDecision")
+    return isinstance(decision, dict) and decision.get("source") == "hook" and decision.get("decision") == "reject"
+
+
+def claude_questions(path):
+    """The questions that carry an ID in a Claude transcript, in order, each with the `timestamp` of the
+    entry that holds its tool call and of the entry that holds its answer."""
+    asked = {}
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            if '"tool_' not in line:  # neither a tool call nor a tool result
+                continue
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(entry, dict) or entry.get("isSidechain"):
+                continue
+            for block in entry_blocks(entry):
+                if entry.get("type") == "assistant" and block.get("type") == "tool_use" \
+                        and block.get("name") in QUESTION_TOOLS["claude"] and block.get("id") not in asked:
+                    ident = question_id(asked_question("claude", block.get("input")))
+                    if ident:
+                        asked[block.get("id")] = {"id": "-".join(ident), "labels": option_labels(block.get("input")),
+                                                  "asked": iso_seconds(entry.get("timestamp")), "outcome": None}
+                elif entry.get("type") == "user" and block.get("type") == "tool_result":
+                    question = asked.get(block.get("tool_use_id"))
+                    if question is None or "closed" in question:
+                        continue
+                    question["closed"] = not refused_by_hook(entry)
+                    close = claude_question_close(entry)
+                    if close:
+                        question.update(outcome=question_outcome(question["labels"], *close),
+                                        answered=iso_seconds(entry.get("timestamp")))
+    return [question for question in asked.values() if question.get("closed", True)]
+
+
+def codex_questions(path):
+    """Same for a Codex rollout: the line of the question's call and the line of its reply message, each
+    with its top-level `timestamp` when the rollout writes one."""
+    asked = {}
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        for line in fh:
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                continue
+            payload = entry.get("payload") if isinstance(entry, dict) else None
+            if not isinstance(payload, dict):
+                continue
+            kind, ptype, item = entry.get("type"), payload.get("type"), payload.get("item")
+            if kind == "response_item" and ptype == "function_call" and payload.get("name") in QUESTION_TOOLS["codex"] \
+                    and payload.get("call_id") not in asked:
+                text = asked_question("codex", payload.get("arguments"))
+                ident = question_id(text)
+                if ident:
+                    asked[payload.get("call_id")] = {"id": "-".join(ident), "text": text, "outcome": None,
+                                                     "labels": option_labels(payload.get("arguments")),
+                                                     "asked": iso_seconds(entry.get("timestamp"))}
+            elif kind == "event_msg" and ptype == "item_completed" and isinstance(item, dict) \
+                    and item.get("type") == "UserMessage":
+                reply = codex_git_reply(codex_text(item))
+                question = asked.get(reply[0]) if reply else None
+                if question and question["outcome"] is None and isinstance(reply[1], str) \
+                        and reply[1].replace("\r\n", "\n") == question["text"].replace("\r\n", "\n"):
+                    question.update(outcome=question_outcome(question["labels"], reply[2], False),
+                                    answered=iso_seconds(entry.get("timestamp")))
+    return list(asked.values())
+
+
+def event_questions(events):
+    """The questions in a selection of ledger events: each `asked` line, joined with the `answered` line of
+    the same session, id and call (of the same id alone when the two hosts' call ids differ)."""
+    questions, latest = [], {}
+    for event in events:
+        ident, kind = event.get("id"), event.get("kind")
+        keys = [json.dumps([event.get("session"), ident, call]) for call in (event.get("toolUseId"), None)]
+        if kind == "asked" and isinstance(ident, str):
+            question = {"id": ident, "asked": iso_seconds(event.get("ts")), "outcome": None}
+            questions.append(question)
+            latest.update((key, question) for key in keys)
+        elif kind == "answered":
+            question = latest.get(keys[0]) or latest.get(keys[1])
+            if question and question["outcome"] is None:
+                question.update(answered=iso_seconds(event.get("ts")),
+                                outcome="timeout" if event.get("timeout") else
+                                "approved" if event.get("choice") == 0 else "revised")
+    return questions
+
+
+def count_lines(language, questions, denials, grant):
+    """The four count lines. `questions` (each with outcome, asked, answered) and `denials` are None when the
+    source cannot tell them; `grant` is a grant record, False for none, or None when it cannot be looked up.
+
+    Waiting covers the submitted answers, from the question's call to its answer; a timeout is counted apart
+    on the first line. Minutes are rounded to the nearest whole one. Nothing is estimated: a value that
+    cannot be derived is printed as not measured."""
+    text = COUNT_TEXT[language]
+    unmeasured, asked, waiting = text["unmeasured"], text["unmeasured"], text["unmeasured"]
+
+    def minutes(seconds):
+        return text["minutes"].format(int((seconds + 30) // 60))
+
+    if questions is not None:
+        tally = [sum(q["outcome"] == key for q in questions) for key in ("approved", "revised", "timeout")]
+        asked = text["asked"].format(len(questions), *tally)
+        waits = [q["answered"] - q["asked"] if q.get("answered") is not None and q["asked"] is not None else None
+                 for q in questions if q["outcome"] in ("approved", "revised")]
+        if all(wait is not None and wait >= 0 for wait in waits):
+            waits.sort()
+            middle = len(waits) // 2
+            # The median by hand: the middle value, or the mean of the two middle ones.
+            median = waits[middle] if len(waits) % 2 else (waits[middle - 1] + waits[middle]) / 2 if waits else None
+            waiting = text["waiting"].format(minutes(sum(waits)), minutes(median) if waits else unmeasured,
+                                             minutes(waits[-1]) if waits else unmeasured)
+    lines = [asked, waiting, unmeasured if denials is None else text["denied"].format(denials),
+             unmeasured if grant is None else grant_summary(grant, language) if grant else text["none"]]
+    return [label + ": " + line for label, line in zip(text["labels"], lines)]
+
+
+def run_file(root, run_id):
+    return os.path.join(root, LEDGER, "runs", run_id, "run.json")
+
+
+def load_run(root, run_id):
+    """The Run's record; ValueError when the ID is malformed or the project's ledger holds no such Run."""
+    if not isinstance(run_id, str) or not RUN_ID.fullmatch(run_id):
+        raise ValueError("a Run ID is N- and 12 hexadecimal characters.")
+    try:
+        with open(run_file(root, run_id), encoding="utf-8") as fh:
+            run = json.load(fh)
+    except (OSError, ValueError, TypeError):
+        run = None
+    if not isinstance(run, dict) or run.get("id") != run_id or not isinstance(run.get("items"), list):
+        raise ValueError("Run {} is not in this project's ledger.".format(run_id))
+    return run
+
+
+def ledger_runs(root):
+    """Every readable Run of the ledger."""
+    try:
+        names = sorted(os.listdir(os.path.join(root, LEDGER, "runs")))
+    except OSError:
+        return []
+    runs = []
+    for name in names:
+        try:
+            runs.append(load_run(root, name))
+        except ValueError:
+            continue
+    return runs
+
+
+def report_command(argv):
+    """`report`: the four count lines for a conversation record, a session's ledger events, or a Run.
+
+    A Run's events are those the ledger dates from its start until the next Run of the project starts, and
+    those that carry the ID of its plan's report whenever they were written: the plan is asked and answered
+    before its Run starts. Without `--language` a Run's lines are in its plan's language (Japanese for a
+    Japanese code and for a Run that names none, English for any other); the other two default to Japanese."""
+    options, rest = {}, list(argv)
+    while rest:
+        name, equal, value = rest.pop(0).partition("=")
+        if name not in REPORT_FLAGS or name in options or not (equal or rest):
+            raise ValueError(REPORT_USAGE)
+        options[name] = value if equal else rest.pop(0)
+    modes = [name for name in ("--transcript", "--session", "--run") if name in options]
+    given, runtime = options.get("--language"), options.get("--runtime")
+    if len(modes) != 1 or given not in (None, *COUNT_TEXT) or runtime not in (None,) + RUNTIMES \
+            or (modes[0] == "--transcript" and runtime is None) or not options[modes[0]]:
+        raise ValueError(REPORT_USAGE)
+    mode, value, language = modes[0], options[modes[0]], given or "ja"
+    if mode == "--transcript":
+        try:
+            questions = (codex_questions if runtime == "codex" else claude_questions)(value)
+        except OSError:
+            return count_lines(language, None, None, None)  # an unreadable record: nothing can be derived
+        asked = {question["id"] for question in questions}
+        grants = [record for record in grant_records() if record["id"] in asked]
+        # A record shows no gate decision the gate can tell from another hook's, so denials are not counted here.
+        return count_lines(language, questions, None, grants[-1] if grants else False)
+    if mode == "--run" and not RUN_ID.fullmatch(value):
+        raise ValueError(REPORT_USAGE)
+    root, key = cwd_ledger()
+    if not root and mode == "--run":
+        raise ValueError("Run {} needs its DDL project as the working directory.".format(value))
+    if not root:
+        return count_lines(language, None, None, None)
+    events = ledger_lines(root)
+    if mode == "--session":
+        chosen = None if events is None else [event for event in events if event.get("session") == value]
+        grants = [record for record in grant_records(key) if record.get("session") == value]
+    else:
+        run = load_run(root, value)
+        if given is None and isinstance(run.get("language"), str) and not is_japanese(run["language"]):
+            language = "en"
+        plan, start = run.get("report"), iso_seconds(run.get("startedAt"))
+        later = [moment for moment in (iso_seconds(other.get("startedAt")) for other in ledger_runs(root))
+                 if moment is not None and start is not None and moment > start]
+        end = min(later) if later else None
+
+        def of_run(event):  # dated within the Run, or about its plan's report; each ledger line is seen once
+            moment = iso_seconds(event.get("ts"))
+            return (isinstance(plan, str) and event.get("id") == plan) or (
+                moment is not None and moment >= start and (end is None or moment < end))
+
+        chosen = None if events is None or start is None else [event for event in events if of_run(event)]
+        grants = [record for record in grant_records(key) if record["id"] == plan]
+    if chosen is None:
+        return count_lines(language, None, None, grants[-1] if grants else False)
+    return count_lines(language, event_questions(chosen), sum(event.get("kind") == "denied" for event in chosen),
+                       grants[-1] if grants else False)
+
+
+def run_items(items):
+    """The items of a new Run, each with `status: "ready"`; ValueError names the first problem."""
+    if not isinstance(items, list) or len(items) > MAX_RUN_ITEMS:
+        raise ValueError("items must be a list of at most {} items.".format(MAX_RUN_ITEMS))
+    out = []
+    for item in items:
+        if not isinstance(item, dict) or not {"id", "kind"} <= set(item) <= ITEM_KEYS:
+            raise ValueError("each item is {id, kind, files?, after?}.")
+        if not isinstance(item["id"], str) or not ITEM_ID.fullmatch(item["id"]):
+            raise ValueError("an item id is 1 to 32 letters, digits, dots, hyphens or underscores, such as I1.")
+        if item["kind"] not in ITEM_KINDS:
+            raise ValueError("item {}: kind must be one of {}.".format(item["id"], ", ".join(ITEM_KINDS)))
+        lists = {key: item.get(key, []) for key in ("files", "after")}
+        for key, values in lists.items():
+            if not isinstance(values, list) or not all(one_line(value) for value in values) \
+                    or len(set(values)) != len(values):
+                raise ValueError("item {}: {} must be a list of different one-line strings.".format(item["id"], key))
+        out.append({"id": item["id"], "kind": item["kind"], **lists, "status": "ready"})
+    ids = [item["id"] for item in out]
+    if len(set(ids)) != len(ids):
+        raise ValueError("item ids must differ.")
+    for item in out:
+        if item["id"] in item["after"] or not set(item["after"]) <= set(ids):
+            raise ValueError("item {}: after names other items of this Run.".format(item["id"]))
+    ended = set()
+    while len(ended) < len(out):  # every item must be reachable in dependency order
+        free = [item["id"] for item in out if item["id"] not in ended and set(item["after"]) <= ended]
+        if not free:
+            raise ValueError("the after relations form a cycle.")
+        ended.update(free)
+    return out
+
+
+def run_start(data, runtime=None):
+    """`run-start`: write `.ddl/runs/<N-id>/run.json` for one approved plan's report and print {run, path}.
+
+    The Run names the grant only when the store holds that grant's record, and keeps the plan's language,
+    in which `report --run` prints. It is a record for people and reports. No hook reads it: an item's
+    `done` is never a gate pass."""
+    if not isinstance(data, dict) or set(data) != {"report", "items"}:
+        raise ValueError("send one JSON object with report and items.")
+    match = PREPARED_ID.fullmatch(data["report"]) if isinstance(data["report"], str) else None
+    if not match or match[1] != "R":
+        raise ValueError("report must be a prepared report ID such as R-0123456789abcdef.")
+    items = run_items(data["items"])
+    root, key = cwd_ledger()
+    if not root:
+        raise ValueError("a Run belongs to a DDL project; start it from inside the project.")
+    try:
+        record = load_report(match[2], runtime)
+    except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
+        raise ValueError("report {} is not prepared here ({}).".format(data["report"], exc)) from None
+    if record["projectKey"] != key:
+        raise ValueError("report {} was prepared in another project.".format(data["report"]))
+    for run in ledger_runs(root):
+        if run.get("report") == data["report"]:  # one Run per approved plan, also after a compaction or restart
+            raise ValueError("report {} already started Run {} ({}).".format(
+                data["report"], run["id"], run_file(root, run["id"])))
+    granted = read_grant(grant_file(key, data["report"]), data["report"]) is not None
+    os.makedirs(os.path.join(ledger_directory(root), "runs"), exist_ok=True)
+    while True:
+        run_id = "N-" + secrets.token_hex(RUN_ID_BYTES)
+        try:
+            os.mkdir(os.path.dirname(run_file(root, run_id)))
+            break
+        except FileExistsError:
+            continue
+    run = {"id": run_id, "report": data["report"], "grant": data["report"] if granted else None,
+           "language": record["language"], "startedAt": utc_stamp(), "items": items}
+    with open(run_file(root, run_id), "w", encoding="utf-8") as fh:
+        fh.write(json.dumps(run, ensure_ascii=False, indent=2) + "\n")
+    ledger_event(root, record["runtime"], None, "prepared", id=run_id, run=run_id)
+    return {"run": run_id, "path": run_file(root, run_id)}
+
+
+def run_item(argv):
+    """`run-item <N-id> <item id> <status>`: set one item's status in the Run's record and print it."""
+    if len(argv) != 3:
+        raise ValueError(RUN_USAGE)
+    run_id, item_id, status = argv
+    if status not in ITEM_STATUSES:
+        raise ValueError("status must be one of {}.".format(", ".join(ITEM_STATUSES)))
+    root, _ = cwd_ledger()
+    if not root:
+        raise ValueError("a Run belongs to a DDL project; run this from inside the project.")
+    run = load_run(root, run_id)
+    item = next((item for item in run["items"] if isinstance(item, dict) and item.get("id") == item_id), None)
+    if item is None:
+        raise ValueError("Run {} has no item {}.".format(run_id, item_id))
+    item["status"] = status
+    path = run_file(root, run_id)
+    scratch = "{}.{}.tmp".format(path, os.getpid())
+    with open(scratch, "w", encoding="utf-8") as fh:
+        fh.write(json.dumps(run, ensure_ascii=False, indent=2) + "\n")
+    os.replace(scratch, path)  # readers see the old record or the new one, never half of one
+    return {"run": run_id, "item": item_id, "status": status}
 
 
 HANDLERS = {"pre-tool-use": handle_pre_tool_use, "session-start": handle_session_start, "stop": handle_stop,
@@ -2029,12 +3182,42 @@ def emit(obj):
 def main(argv) -> int:
     if argv and argv[0] == "status":
         return project_status(argv[1:])
+    if argv and argv[0] == "report":
+        try:
+            lines = report_command(argv[1:])
+            sys.stdout.buffer.write(("\n".join(lines) + "\n").encode("utf-8"))  # whatever the locale's encoding
+            sys.stdout.flush()
+            return 0
+        except Exception as exc:
+            print("DDL report: " + str(exc), file=sys.stderr)
+            return 2
+    if argv and argv[0] in ("run-start", "run-item"):
+        try:
+            if argv[0] == "run-item":
+                emit(run_item(argv[1:]))
+                return 0
+            runtime = None
+            if argv[1:]:  # optional, and then it must be the report's own runtime
+                _, runtime, problem = parse_args(["session-start", *argv[1:]])
+                if problem:
+                    raise ValueError(RUN_USAGE)
+            try:
+                data = json.loads(sys.stdin.read())
+            except ValueError as exc:
+                raise ValueError("the input is not JSON ({}).".format(exc)) from None
+            emit(run_start(data, runtime))
+            return 0
+        except Exception as exc:
+            print("DDL run: " + str(exc), file=sys.stderr)
+            return 2
     if argv and argv[0] == "prepare-git-review":
         try:
             _, runtime, problem = parse_args(["session-start", *argv[1:]])
             if problem:
                 raise ValueError(problem)
-            emit(prepare_git_review(runtime, json.loads(sys.stdin.read())))
+            result = prepare_git_review(runtime, json.loads(sys.stdin.read()))
+            emit(result)
+            cli_event(runtime, "prepared", id=result["reviewId"])
             return 0
         except Exception as exc:
             print("DDL Git review: " + str(exc), file=sys.stderr)
@@ -2048,7 +3231,9 @@ def main(argv) -> int:
                 data = json.loads(sys.stdin.read())
             except ValueError as exc:
                 raise ValueError("the input is not JSON ({}).".format(exc)) from None
-            emit(prepare_report(runtime, data))
+            result = prepare_report(runtime, data)
+            emit(result)
+            cli_event(runtime, "prepared", id=result["reportId"])
             return 0
         except Exception as exc:
             print("DDL STOP: " + str(exc), file=sys.stderr)

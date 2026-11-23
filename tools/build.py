@@ -5,9 +5,9 @@ Sources (hand-maintained, tracked):
   skills/<name>/SKILL.md            the eight commands, in the Claude Code skill form (the union of the frontmatter
                                     fields, `/name` for a command)
   protocol/SKILL.md                 the protocol entry; `{host}` and `{Host}` are placeholders for the host name
-  protocol/<operation>.md           the six operations beside the entry, with the same placeholders
-  hosts/<host>/<implementation>.md  the four protocol implementations of a host: start, approval, parallel-work,
-                                    git-review
+  protocol/<operation>.md           the seven operations beside the entry, with the same placeholders
+  hosts/<host>/<implementation>.md  the five protocol implementations of a host: start, approval, parallel-work,
+                                    git-review, run
   hosts/<host>/guidance.md          the host's instruction-file template
   hosts/<host>/**                   every other file is an adapter file of that host (settings, agents, hooks, rules);
                                     README.md documents the host and is not deployed
@@ -21,8 +21,9 @@ Generated (dist/, untracked; `python3 tools/build.py`):
   dist/claude/.claude/skills/ddl-protocol/SKILL.md             protocol/SKILL.md with hosts/claude/start.md folded in
                                                                as its `## Host` section, {host} = claude, {Host} = Claude
   dist/claude/.claude/skills/ddl-protocol/<operation>.md       protocol/<operation>.md, rendered the same way; approval,
-                                                               parallel-work and git-review carry hosts/claude/<operation>.md
-                                                               folded into their `## Implementation`
+                                                               parallel-work, git-review and run carry
+                                                               hosts/claude/<operation>.md folded into their
+                                                               `## Implementation`
   dist/codex/AGENTS.md                                         hosts/codex/guidance.md
   dist/codex/.codex/<adapter path>                             hosts/codex/<adapter path>, byte for byte
   dist/codex/.codex/hooks/ddl_gate.py                          tools/ddl_gate.py
@@ -50,7 +51,7 @@ Rules:
     the source has one); its body is only rendered, not even `/cmd` -> `$cmd`. The operations have no
     frontmatter and are only rendered.
   - Rendering replaces the literal `{host}` with the host name and `{Host}` with its capitalised form;
-    no other brace is touched. A host's deployed protocol holds only that host's four implementations,
+    no other brace is touched. A host's deployed protocol holds only that host's five implementations,
     folded in; the link rewriting replaces exact tokens and never formats the text.
   - agents/openai.yaml is the same fixed text for every command skill, with the skill's name; the protocol
     gets a comment saying it is read in Phase 0 and never invoked.
@@ -77,8 +78,8 @@ import sys
 
 COMMANDS = ["draft", "realize", "reflect", "validate", "commit", "docs", "refactoring", "resonate"]
 PROTOCOL = "ddl-protocol"
-OPERATIONS = ["approval", "parallel-work", "notebook", "close", "git-review", "command-authoring"]
-IMPLEMENTATIONS = ["start", "approval", "parallel-work", "git-review"]
+OPERATIONS = ["approval", "parallel-work", "notebook", "close", "git-review", "run", "command-authoring"]
+IMPLEMENTATIONS = ["start", "approval", "parallel-work", "git-review", "run"]
 FOLDED = ["Mapping", "Observed", "Coverage"]  # the implementation sections folded in, in this order; the rest is dropped
 DROPPED = ["Read when"]
 HOST_SECTION = "Host"  # the entry's folded section (start); the operations fold under their last section

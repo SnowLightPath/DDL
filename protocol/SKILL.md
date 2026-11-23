@@ -66,6 +66,7 @@ implementations.
 | [Notebook](notebook.md) | Notebook sections, decisions, plans, gates, marks | [{Host}](hosts/{host}/start.md) (at Start) |
 | [Close](close.md) | The Close stage or scan | Git review's: [{Host}](hosts/{host}/git-review.md) |
 | [Git review](git-review.md) | An ordinary commit or push, in any command | [{Host}](hosts/{host}/git-review.md) |
+| [Run](run.md) | A plan's grant; the Run it starts and reports | [{Host}](hosts/{host}/run.md) |
 | [Command authoring](command-authoring.md) | Creating or changing a command | [{Host}](hosts/{host}/start.md) (at Start) |
 
 Read the operation before the action; once installed it carries the host's

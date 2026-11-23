@@ -5,15 +5,16 @@ Three modes, one line of output on success:
 
   source  SOURCE_OK     the eight commands under skills/ with the shared Phase 0 lines read from the template in
                         protocol/command-authoring.md (phases, STOP, SWARM values, +++DETECT headers: P11; the
-                        template in both forms: P8), the protocol source (the entry P1, the six operations P2-P8,
-                        the implementations under hosts/<host>/ P9, the vocabulary P10, duplicated sentences P14),
-                        the guidance twins hosts/<host>/guidance.md and the adapter files under hosts/
+                        template in both forms: P8), the protocol source (the entry P1, the seven operations P2-P8
+                        and P15, the implementations under hosts/<host>/ P9, the vocabulary P10, duplicated
+                        sentences P14), the guidance twins hosts/<host>/guidance.md and the adapter files under
+                        hosts/
   dist    DIST_OK       the trees tools/build.py generates, in memory: each host's protocol is one file per
-                        action (the entry and the six operations, no hosts/ path or link), every link and
+                        action (the entry and the seven operations, no hosts/ path or link), every link and
                         `#fragment` resolves inside it and no {host} placeholder remains (P12), the folded
                         implementations sit in the entry's Host section and the Implementation sections of
-                        approval, parallel-work and git-review (P9 on the generated files), the command twins
-                        and the instruction files pass the source checks, the gate copies equal
+                        approval, parallel-work, git-review and run (P9 on the generated files), the command
+                        twins and the instruction files pass the source checks, the gate copies equal
                         tools/ddl_gate.py, the byte budgets per host (P13), and dist/ on disk, when present,
                         equals the generated trees
   docs    DOCUMENTS_OK  the philosophy documents, the glossary, the READMEs and the names of earlier layouts
@@ -34,12 +35,12 @@ TOOLS = pathlib.Path(__file__).resolve().parent
 
 COMMANDS = ("draft", "realize", "reflect", "validate", "resonate", "commit", "docs", "refactoring")
 SKILLS = "skills"      # skills/<command>/SKILL.md: the eight commands, in the Claude form (/name)
-PROTOCOL = "protocol"  # protocol/SKILL.md (the entry) and the six operations beside it, with {host} placeholders
-HOSTS = "hosts"        # hosts/<host>/<operation>.md: the four implementations per host, beside the adapter files
-OPERATIONS = ("approval", "close", "command-authoring", "git-review", "notebook", "parallel-work")
+PROTOCOL = "protocol"  # protocol/SKILL.md (the entry) and the seven operations beside it, with {host} placeholders
+HOSTS = "hosts"        # hosts/<host>/<operation>.md: the five implementations per host, beside the adapter files
+OPERATIONS = ("approval", "close", "command-authoring", "git-review", "notebook", "parallel-work", "run")
 HOST_NAMES = ("claude", "codex")
 HOST_TITLES = {"claude": "Claude", "codex": "Codex"}
-HOST_OPERATIONS = ("start", "approval", "parallel-work", "git-review")
+HOST_OPERATIONS = ("start", "approval", "parallel-work", "git-review", "run")
 IMPLEMENTATIONS = tuple(f"{host}/{operation}" for host in HOST_NAMES for operation in HOST_OPERATIONS)
 PLACEHOLDERS = ("{host}", "{Host}")
 IMPLEMENTATION_LINK = re.compile(r"hosts/\{host\}/([a-z-]+)\.md")
@@ -74,7 +75,7 @@ TOOL_NAMES = re.compile(r"\b(AskUserQuestion|request_user_input_async|request_us
                         r"TeamDelete|TaskCreate|TaskList|TaskUpdate|NotebookEdit|apply_patch|subagent_type|agent_type|"
                         r"task_name|fork_turns|run_in_background|multiSelect|afkTimeoutMs)\b")
 CHECK_ID = {"parallel-work": "P3", "notebook": "P4", "approval": "P5", "close": "P6",
-            "git-review": "P7", "command-authoring": "P8"}
+            "git-review": "P7", "command-authoring": "P8", "run": "P15"}
 OPERANDS_HEADERS = {
     "approval": "| Form | Fires when |",
     "close": "| Command | Authority for steps 1–3 | Git review |",
@@ -91,6 +92,7 @@ OPERANDS_ROWS = {
 OPERATION_STEPS = {
     "parallel-work": ("Create team", "Scale", "Spawn", "Monitor", "Collect", "Shutdown"),
     "close": ("Reflect", "Docs", "Resonate", "Validate", "Git review"),
+    "run": ("Grant", "Start", "Track", "Report"),
 }
 FORMATS = {
     "approval": ("+++DDL_REPORT", *REPORT_LABELS, "Outcome:", "approve all", "subset", "hold",
@@ -105,6 +107,9 @@ FORMATS = {
                  "| Stage | Work (parallel lanes) | Human sees | Gate |", "Approved plan (<date>)", "passed <date>",
                  "approved in advance (<date>)", "approved in /realize plan (<date>)", "approved /draft report (<date>)",
                  "design-history.md", "## <date> <R-<id> | Close>"),
+    "run": ("`grant`", "Scope:", "Budget:", "Expiry:", "範囲", "予算", "期限", "`Grant`", "許諾", "N-<id>",
+            ".ddl/events.jsonl", ".ddl/runs/<run id>/run.json", "Questions", "Waiting", "Denials", "問い", "待ち", "拒否",
+            "not measured", "未計測"),
     "command-authoring": ("### Phase N: NAME", "+++DETECT:", "D1: name — trigger", "+++STOP: always",
                           "+++STOP: on D<n>", "**Pre-condition.**", "+++Report:", *REPORT_LABELS, "+++NEVER:",
                           "+++DDL_PHASE: <PhaseName>", "+++DDL_REPORT"),
@@ -125,6 +130,7 @@ EXCEPTIONS = {
                       "no primitive", "argument"),
     "notebook": ("existing heading", "existing code", "automatic memory", "argument", "output format", "delegated",
                  "no reason", "no history file", "other notebook file"),
+    "run": ("no grant", "typed approval", "revised plan", "compaction", "not measured", "expired", "older gate"),
     "command-authoring": ("project copy", "overlay", "no notebook", "missing file", "tool name",
                           "domain phase name", "read-only report"),
 }
@@ -134,24 +140,27 @@ PARALLEL_CONCERNS = ("Team primitive", "type: Explore", "type: general-purpose",
 APPROVAL_CONCERNS = ("Choice tool", "Subset", "Receipt", "Timeout", "Mutating tools", "Human input boundary", "Prepare",
                      "Hook")
 GIT_CONCERNS = ("Prepare", "nativeRequest", "Revocation", "Push confirmation", "Attribution")
+RUN_CONCERNS = ("Grant record", "Event record", "Answer time", "Subcommands")
 # Keyed by operation: the same concerns for every host's implementation of it (P9).
 CONCERNS = {"start": START_CONCERNS, "parallel-work": PARALLEL_CONCERNS, "approval": APPROVAL_CONCERNS,
-            "git-review": GIT_CONCERNS}
+            "git-review": GIT_CONCERNS, "run": RUN_CONCERNS}
 # Reading budgets in UTF-8 bytes (P13): each path adds its files to the previous one and is counted per host on
 # the generated tree; file names are the files of the installed skill directory, the host's implementations
 # folded into them (start in SKILL.md, the others in the operation of the same name).
 BUDGET_PATHS = (
-    ("validate", 20000, ("SKILL.md", "approval.md")),
-    ("draft", 29000, ("notebook.md",)),
-    ("realize-plan", 38000, ("parallel-work.md",)),
-    ("realize-close", 52500, ("close.md", "git-review.md")),
+    ("validate", 20250, ("SKILL.md", "approval.md")),
+    ("draft", 29250, ("notebook.md",)),
+    ("realize-plan", 46000, ("parallel-work.md", "run.md")),
+    ("realize-close", 60500, ("close.md", "git-review.md")),
 )
 EXECUTION_LIMIT = 62000
+FILE_LIMITS = {"run.md": 7500}  # a generated file's own limit, the host's implementation folded in
 AUTHOR_ONLY = ("command-authoring",)  # operations read by authors only: outside the execution total
 # The folded implementations in the generated skill (P9 on dist): the file, the H2 section and the H3 sections.
 FOLDED_H3 = ("Mapping", "Observed", "Coverage")
 FOLDED_INTO = {"start": ("SKILL.md", "Host"), "approval": ("approval.md", "Implementation"),
-               "parallel-work": ("parallel-work.md", "Implementation"), "git-review": ("git-review.md", "Implementation")}
+               "parallel-work": ("parallel-work.md", "Implementation"), "git-review": ("git-review.md", "Implementation"),
+               "run": ("run.md", "Implementation")}
 INLINE_CODE = re.compile(r"`+[^`\n]*`+")
 NOTES = []  # remarks printed on stderr that are not errors (a skipped optional check)
 _BUILD = {}
@@ -200,7 +209,7 @@ def implementation_path(name):
 
 
 def protocol_files():
-    """Every maintained protocol file: the entry, the six operations and the eight implementations (P10, P14)."""
+    """Every maintained protocol file: the entry, the seven operations and the ten implementations (P10, P14)."""
     files = [protocol_path("SKILL.md")] + [protocol_path(f"{n}.md") for n in OPERATIONS]
     return files + [implementation_path(n) for n in IMPLEMENTATIONS]
 
@@ -617,7 +626,7 @@ def check_commands():
     return errors
 
 
-# Protocol source: P1-P10 and P14 (P11 lives in check_command, P12 and P13 in dist mode and tools/test_protocol.py).
+# Protocol source: P1-P10, P14 and P15 (P11 lives in check_command, P12 and P13 in dist mode and tools/test_protocol.py).
 
 def check_entry():
     """P1: the entry's sections, the Instruction set table, the Reading map and the links it holds."""
@@ -652,9 +661,13 @@ def check_entry():
     if found is None or header_text(found[0]) != READING_MAP_HEADER:
         err(f"Reading map table header must be {READING_MAP_HEADER}")
     else:
-        if len(found[1]) < 6:
-            err(f"Reading map needs at least 6 rows, got {len(found[1])}")
+        if len(found[1]) < len(OPERATIONS):
+            err(f"Reading map needs at least {len(OPERATIONS)} rows, got {len(found[1])}")
         base = (ROOT / PROTOCOL).resolve()
+        routed = {target.name for row in found[1] for target in local_targets(row[0], base)}
+        for name in OPERATIONS:
+            if f"{name}.md" not in routed:
+                err(f"Reading map needs a row whose Operation cell links to {name}.md")
         for row in found[1]:
             name = link_text(row[0])
             targets = local_targets(row[0], base)
@@ -857,6 +870,29 @@ def check_command_authoring(text, bodies):
     return errors
 
 
+def check_run(text, bodies):
+    label, ident, errors = "run.md", "P15", []
+    err = lambda message: errors.append(f"{ident}: {label}: {message}")  # noqa: E731
+    found = table(bodies.get("Operands", []))
+    if found is None or not found[1]:
+        err("Operands needs a table with at least one row (None. is not accepted)")
+    syntax = "\n".join(line for _, _, content in fenced_blocks(bodies.get("Syntax", [])) for line in content)
+    for grant_label in ("Scope:", "Budget:", "Expiry:"):
+        if not re.search(r"(?m)^" + grant_label, syntax):
+            err(f"Syntax fence needs a line starting with {grant_label}")
+    names = bold_steps(bodies.get("Operation", []))
+    if names != list(OPERATION_STEPS["run"]) or len(steps(bodies.get("Operation", []))) != 4:
+        err(f"Operation needs exactly 4 steps named {list(OPERATION_STEPS['run'])} in order")
+    errors += literal_errors(ident, label, "Formats", section_text(bodies.get("Formats", [])), FORMATS["run"])
+    errors += keyword_errors(ident, label, "Exceptions", situations(bodies), EXCEPTIONS["run"])
+    # P2 counts the links to hosts/ and checks their shape; the one link of this section names this operation.
+    target = "hosts/{host}/run.md"
+    count = local_links(section_text(bodies.get("Implementation", []))).count(target)
+    if count != 1:
+        err(f"Implementation needs exactly one link to {target}, got {count}")
+    return errors
+
+
 def implementation_body_errors(operation, bodies):
     """The messages (without a prefix) for the Mapping, Observed and Coverage sections of one implementation of
     the operation: the Mapping header and the operation's concerns, dated Observed rows, two Coverage bullets.
@@ -887,7 +923,7 @@ def implementation_body_errors(operation, bodies):
 
 
 def check_implementations():
-    """P9 (and the P2 heading rule) for the eight implementations hosts/<host>/<operation>.md: four sections, the
+    """P9 (and the P2 heading rule) for the ten implementations hosts/<host>/<operation>.md: four sections, the
     host's title, the Mapping concerns, dated Observed rows, Coverage bullets, operations named and never linked."""
     errors = []
     for name in IMPLEMENTATIONS:
@@ -937,8 +973,8 @@ def check_vocabulary():
 
 def check_budget(host, sizes):
     """P13 for one host's generated protocol tree: the cumulative byte budgets of the validate, draft, realize-plan
-    and realize-close paths and the execution total (the entry and the five operations a run can read, the
-    implementations folded in); sizes maps the files of the skill directory to byte counts."""
+    and realize-close paths and the execution total (the entry and the six operations a command run can read,
+    the implementations folded in); sizes maps the files of the skill directory to byte counts."""
     errors, files, total = [], [], 0
     for name, limit, additions in BUDGET_PATHS:
         for file in additions:
@@ -951,6 +987,9 @@ def check_budget(host, sizes):
     total = sum(sizes.get(file, 0) for file in execution)
     if total > EXECUTION_LIMIT:
         errors.append(f"P13: {host} execution total: {total} bytes exceeds {EXECUTION_LIMIT}")
+    for file, limit in FILE_LIMITS.items():
+        if sizes.get(file, 0) > limit:
+            errors.append(f"P13: {host} {file}: {sizes[file]} bytes exceeds {limit}")
     return errors
 
 
@@ -984,10 +1023,11 @@ def check_duplicates():
 
 
 def check_protocol():
-    """The protocol source: the entry, the six operations, the eight implementations, the vocabulary, duplicates."""
+    """The protocol source: the entry, the seven operations, the ten implementations, the vocabulary, duplicates."""
     errors = check_entry()
     checks = {"parallel-work": check_parallel_work, "notebook": check_notebook, "approval": check_approval,
-              "close": check_close, "git-review": check_git_review, "command-authoring": check_command_authoring}
+              "close": check_close, "git-review": check_git_review, "command-authoring": check_command_authoring,
+              "run": check_run}
     for name in OPERATIONS:
         path = protocol_path(f"{name}.md")
         try:
@@ -1047,7 +1087,7 @@ def decoded(data):
 
 
 def check_dist_protocol(host, tree):
-    """P12 on one host's generated protocol: the entry and the six operations and nothing under hosts/, every link
+    """P12 on one host's generated protocol: the entry and the seven operations and nothing under hosts/, every link
     resolving inside the tree and every `#fragment` to a heading of its target, no link to hosts/; then P9 on the
     folded implementations and the P13 budgets."""
     errors = []
@@ -1091,8 +1131,9 @@ def check_dist_protocol(host, tree):
 
 def check_folded(host, prefix, texts):
     """P9 on one host's generated protocol: the entry's H2 sections end with Host, each operation keeps its
-    eight, and the folded implementations (the entry's Host, the Implementation of approval, parallel-work and
-    git-review) carry the H3 sections Mapping, Observed and Coverage with the same content rules as the source."""
+    eight, and the folded implementations (the entry's Host, the Implementation of approval, parallel-work,
+    git-review and run) carry the H3 sections Mapping, Observed and Coverage with the same content rules as the
+    source."""
     errors = []
     for operation, (name, section) in FOLDED_INTO.items():
         label = f"P9: dist {host}: {name}"

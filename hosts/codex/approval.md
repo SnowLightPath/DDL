@@ -8,7 +8,7 @@ Read before a STOP or design.md human gate, with Approval; names the choice tool
 
 | Concern | Implementation |
 |---|---|
-| Choice tool | GUI first: `request_user_input_async` where exposed for approval, one whole-set question with the prepared `nativeRequest` (`questions`, five-line `title`, `options`); `request_user_input` is Plan-only in some hosts and barred from permission requests in Default. |
+| Choice tool | GUI first: `request_user_input_async` where exposed for approval, one whole-set question with the prepared `nativeRequest` (`questions`, the prepared lines as `title`, `options`); `request_user_input` is Plan-only in some hosts and barred from permission requests in Default. |
 | Subset | Async has no multi-select field; a grouped form requires a permitted interface that supports it; no invented `multiSelect`. |
 | Receipt | Async `accepted: true` is a receipt, not an answer. |
 | Timeout | A host clearing its pending question at turn completion is unable to collect approval for that decision (`interface unavailable`). |
