@@ -7127,8 +7127,8 @@ class FailOpenTest(GateTest):
 
 
 class PeerMailTest(GrantAnswers):
-    """A Run's peers: a session bound on run-join, mail delivered to a peer's main conversation, the lead alone
-    asking the human, writing Git and leaving the machine."""
+    """A Run's peers: a session bound once its run-join ran, mail delivered to a peer's main conversation once, the
+    lead alone asking the human, writing Git, starting workers and leaving the machine, the ledger's files the gate's."""
 
     RUN = "N-0123456789ab"
 
@@ -7149,9 +7149,10 @@ class PeerMailTest(GrantAnswers):
     def peers(self):
         return json.loads(self.peers_file.read_text())
 
-    def event(self, runtime, event, session, tool=None, tool_input=None, **extra):
-        """The gate's output (parsed, or None) for one event of `session` in this project, as the host runs it."""
-        data = payload(runtime, event, transcript=fixture(runtime + "_open.jsonl"), session=session, cwd=self.cwd, **extra)
+    def event(self, runtime, event, session, tool=None, tool_input=None, cwd=None, **extra):
+        """The gate's output (parsed, or None) for one event of `session`, as the host runs it."""
+        data = payload(runtime, event, transcript=fixture(runtime + "_open.jsonl"), session=session, cwd=cwd or self.cwd,
+                       **extra)
         if tool is not None:
             data.update(tool_name=tool, tool_input=tool_input)
         out = self.run_gate(event, runtime, data).stdout
@@ -7161,51 +7162,78 @@ class PeerMailTest(GrantAnswers):
         tool, key = SHELL[runtime]
         return self.event(runtime, event, session, tool, {key: command}, **extra)
 
-    def join(self, runtime, session, peer, run=None, lead=False, **extra):
+    def join(self, runtime, session, peer, run=None, lead=False, printed=None, **extra):
+        """The PostToolUse of a run-join call; by default with the output a successful run-join prints."""
+        run = run or self.RUN
         command = "python3 {} run-join {} --peer {} --runtime {}{}".format(
-            shlex.quote(GATE), run or self.RUN, peer, runtime, " --lead" if lead else "")
+            shlex.quote(GATE), run, peer, runtime, " --lead" if lead else "")
+        if printed is None:
+            printed = json.dumps({"run": run, "peer": peer, "runtime": runtime, "lead": peer if lead else "lead-1"})
+        response = {"stdout": printed + "\n", "stderr": "", "interrupted": False, "isImage": False} \
+            if runtime == "claude" else {"output": printed + "\n", "metadata": {"exit_code": 0}}
+        extra.setdefault("tool_response", response)
         return self.shell_event(runtime, "post-tool-use", session, command, **extra)
 
     def send(self, sender, to, text, kind="note"):
         with self.mail.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps({"id": "M-" + hashlib.sha256(text.encode()).hexdigest()[:12], "at": "2026-11-25T01:00:00.000Z",
-                                 "run": self.RUN, "from": sender, "to": to, "kind": kind, "text": text}) + "\n")
+            fh.write(json.dumps({"id": "M-" + hashlib.sha256((sender + to + text).encode()).hexdigest()[:12],
+                                 "at": "2026-11-25T01:00:00.000Z", "run": self.RUN, "from": sender, "to": to,
+                                 "kind": kind, "text": text}) + "\n")
 
     @staticmethod
     def context(out):
         return ((out or {}).get("hookSpecificOutput") or {}).get("additionalContext")
 
-    def test_a_join_binds_the_session_once_it_ran(self):
+    def texts(self, out):
+        text = self.context(out)
+        return [json.loads(line)["text"] for line in text.splitlines()[1:]] if text else []
+
+    def bound(self, peer):
+        return self.peers()["peers"][peer]["session"]
+
+    def test_a_join_binds_only_a_call_that_ran(self):
         for runtime, session, peer in (("claude", "s-lead", "lead-1"), ("codex", "s-peer", "peer-1")):
             with self.subTest(runtime=runtime):
                 self.assertIsNone(self.join(runtime, session, peer, lead=peer == "lead-1"))
-                self.assertEqual(self.peers()["peers"][peer]["session"], session)
-                self.assertEqual(events(self.root, kind="run-join"), [])  # run-join writes its own line
-        # Not bound: a worker's call, a peer that did not join (the call failed), one another session holds, a failed exit.
-        self.join("claude", "s-other", "peer-2", agent_id="worker-1")
-        self.join("claude", "s-other", "nobody")
-        self.join("claude", "s-other", "peer-1")
-        self.join("claude", "s-other", "peer-2", tool_response={"exit_code": 2})
-        self.assertEqual(self.peers()["peers"]["peer-2"]["session"], None)
-        self.assertEqual(self.peers()["peers"]["peer-1"]["session"], "s-peer")
+                self.assertEqual(self.bound(peer), session)
+        self.assertEqual(events(self.root, kind="run-join"), [])  # run-join writes its own line
+        # Nothing shows it ran: no output, a failure, another peer's output, a non-zero exit; a worker; a duplicate option.
+        for printed, extra in (("", {}), ("DDL run: Run N-0123456789ab has its one lead: lead-1.", {}),
+                               (json.dumps({"run": self.RUN, "peer": "peer-1", "runtime": "claude", "lead": "lead-1"}), {}),
+                               (None, {"tool_response": {"stdout": "", "exit_code": 2}}), (None, {"agent_id": "worker-1"})):
+            self.join("claude", "s-other", "peer-2", printed=printed, **extra)
+        self.shell_event("claude", "post-tool-use", "s-other",
+                         "python3 {} run-join {} --peer peer-1 --peer peer-2 --runtime claude".format(GATE, self.RUN),
+                         tool_response={"stdout": json.dumps({"run": self.RUN, "peer": "peer-2", "runtime": "claude",
+                                                              "lead": "lead-1"})})
+        self.shell_event("claude", "post-tool-use", "s-other", "cd . && python3 {} run-join {} --peer peer-2 --runtime "
+                         "claude".format(GATE, self.RUN))
+        self.assertIsNone(self.bound("peer-2"))
         self.assertFalse((pathlib.Path(self.state) / "s-other.member").exists())
-        # Not literal, or more than the call: no binding.
-        for command in ("python3 {} run-join {} --peer peer-2 --runtime claude && true".format(GATE, self.RUN),
-                        "python3 {} run-join {} --peer peer-2 --runtime claude > out".format(GATE, self.RUN)):
-            self.shell_event("claude", "post-tool-use", "s-other", command)
-        self.assertEqual(self.peers()["peers"]["peer-2"]["session"], None)
+        # Said why: another session's peer, a second peer for one session, the lead's name without --lead.
+        for session, peer, runtime, reason in (("s-other", "peer-1", "codex", "peer-1 is another session's peer"),
+                                               ("s-peer", "peer-2", "claude", "this session is peer-1 already"),
+                                               ("s-thief", "lead-1", "claude", "lead-1 is the lead; only the session")):
+            data = self.peers()
+            if peer == "lead-1":
+                data["peers"]["lead-1"]["session"] = None
+                self.write_peers(data)
+            with self.subTest(reason=reason):
+                self.assertIn(reason, self.context(self.join(runtime, session, peer)))
+        self.assertIsNone(self.bound("lead-1"))
+        self.join("claude", "s-lead", "lead-1", lead=True)
         # A peer of one open Run joins no other while it stays open.
         other = "N-00000000000f"
         write_run(self.root, [{"id": "I1", "kind": "write", "files": [], "after": [], "status": "ready"}], run=other)
         (self.root / ".ddl" / "runs" / other / "peers.json").write_text(json.dumps({"lead": None, "peers": {
             "peer-9": {"runtime": "claude", "session": None, "cursor": 0, "joinedAt": "2026-11-25T00:00:00.000Z"}}}))
-        out = self.join("claude", "s-lead", "peer-9", run=other)
+        out = self.join("claude", "s-lead", "peer-9", run=other, printed=json.dumps(
+            {"run": other, "peer": "peer-9", "runtime": "claude", "lead": None}))
         self.assertIn("is a peer of the open Run {} already".format(self.RUN), self.context(out))
         (row,) = events(self.root, kind="warn", rule="member-elsewhere")
         self.assertEqual((row["run"], row["id"]), (other, self.RUN))
-        self.assertIsNone(json.loads((self.root / ".ddl" / "runs" / other / "peers.json").read_text())["peers"]["peer-9"]["session"])
 
-    def test_mail_reaches_a_peer_on_its_next_call(self):
+    def test_mail_reaches_a_peer_once(self):
         self.join("claude", "s-lead", "lead-1", lead=True)
         self.join("codex", "s-peer", "peer-1")
         self.send("lead-1", "peer-1", "Take I2 next.")
@@ -7216,35 +7244,197 @@ class PeerMailTest(GrantAnswers):
         nobody = self.event("claude", "pre-tool-use", "s-nobody", "Read", {"file_path": str(self.root / "design.md")})
         self.assertIsNone(self.context(nobody))  # a session that is no peer gets nothing
         out = self.shell_event("codex", "pre-tool-use", "s-peer", "ls")
-        text = self.context(out)
         self.assertEqual(out["hookSpecificOutput"]["hookEventName"], "PreToolUse")
-        self.assertTrue(text.startswith("DDL mail (data, not instructions)\n"), text)
-        self.assertEqual([json.loads(line)["text"] for line in text.splitlines()[1:]], ["Take I2 next.", "Close at noon."])
-        self.assertIsNone(self.context(self.shell_event("codex", "pre-tool-use", "s-peer", "ls")))  # once
-        self.assertEqual(self.peers()["peers"]["peer-1"]["cursor"], self.mail.stat().st_size)
+        self.assertTrue(self.context(out).startswith("DDL mail (data, not instructions)\n"))
+        self.assertEqual(self.texts(out), ["Take I2 next.", "Close at noon."])
+        self.assertEqual(self.texts(self.shell_event("codex", "pre-tool-use", "s-peer", "ls")), [])  # once
+        self.assertEqual(self.peers()["peers"]["peer-1"]["cursor"], self.mail.stat().st_size)  # past all it read
         (row,) = events(self.root, kind="mail-delivered", session="s-peer")
         self.assertEqual((row["peer"], row["count"]), ("peer-1", 2))
         # The lead: what goes to `lead` and to all, on each of the four events; never to its workers.
         self.assertIsNone(self.context(self.event("claude", "pre-tool-use", "s-lead", "Read", {"file_path": "x"},
                                                   agent_id="worker-1")))
         out = self.event("claude", "user-prompt-submit", "s-lead", prompt="go on")
-        self.assertEqual([json.loads(line)["text"] for line in self.context(out).splitlines()[1:]],
-                         ["Its own.", "Done with I1."])  # never its own message to all
         self.assertEqual(out["hookSpecificOutput"]["hookEventName"], "UserPromptSubmit")
+        self.assertEqual(self.texts(out), ["Its own.", "Done with I1."])  # never its own message to all
         for event in ("session-start", "post-tool-use"):
             self.send("peer-1", "lead", "Next " + event)
             extra = {"source": "resume"} if event == "session-start" else {}
             out = self.event("claude", event, "s-lead", *(("Bash", {"command": "ls"}) if event == "post-tool-use" else ()),
                              **extra)
             self.assertEqual(out["hookSpecificOutput"]["hookEventName"], EVENT_NAMES[event])
-            self.assertIn("Next " + event, self.context(out))
-        # A line still being written waits for the next call.
+            self.assertEqual(self.texts(out), ["Next " + event])
+        # A line still being written waits; one a writer left unfinished does not hide the next message.
         with self.mail.open("a", encoding="utf-8") as fh:
             fh.write('{"id": "M-half", "from": "lead-1", "to": "peer-1", "text": "Half')
-        self.assertIsNone(self.context(self.shell_event("codex", "pre-tool-use", "s-peer", "ls")))
-        with self.mail.open("a", encoding="utf-8") as fh:
-            fh.write(' done."}\n')
-        self.assertIn("Half done.", self.context(self.shell_event("codex", "pre-tool-use", "s-peer", "ls")))
+        self.assertEqual(self.texts(self.shell_event("codex", "pre-tool-use", "s-peer", "ls")), [])
+        self.send("lead-1", "peer-1", "After the broken line.")
+        self.assertEqual(self.texts(self.shell_event("codex", "pre-tool-use", "s-peer", "ls")), ["After the broken line."])
+        # Separators and controls arrive escaped, one message per line.
+        self.send("lead-1", "peer-1", "a b c\u007fd")
+        text = self.context(self.shell_event("codex", "pre-tool-use", "s-peer", "ls"))
+        self.assertEqual(len(text.splitlines()), 2)
+        self.assertNotIn(" ", text)
+        self.assertIn("a\\u2028b\\u2029c\\u007fd", text)
+        # A cursor at or past the end is up to date; a closed Run delivers nothing more.
+        data = self.peers()
+        data["peers"]["peer-1"]["cursor"] = self.mail.stat().st_size + 500
+        self.write_peers(data)
+        self.send("lead-1", "peer-1", "Read already.")
+        self.assertEqual(self.texts(self.shell_event("codex", "pre-tool-use", "s-peer", "ls")), [])
+        self.assertEqual(self.peers()["peers"]["peer-1"]["cursor"], data["peers"]["peer-1"]["cursor"])
+        write_run(self.root, [{"id": "I1", "kind": "write", "files": [], "after": [], "status": "done"}], run=self.RUN)
+        self.send("peer-1", "lead", "After the close.")
+        self.assertEqual(self.texts(self.event("claude", "user-prompt-submit", "s-lead", prompt="next")), [])
+
+    def test_mail_to_others_moves_the_cursor_and_each_read_is_bounded(self):
+        self.join("codex", "s-peer", "peer-1")
+        for n in range(40):
+            self.send("lead-1", "peer-2", "{:02d} ".format(n) + "z" * 7600)
+        self.send("lead-1", "peer-1", "For peer-1.")
+        got, calls = [], 0
+        while calls < 4 and not got:
+            got = self.texts(self.shell_event("codex", "pre-tool-use", "s-peer", "ls"))
+            calls += 1
+        self.assertEqual((got, calls), (["For peer-1."], 2))  # 256 KiB a call, then the rest
+        self.assertEqual(self.peers()["peers"]["peer-1"]["cursor"], self.mail.stat().st_size)
+
+    def test_mail_past_8_kib_comes_with_the_next_calls(self):
+        self.join("codex", "s-peer", "peer-1")
+        for n in range(12):
+            self.send("lead-1", "peer-1", "{:02d} ".format(n) + "x" * 1000)
+        self.send("lead-1", "peer-1", "big " + "y" * 9000)
+        self.send("lead-1", "peer-1", "last")
+        got = []
+        for _ in range(6):
+            text = self.context(self.shell_event("codex", "pre-tool-use", "s-peer", "ls"))
+            if text is None:
+                break
+            self.assertLessEqual(len(text.encode("utf-8")), 8 * 1024)
+            got += ["cut" if line.endswith("shows it whole)") else json.loads(line)["text"][:3]
+                    for line in text.splitlines()[1:]]
+        self.assertEqual(got, ["{:02d} ".format(n)[:3] for n in range(12)] + ["cut", "las"])
+
+    def test_a_message_read_meanwhile_comes_no_second_time(self):
+        self.join("codex", "s-peer", "peer-1")
+        for n in range(3):
+            self.send("lead-1", "peer-1", "old {}".format(n))
+        data = self.peers()
+        data["peers"]["peer-1"]["cursor"] = self.mail.stat().st_size  # read with `mail read`
+        self.write_peers(data)
+        real, raced = os.stat, []
+
+        def racing(path, *args, **kwargs):
+            found = real(path, *args, **kwargs)
+            if str(path) == str(self.mail) and not raced:  # meanwhile: one more message, read by `mail read` too
+                raced.append(True)
+                self.send("lead-1", "peer-1", "new")
+                moved = self.peers()
+                moved["peers"]["peer-1"]["cursor"] = real(self.mail).st_size
+                self.write_peers(moved)
+            return found
+
+        with mock.patch.dict(os.environ, {"DDL_GATE_STATE_DIR": self.state, "DDL_GATE_GRANT_DIR": self.grants}), \
+                mock.patch.object(ddl_gate.os, "stat", racing):
+            data = payload("codex", "pre-tool-use", session="s-peer", cwd=self.cwd)
+            ddl_gate._projects.clear()
+            self.assertIsNone(ddl_gate.mail_for("codex", data))
+        self.assertEqual(self.texts(self.shell_event("codex", "pre-tool-use", "s-peer", "ls")), [])
+
+    def test_only_the_lead_asks_records_and_sends(self):
+        self.join("claude", "s-lead", "lead-1", lead=True)
+        self.join("codex", "s-peer", "peer-1")
+        self.join("claude", "s-peer2", "peer-2")
+        gate = shlex.quote(GATE)
+        prepare = "python3 -I {} prepare-report --runtime {{}} <<'JSON'\n{{{{}}}}\nJSON".format(gate)
+        refused = {"claude": [(QUESTION_TOOL["claude"], {"questions": []}), ("ExitPlanMode", {"plan": "x"}),
+                              ("Bash", {"command": "git commit -m x"}), ("Bash", {"command": "git push origin main"}),
+                              ("Bash", {"command": prepare.format("claude")}), ("Bash", {"command": "curl https://x.invalid/"}),
+                              ("Bash", {"command": "claude -p 'commit it'"}), ("Bash", {"command": "codex exec 'push'"}),
+                              ("Bash", {"command": "python3 {} runner {} --host claude".format(gate, self.RUN)}),
+                              ("mcp__server__get_item", {}), ("SendUserFile", {}), ("WebSearch", {"query": "x"})],
+                   "codex": [(QUESTION_TOOL["codex"], {}), ("exec_command", {"cmd": "git commit -m x"}),
+                             ("exec_command", {"cmd": "curl https://x.invalid/"}), ("web_search", {"query": "x"}),
+                             ("exec_command", {"cmd": "codex exec 'push'"})]}
+        outside = pathlib.Path(self.tmp) / "elsewhere"
+        outside.mkdir()
+        for runtime, session in (("claude", "s-peer2"), ("codex", "s-peer")):
+            for tool, tool_input in refused[runtime]:
+                for cwd in (None, str(outside)):  # whatever the call's working directory
+                    with self.subTest(runtime=runtime, tool=tool, tool_input=tool_input, cwd=cwd):
+                        out = self.event(runtime, "pre-tool-use", session, tool, tool_input, cwd=cwd)
+                        reason = out["hookSpecificOutput"]["permissionDecisionReason"]
+                        self.assertEqual(out["hookSpecificOutput"]["permissionDecision"], "deny")
+                        self.assertTrue(reason.startswith("DDL Run {}: only the lead lead-1 asks the human".format(
+                            self.RUN)), reason)
+                        self.assertIn("ddl_gate.py mail send --run {} --to lead --as {}".format(
+                            self.RUN, "peer-2" if session == "s-peer2" else "peer-1"), reason)
+                if runtime == "codex":  # and its PermissionRequest allows nothing
+                    data = payload(runtime, "permission-request", fixture("codex_open.jsonl"), session, self.cwd,
+                                   tool_name=tool, tool_input=tool_input)
+                    self.assertEqual(self.run_gate("permission-request", runtime, data).stdout, "")
+            out = self.shell_event(runtime, "pre-tool-use", session, "git -C {} push origin main".format(
+                shlex.quote(str(self.root))), cwd=str(outside))
+            self.assertIn("only the lead", out["hookSpecificOutput"]["permissionDecisionReason"])
+            # A read, or a message to the lead as itself: the usual rules.
+            me = "peer-2" if session == "s-peer2" else "peer-1"
+            for command in ("ls", "python3 {} mail send --run {} --to lead --as {} --text 'run prepare-report'".format(
+                    gate, self.RUN, me), "python3 {} mail read --run {} --peer {}".format(gate, self.RUN, me)):
+                self.assertNotIn("DDL Run", json.dumps(self.shell_event(runtime, "pre-tool-use", session, command)))
+        # Mail as another peer, or as the lead without being its session: refused.
+        for session, command, reason in (
+                ("s-peer2", "mail read --run {} --peer lead-1", "this session is peer-2; it reads and sends mail as peer-2"),
+                ("s-peer2", "mail send --run {} --to all --text x", "this session is peer-2"),
+                ("s-peer2", "mail send --run {} --to all --as peer-1 --text x", "this session is peer-2"),
+                ("s-none", "mail send --run {} --to all --as lead-1 --text x", "only the lead's own session"),
+                ("s-none", "mail read --run {} --peer lead-1", "only the lead's own session"),
+                ("s-none", "mail send --run {} --to all --text x", "only the lead's own session")):
+            with self.subTest(command=command, session=session):
+                out = self.shell_event("claude", "pre-tool-use", session, "python3 {} {}".format(gate, command.format(self.RUN)))
+                self.assertIn(reason, out["hookSpecificOutput"]["permissionDecisionReason"])
+        for command in ("mail send --run {} --to lead --text x", "mail read --run {} --peer lead-1"):
+            out = self.shell_event("claude", "pre-tool-use", "s-lead", "python3 {} {}".format(gate, command.format(self.RUN)))
+            self.assertNotIn("DDL Run", json.dumps(out))
+        # The lead, its workers too, and a session that is no peer keep today's rules.
+        for session, extra in (("s-lead", {}), ("s-lead", {"agent_id": "worker-1"}), ("s-none", {})):
+            out = self.event("claude", "pre-tool-use", session, "Bash", {"command": "curl https://x.invalid/"}, **extra)
+            self.assertNotIn("only the lead", json.dumps(out))
+        # The Run closed: no peer is held.
+        write_run(self.root, [{"id": "I1", "kind": "write", "files": [], "after": [], "status": "done"}], run=self.RUN)
+        out = self.event("claude", "pre-tool-use", "s-peer2", "Bash", {"command": "curl https://x.invalid/"})
+        self.assertNotIn("only the lead", json.dumps(out))
+        # No lead named: nothing held; an unreadable peers.json, or one that no longer binds the session, holds it.
+        write_run(self.root, [{"id": "I1", "kind": "write", "files": [], "after": [], "status": "ready"}], run=self.RUN)
+        data = self.peers()
+        self.write_peers(dict(data, lead=None))
+        out = self.event("claude", "pre-tool-use", "s-peer2", "Bash", {"command": "curl https://x.invalid/"})
+        self.assertNotIn("only the lead", json.dumps(out))
+        for broken in ("{", json.dumps(dict(data, peers=dict(data["peers"], **{"peer-2": dict(data["peers"]["peer-2"],
+                                                                                              session="s-else")})))):
+            self.peers_file.write_text(broken)
+            out = self.event("claude", "pre-tool-use", "s-peer2", "Bash", {"command": "curl https://x.invalid/"})
+            self.assertIn("membership cannot be read", out["hookSpecificOutput"]["permissionDecisionReason"])
+
+    def test_the_peers_mail_and_membership_files_are_the_gates(self):
+        self.join("claude", "s-peer2", "peer-2")
+        member = pathlib.Path(self.state) / "s-peer2.member"
+        self.assertTrue(member.is_file())
+        self.send("lead-1", "peer-2", "x")
+        for path in (self.peers_file, self.mail, self.mail.parent / "N-00000000000f.jsonl", member):
+            for tool, tool_input in (("Edit", {"file_path": str(path), "old_string": "a", "new_string": "b"}),
+                                     ("Write", {"file_path": str(path), "content": "{}"}),
+                                     ("Bash", {"command": "echo '{{}}' >> {}".format(shlex.quote(str(path)))}),
+                                     ("Bash", {"command": "sed -i '' s/a/b/ {}".format(shlex.quote(str(path)))}),
+                                     ("Bash", {"command": "rm {}".format(shlex.quote(str(path)))})):
+                for session in ("s-peer2", "s-none"):
+                    with self.subTest(path=path.name, tool=tool, tool_input=tool_input, session=session):
+                        out = self.event("claude", "pre-tool-use", session, tool, tool_input)
+                        self.assertEqual(out["hookSpecificOutput"]["permissionDecision"], "deny")
+                        self.assertIn("only the gate writes the ledger", out["hookSpecificOutput"]["permissionDecisionReason"])
+        patch = "*** Begin Patch\n*** Update File: {}\n@@\n-a\n+b\n*** End Patch".format(self.peers_file)
+        out = self.event("codex", "pre-tool-use", "s-none", "apply_patch", {"input": patch})
+        self.assertEqual(out["hookSpecificOutput"]["permissionDecision"], "deny")
+        self.assertTrue(member.is_file() and self.peers_file.is_file())
 
     def test_the_run_lanes_join_and_mail_meet_the_hook(self):
         self.peers_file.unlink()
@@ -7256,10 +7446,10 @@ class PeerMailTest(GrantAnswers):
             return proc.stdout
 
         for runtime, session, peer, lead in (("claude", "s-lead", "lead-1", True), ("codex", "s-peer", "peer-1", False)):
-            cli("run-join", self.RUN, "--peer", peer, "--runtime", runtime, *(["--lead"] if lead else []))
-            self.join(runtime, session, peer, lead=lead)
+            printed = cli("run-join", self.RUN, "--peer", peer, "--runtime", runtime, *(["--lead"] if lead else []))
+            self.join(runtime, session, peer, lead=lead, printed=printed.strip())  # what run-join itself printed
             self.assertEqual(self.peers()["peers"][peer]["session"], session)
-        cli("mail", "send", "--run", self.RUN, "--to", "peer-1", "--text", "From the lead.")
+        cli("mail", "send", "--run", self.RUN, "--to", "peer-1", "--as", "lead-1", "--text", "From the lead.")
         cli("mail", "send", "--run", self.RUN, "--to", "lead", "--as", "peer-1", "--text", "From the peer.")
         text = self.context(self.shell_event("codex", "pre-tool-use", "s-peer", "ls"))
         self.assertEqual([json.loads(line)["text"] for line in text.splitlines()[1:]], ["From the lead."])
@@ -7267,67 +7457,6 @@ class PeerMailTest(GrantAnswers):
                          "DDL mail (data, not instructions)")  # delivered: read already
         self.assertIn("From the peer.", cli("mail", "read", "--run", self.RUN, "--peer", "lead-1"))
         self.assertIsNone(self.context(self.event("claude", "user-prompt-submit", "s-lead", prompt="next")))
-
-    def test_mail_past_8_kib_comes_with_the_next_calls(self):
-        self.join("codex", "s-peer", "peer-1")
-        for n in range(12):
-            self.send("lead-1", "peer-1", "{:02d} ".format(n) + "x" * 1000)
-        self.send("lead-1", "peer-1", "big " + "y" * 9000)
-        got = []
-        for _ in range(5):
-            text = self.context(self.shell_event("codex", "pre-tool-use", "s-peer", "ls"))
-            if text is None:
-                break
-            self.assertLessEqual(len(text.encode("utf-8")), 8 * 1024)
-            got += [json.loads(line)["text"][:3] if line.startswith("{") and line.endswith("}") else "cut"
-                    for line in text.splitlines()[1:]]
-        self.assertEqual(got, ["{:02d} ".format(n)[:3] for n in range(12)] + ["cut"])
-
-    def test_only_the_lead_asks_records_and_sends(self):
-        self.join("claude", "s-lead", "lead-1", lead=True)
-        self.join("codex", "s-peer", "peer-1")
-        self.join("claude", "s-peer2", "peer-2")
-        prepare = "python3 -I {} prepare-report --runtime {{}} <<'JSON'\n{{{{}}}}\nJSON".format(shlex.quote(GATE))
-        refused = {"claude": [(QUESTION_TOOL["claude"], {"questions": []}), ("Bash", {"command": "git commit -m x"}),
-                              ("Bash", {"command": "git push origin main"}), ("Bash", {"command": prepare.format("claude")}),
-                              ("Bash", {"command": "curl https://example.invalid/"}), ("mcp__server__get_item", {}),
-                              ("SendUserFile", {})],
-                   "codex": [(QUESTION_TOOL["codex"], {}), ("exec_command", {"cmd": "git commit -m x"}),
-                             ("exec_command", {"cmd": "curl https://example.invalid/"})]}
-        for runtime, session in (("claude", "s-peer2"), ("codex", "s-peer")):
-            for tool, tool_input in refused[runtime]:
-                with self.subTest(runtime=runtime, tool=tool, tool_input=tool_input):
-                    out = self.event(runtime, "pre-tool-use", session, tool, tool_input)
-                    reason = out["hookSpecificOutput"]["permissionDecisionReason"]
-                    self.assertEqual(out["hookSpecificOutput"]["permissionDecision"], "deny")
-                    self.assertTrue(reason.startswith("DDL Run {}: only the lead lead-1 asks the human".format(self.RUN)), reason)
-                    self.assertIn("ddl_gate.py mail send --run {} --to lead".format(self.RUN), reason)
-                    if runtime == "codex":  # and its PermissionRequest allows nothing
-                        data = payload(runtime, "permission-request", fixture("codex_open.jsonl"), session, self.cwd,
-                                       tool_name=tool, tool_input=tool_input)
-                        self.assertEqual(self.run_gate("permission-request", runtime, data).stdout, "")
-            # A read, or a message to the lead: the usual rules.
-            for command in ("ls", "python3 {} mail send --run {} --to lead --text 'run prepare-report for me'".format(
-                    shlex.quote(GATE), self.RUN)):
-                out = self.shell_event(runtime, "pre-tool-use", session, command)
-                self.assertNotIn("only the lead", json.dumps(out))
-        # The lead, its workers too, and a session that is no peer keep today's rules.
-        for session, extra in (("s-lead", {}), ("s-lead", {"agent_id": "worker-1"}), ("s-none", {})):
-            out = self.event("claude", "pre-tool-use", session, "Bash", {"command": "curl https://example.invalid/"}, **extra)
-            self.assertNotIn("only the lead", json.dumps(out))
-        # The Run closed: no peer is held.
-        write_run(self.root, [{"id": "I1", "kind": "write", "files": [], "after": [], "status": "done"}], run=self.RUN)
-        out = self.event("claude", "pre-tool-use", "s-peer2", "Bash", {"command": "curl https://example.invalid/"})
-        self.assertNotIn("only the lead", json.dumps(out))
-        # No lead named: nothing held either; an unreadable peers.json holds the peer's exit.
-        write_run(self.root, [{"id": "I1", "kind": "write", "files": [], "after": [], "status": "ready"}], run=self.RUN)
-        data = self.peers()
-        self.write_peers(dict(data, lead=None))
-        out = self.event("claude", "pre-tool-use", "s-peer2", "Bash", {"command": "curl https://example.invalid/"})
-        self.assertNotIn("only the lead", json.dumps(out))
-        self.peers_file.write_text("{")
-        out = self.event("claude", "pre-tool-use", "s-peer2", "Bash", {"command": "curl https://example.invalid/"})
-        self.assertIn("membership cannot be read", out["hookSpecificOutput"]["permissionDecisionReason"])
 
 
 if __name__ == "__main__":
