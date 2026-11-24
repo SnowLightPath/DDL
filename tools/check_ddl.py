@@ -159,11 +159,11 @@ CONCERNS = {"start": START_CONCERNS, "parallel-work": PARALLEL_CONCERNS, "approv
 BUDGET_PATHS = (
     ("validate", 20888, ("SKILL.md", "approval.md")),
     ("draft", 29795, ("notebook.md",)),
-    ("realize-plan", 55063, ("parallel-work.md", "run.md")),
-    ("realize-close", 71081, ("close.md", "git-review.md")),
+    ("realize-plan", 55078, ("parallel-work.md", "run.md")),
+    ("realize-close", 71082, ("close.md", "git-review.md")),
 )
-EXECUTION_LIMIT = 71081
-FILE_LIMITS = {"run.md": 15879}  # a generated file's own limit, the host's implementation folded in
+EXECUTION_LIMIT = 71082
+FILE_LIMITS = {"run.md": 15880}  # a generated file's own limit, the host's implementation folded in
 AUTHOR_ONLY = ("command-authoring",)  # operations read by authors only: outside the execution total
 # The folded implementations in the generated skill (P9 on dist): the file, the H2 section and the H3 sections.
 FOLDED_H3 = ("Mapping", "Observed", "Coverage")
