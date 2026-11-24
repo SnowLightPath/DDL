@@ -14,6 +14,7 @@ Usage (from inside the project; the project and its `.ddl/` ledger come from the
   python3 tools/ddl_run.py run-item <N-id> <item id> <status>
   python3 tools/ddl_run.py report (--transcript FILE --runtime claude|codex | --session ID | --run N-ID)
                                   [--language ja|en]
+  python3 tools/ddl_run.py report --kinds [--since <date>] [--language ja|en]
   python3 tools/ddl_run.py snapshot [--run N-ID] [--item ID] [--git-dir DIR --work-tree DIR]
   python3 tools/ddl_run.py snapshot list [--run N-ID] [--git-dir DIR --work-tree DIR]
   python3 tools/ddl_run.py resources
@@ -148,6 +149,16 @@ depends on such an item, stays ready and is listed as held. It prints one JSON l
 summary {run, workTree, done, failed, skipped, blocked, held, stopped?, seconds}; exit 0
 when none failed and nothing stopped it, 1 otherwise, 2 for a usage error or a Run another runner holds, 3
 without codex. It never commits, pushes or asks the human.
+
+`report --kinds` counts the project's questions by kind (E13 item 7): `git:commit` and `git:push` for Git reviews,
+`confirm:<resource>`, `plan` (a report with a grant), `gate` (`gate: true`), `decision`, or the report's own
+`kind`: asked, approved (first option), revised, held (unanswered), timed out, the approval rate, the median
+answer time, the current streak of first-option approvals, and how many were overturned (answered otherwise later,
+a provisional choice overturned, or a restore of what it held); then the candidates: to promote, a streak of 3 or
+more never overturned of `git:commit` (the grant class commit), `confirm:<resource>` (no confirmation each run) or
+`gate` (going ahead provisionally), never an exit; to demote, commit overturned since the grant that names it was
+approved, or a gate overturned. promotion(root, language) gives a plan's preparation the same candidates: the
+report file's block and the question's `Promote` line (at most 3), None when there is none.
 
 `run-join <N-id> --peer <name> --runtime claude|codex [--lead]` records a conversation of the Run in
 `.ddl/runs/<N-id>/peers.json` ({lead, peers: {name: {runtime, session, cursor, joinedAt}}}; one lead per Run, a
@@ -2988,11 +2999,217 @@ def mail_line(language, root, run):
     return label + ": " + line.format(len(messages), delivered, len(messages) - delivered, *kinds)
 
 
+# --- question kinds: counts, promotion and demotion -------------------------------------------
+# E13 item 7: every question has a kind; a kind whose answers keep taking the first option, never overturned, may
+# be promoted into what a plan grants; one overturned since its promotion is a candidate to take back. The lead
+# decides what a plan includes, the human's approval of the plan decides, and the lead records promoted kinds in
+# Binding Decisions. Exits (a push, publishing, sending) are never candidates.
+
+STREAK_LEAST = 3  # first-option approvals in a row, never overturned, that make a promotion candidate
+CANDIDATE_LINE_MOST = 3  # candidates the preparation's question line names
+KINDS_TEXT = {
+    "ja": {"row": "{}: 問い {}、承認 {}、見直し {}、保留 {}、時間切れ {}。承認率 {}、中央値 {}、連続 {}、覆った {}",
+           "minutes": "{} 分", "none": "なし", "promote": "上げる候補", "demote": "下げる候補", "streak": "{} 回続けて承認",
+           "overturned": "{} 回覆った", "join": "、",
+           "commit": "許諾の命令の種類に commit を入れる",
+           "confirm": "リソースの表（個人環境のファイル）で {} の confirm = \"each run\" をやめる",
+           "gate": "その人間のゲートは見込みで進める",
+           "demote_commit": "許諾の命令の種類から commit を外す", "demote_gate": "人間のゲートを見込みで進めるのをやめる"},
+    "en": {"row": "{}: asked {}, approved {}, revised {}, held {}, timed out {}; approval {}, median {}, streak {}, "
+                  "overturned {}",
+           "minutes": "{} min", "none": "none", "promote": "Promotion candidates", "demote": "Demotion candidates",
+           "streak": "{} approvals in a row", "overturned": "{} overturned", "join": ", ",
+           "commit": "add the grant class commit",
+           "confirm": "drop confirm = \"each run\" for {} in the resource table (the personal environment's file)",
+           "gate": "go ahead provisionally on that gate",
+           "demote_commit": "take the grant class commit out", "demote_gate": "stop going ahead provisionally on gates"}}
+REPORT_KINDS = ("plan", "gate", "confirm", "decision", "draft")  # what prepare-report's optional `kind` names
+
+
+def kinds_of(ident, record):
+    """The kinds of the question `ident` from its prepared record: `git:commit` or `git:push` for a Git review (by
+    what it sends); for a report its `kind` when it names one, else `plan` with a grant, `confirm:<resource>` for
+    each resource it confirms, `gate` when it says `gate: true`, `decision` otherwise. A record that is gone gives
+    `git` or `unknown`."""
+    if ident.startswith("G-"):
+        if not isinstance(record, dict):
+            return ["git"]
+        sends = any(isinstance(op, dict) and op.get("kind") == "push" for op in record.get("operations", []))
+        return ["git:push" if sends else "git:commit"]
+    if not isinstance(record, dict):
+        return ["unknown"]
+    named = record.get("kind") if record.get("kind") in REPORT_KINDS else None
+    resources = sorted({item.get("resource") for item in record.get("confirm") or []
+                        if isinstance(item, dict) and isinstance(item.get("resource"), str)})
+    if named == "confirm" or named is None and resources:
+        return ["confirm:" + resource for resource in resources] or ["confirm"]
+    if named:
+        return [named]
+    if record.get("grant"):
+        return ["plan"]
+    return ["gate"] if record.get("gate") is True else ["decision"]
+
+
+def kind_rows(events, since=None):
+    """{kind: tally} over the ledger's questions asked at or after `since` (seconds): asked, approved (first option),
+    revised, held (still unanswered), timed out, the answer times, the current streak of first-option approvals,
+    overturned (a later answer other than the first, a provisional choice overturned, or a restore of the items it
+    held), and when each was asked; plus the questions' records."""
+    chosen = [event for event in events if since is None or (gate.iso_seconds(event.get("ts")) or 0) >= since]
+    records, rows = {}, {}
+
+    def record_of(ident):
+        if ident not in records:
+            records[ident] = prepared_record(ident)[0]
+        return records[ident]
+
+    answers, overturned = {}, set()
+    for event in chosen:
+        ident = event.get("id")
+        if event.get("kind") == "answered" and isinstance(ident, str):
+            answers.setdefault(ident, []).append(event.get("choice"))
+        elif event.get("kind") == "provisional-overturned" and isinstance(ident, str):
+            overturned.add(ident)
+    for ident, choices in answers.items():
+        if 0 in choices and any(choice != 0 for choice in choices[choices.index(0) + 1:]):
+            overturned.add(ident)  # approved, then answered otherwise
+    for event in chosen:
+        if event.get("kind") != "restore" or not isinstance(event.get("items"), list):
+            continue
+        for ident in answers:  # a provisional question whose held items were restored was overturned
+            record = record_of(ident) if gate.PREPARED_ID.fullmatch(ident) else None
+            holds = record.get("holds") if isinstance(record, dict) else None
+            if isinstance(record, dict) and record.get("provisional") and isinstance(holds, dict) and \
+                    holds.get("run") == event.get("run") and set(holds.get("items") or []) & set(event["items"]):
+                overturned.add(ident)
+    questions = event_questions(chosen)
+    still = {id(question) for question in open_questions(questions)}
+    for question in questions:
+        ident = question.get("id")
+        if not isinstance(ident, str) or not gate.PREPARED_ID.fullmatch(ident):
+            continue
+        for kind in kinds_of(ident, record_of(ident)):
+            row = rows.setdefault(kind, {"asked": 0, "approved": 0, "revised": 0, "held": 0, "timeout": 0, "waits": [],
+                                         "answers": [], "overturned": {}})
+            row["asked"] += 1
+            if question["outcome"] in ("approved", "revised", "timeout"):
+                row[question["outcome"]] += 1
+                row["answers"].append((question.get("answered") or 0, question["outcome"]))
+                if question["outcome"] != "timeout" and question.get("answered") is not None and \
+                        question.get("asked") is not None:
+                    row["waits"].append(question["answered"] - question["asked"])
+            elif id(question) in still:
+                row["held"] += 1
+            if ident in overturned:
+                row["overturned"].setdefault(ident, question.get("asked"))  # when it was asked
+    for row in rows.values():
+        streak = 0
+        for _, outcome in sorted(row["answers"], reverse=True):  # from the latest answer back
+            if outcome != "approved":
+                break
+            streak += 1
+        row["streak"] = streak
+    return rows
+
+
+def kind_candidates(rows, grants=(), language="en"):
+    """(promotion candidates, demotion candidates), each [(kind, what a plan can do, why)], most approvals in a row
+    first. A promotion: a streak of STREAK_LEAST or more first-option approvals, never overturned, of a kind a plan
+    can include (`git:commit` → the grant class commit, `confirm:<resource>` → no confirmation each run, `gate` →
+    going ahead provisionally); never an exit. A demotion: the grant class commit of an active grant when a
+    `git:commit` question was overturned since that grant's approval; going ahead provisionally on gates when a
+    gate was overturned."""
+    text, promote, demote = KINDS_TEXT[language], [], []
+    for kind, row in rows.items():
+        if row["streak"] < STREAK_LEAST or row["overturned"]:
+            continue
+        if kind == "git:commit":
+            promote.append((kind, text["commit"], row["streak"]))
+        elif kind.startswith("confirm:"):
+            promote.append((kind, text["confirm"].format(kind.split(":", 1)[1]), row["streak"]))
+        elif kind == "gate":
+            promote.append((kind, text["gate"], row["streak"]))
+    since = min((gate.iso_seconds(record.get("approvedAt")) or 0 for record in grants
+                 if "commit" in record.get("grant", {}).get("commands", [])), default=None)
+    commits = rows.get("git:commit")
+    after = [ident for ident, asked in (commits["overturned"].items() if commits else ())
+             if since is not None and (asked is None or asked >= since)]
+    if after:  # overturned since the grant that promoted it was approved
+        demote.append(("git:commit", text["demote_commit"], len(after)))
+    if rows.get("gate") and rows["gate"]["overturned"]:
+        demote.append(("gate", text["demote_gate"], len(rows["gate"]["overturned"])))
+    promote.sort(key=lambda candidate: -candidate[2])
+    return promote, demote
+
+
+def candidate_lines(language, promote, demote):
+    """The report file's candidate blocks (each only when nonempty): a heading line, then one line per candidate."""
+    text, lines = KINDS_TEXT[language], []
+    for heading, found, why in ((text["promote"], promote, text["streak"]), (text["demote"], demote, text["overturned"])):
+        if found:
+            lines.append(heading)
+            lines += ["- {}: {} ({})".format(kind, what, why.format(count)) for kind, what, count in found]
+    return lines
+
+
+def promotion(root, language="en", events=None):
+    """What a plan's preparation shows: {"block": the report file's candidate lines ([] when none), "line": the
+    question's generated `Promote` line value (at most CANDIDATE_LINE_MOST, e.g. `commit（7 回続けて承認）`) or None}.
+    The gate's prepare-report calls this for a report with a grant; it reads the project's ledger and grants."""
+    events = ledger_lines(root) if events is None else events
+    grants = gate.active_grants(gate.project_decision(root))
+    promote, demote = kind_candidates(kind_rows(events or []), grants, language)
+    text = KINDS_TEXT[language]
+    shown = ["{}（{}）".format(kind.replace("git:", ""), text["streak"].format(count)) if language == "ja" else
+             "{} ({})".format(kind.replace("git:", ""), text["streak"].format(count))
+             for kind, _, count in promote[:CANDIDATE_LINE_MOST]]
+    return {"block": candidate_lines(language, promote, demote), "line": text["join"].join(shown) if shown else None}
+
+
+def kinds_report(argv):
+    """`report --kinds [--since <date>] [--language ja|en]`: one line per kind, then the candidate blocks."""
+    options = word_options(argv, ("--since", "--language"), usage=KINDS_USAGE)
+    language = options.get("--language", "ja")
+    if language not in KINDS_TEXT:
+        raise ValueError(KINDS_USAGE)
+    since = None
+    if "--since" in options:
+        given = options["--since"]
+        since = gate.iso_seconds(given if "T" in given else given + "T00:00:00Z")
+        if since is None:
+            raise ValueError("--since takes a date (2026-11-25) or a time with its UTC offset.")
+    root, _ = gate.cwd_ledger()
+    if not root:
+        raise ValueError("the kinds of a project's questions come from its ledger; run this inside the project.")
+    rows = kind_rows(ledger_lines(root) or [], since)
+    text = KINDS_TEXT[language]
+    lines = []
+    for kind in sorted(rows):
+        row = rows[kind]
+        answered = row["approved"] + row["revised"]
+        rate = "{}%".format(int(round(100.0 * row["approved"] / answered))) if answered else "-"
+        waits = sorted(row["waits"])
+        middle = len(waits) // 2
+        median = (waits[middle] if len(waits) % 2 else (waits[middle - 1] + waits[middle]) / 2) if waits else None
+        lines.append(text["row"].format(kind, row["asked"], row["approved"], row["revised"], row["held"], row["timeout"],
+                                        rate, text["minutes"].format(int((median + 30) // 60)) if median is not None
+                                        else gate.COUNT_TEXT[language]["unmeasured"], row["streak"],
+                                        len(row["overturned"])))
+    if not lines:
+        lines.append(text["none"])
+    promote, demote = kind_candidates(rows, gate.active_grants(gate.project_decision(root)), language)
+    return lines + candidate_lines(language, promote, demote)
+
+
+KINDS_USAGE = "usage: ddl_gate.py report --kinds [--since <date>] [--language ja|en]"
+
+
 def main(argv) -> int:
     """One of WORDS and its arguments, as `ddl_gate.py` takes them; anything else is a usage error (exit 2)."""
     if argv and argv[0] == "report":
         try:
-            lines = report_command(argv[1:])
+            lines = kinds_report([word for word in argv[1:] if word != "--kinds"]) if "--kinds" in argv[1:] else \
+                report_command(argv[1:])
             sys.stdout.buffer.write(("\n".join(lines) + "\n").encode("utf-8"))  # whatever the locale's encoding
             sys.stdout.flush()
             return 0
