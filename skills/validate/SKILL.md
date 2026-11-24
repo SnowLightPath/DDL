@@ -57,6 +57,7 @@ Mark a check PASS only from an observed command result: its exit code and, when 
   D3: Design-Validation Drift — Validation command in design.md fails to execute (missing binary, invalid syntax)
   D4: Timeout Ignored — Validation hung or timed out without surfacing
   D5: Hardcoded Path — Validator embeds project paths instead of reading from design.md
+  D6: Partial Coverage — A check declared for several interpreters or builds ran for only some of them
 
 ### Phase 2: REPORT
 

@@ -55,7 +55,7 @@ When a STOP needs a decision, read the Approval operation and its implementation
 2. Sort what the user said into the sections of Notebook, then ask only for what is missing. Experience is always needed; Binding Decisions, Direction, and Acceptance Gates are optional, so ask about them only when the user's words point to them:
    - **Experience** — consumer-side usage with concrete inputs and outputs, including error, empty, and boundary states
    - **Binding Decisions** — a technology the user fixes because the experience depends on it, an external constraint requires it, or the user states a preference for it. Record the Decision, Why it binds, and the Source (the user's words with the date, or the user's approval of the report that listed it; Notebook). If the user gave no reason, ask once; without an answer, list it as Unbound (Notebook)
-   - **Direction** — the user's outlook on the path to implementation: stage order, parallel lanes, what to show the user when, and human gates. Non-binding. A Direction always ends with the Close stage: write it as the last row even when the user did not mention it
+   - **Direction** — the user's outlook on the path to implementation: stage order, parallel lanes (named by Scope headings; each row says whether its stage may run beside another), what to show the user when, and human gates. Non-binding. A Direction always ends with the Close stage: write it as the last row even when the user did not mention it
    - **Acceptance Gates** — what must hold when done: mechanical gates (commands, each with its expected result when exit code alone cannot show failure) and human gates (approvals)
 3. Write consumer-side code / usage examples together, in the language and on the platform the Binding Decisions name. For a library or SDK, the consumer-side language is part of the Experience: ask for it if the user did not name it, and record it as a Binding Decision
 4. Show the technology found in Phase 1, and any decision found only in the harness's automatic memory, as existing premises; either becomes a Binding Decision only when the user gives a reason. When no technology was fixed or delegated, do not invent a technology comparison or an Unbound item merely because implementation will eventually need a choice
@@ -71,6 +71,7 @@ When a STOP needs a decision, read the Approval operation and its implementation
   D5: Orphan Principle — Draft implies a principle not yet in design.md
   D6: Unanchored Binding — A Binding Decision lacks a reason (Experience item, external constraint, or stated preference) or a source (the user's words and date, or the approval of the report that listed it)
   D7: Binding Conflict — A Binding Decision contradicts the Experience or another Binding Decision, or contradicts the existing code and environment without a migration the user confirmed in Direction
+  D8: Unscoped Lane — A Direction lane is no Scope heading, or names files outside every Scope; the report shows it as a proposed Scopes change
 
 For D7, present options: change the Binding Decision, change the Experience, or confirm a migration in Direction. Only the user chooses.
 

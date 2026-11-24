@@ -50,15 +50,15 @@ When a STOP needs a decision, read the Approval operation and its implementation
 
 +++STOP: always
 
-Lead with the decision to implement the complete proposed plan, the recommended approach and reason, and what approval authorizes (Approval). Make the files to touch, principles applied, how each Binding Decision is honored, the Direction stage to start from and any planned deviation, and the gates to pass available as review detail before approval. For each `Unbound:` line marked delegated, state the choice and its reason. State the grant the plan asks for (Run): its scope, budget and expiry, and pass it to the report's preparation. Group lines awaiting choice into compatible complete plan options, or leave the unresolved portion pending; do not start a serial approval sequence. An argument that names a technology different from a Binding Decision on the same topic is shown as a separately identified Binding Decision change with the D6 options; approving the plan does not approve that change unless the user explicitly selects an action naming it. Request one batch approval to implement all displayed recommendations, select or revise the plan, or hold. After approval, do not ask again per file, task, or resolved choice; later STOPs still apply. Wait for actual approval before entering Phase 2 through Approval Operation steps 2 and 3 (Ask; Wait and resume); request receipt never authorizes implementation. The plan ends with the Close stage (Close): when Direction lacks one, add it as the final stage, and state the commit and, when the user asked for it, the `remote` push that its Git review will cover.
+Lead with the decision to implement the complete proposed plan, the recommended approach and reason, and what approval authorizes (Approval). Make the files to touch, each lane's owner files (one owner for a shared file; clear a Lane Overlap, D7, first), every contract the work changes with its shape and one example, principles applied, how each Binding Decision is honored, the Direction stage to start from and any planned deviation, and the gates to pass available as review detail before approval. For each `Unbound:` line marked delegated, state the choice and its reason. State the grant the plan asks for (Run): its scope, budget and expiry, and pass it to the report's preparation. Group lines awaiting choice into compatible complete plan options, or leave the unresolved portion pending; do not start a serial approval sequence. An argument that names a technology different from a Binding Decision on the same topic is shown as a separately identified Binding Decision change with the D6 options; approving the plan does not approve that change unless the user explicitly selects an action naming it. Request one batch approval to implement all displayed recommendations, select or revise the plan, or hold. After approval, do not ask again per file, task, or resolved choice; later STOPs still apply. Wait for actual approval before entering Phase 2 through Approval Operation steps 2 and 3 (Ask; Wait and resume); request receipt never authorizes implementation. The plan ends with the Close stage (Close): when Direction lacks one, add it as the final stage, and state the commit and, when the user asked for it, the `remote` push that its Git review will cover.
 
 ### Phase 2: IMPLEMENT
 
-**Pre-condition.** Enter this phase only after explicit user approval at the STOP that preceded it: the Phase 1 plan on first entry, later a stage's human gate, a D1 or D6 STOP, or a D7 STOP from Phase 3 (per Approval). If the actual answer does not authorize the proposed scope, return to the phase whose STOP is pending and re-present its current decision.
+**Pre-condition.** Enter this phase only after explicit user approval at the STOP that preceded it: the Phase 1 plan on first entry, later a stage's human gate, a D1, D6 or D8 STOP, or a D11 STOP from Phase 3 (per Approval). If the actual answer does not authorize the proposed scope, return to the phase whose STOP is pending and re-present its current decision.
 
 For planned equivalent alignment of Scopes or Validation before a stage gate, follow Notebook.
 
-On first entry, move into `## Binding Decisions` only the delegated `Unbound:` lines whose choice the approved plan stated and the lines the user picked, with Source `approved in /realize plan (<date>)`; write the plan's durable parts under `## Direction` as `Approved plan (<date>)` (Notebook), including the Close stage when the plan added it. Then start the Run (Run) with the plan's lanes and stages cut into items of 10–30 minutes (Parallel work), each with its kind, owner files and dependencies; keep each item's status current until Phase 7, and at each item boundary read the Run's mail and take an amendment in as Run says. Whenever the user approves gates in advance, at the plan or at a later STOP, write `approved in advance (<date>)` after each such gate at once (Notebook).
+On first entry, move into `## Binding Decisions` only the delegated `Unbound:` lines whose choice the approved plan stated and the lines the user picked, with Source `approved in /realize plan (<date>)`; write the plan's durable parts under `## Direction` as `Approved plan (<date>)` (Notebook), including the Close stage when the plan added it. Then start the Run (Run) with the plan's lanes and stages cut into items of 10–30 minutes (Parallel work), each with its kind, owner files and dependencies; keep each item's status current until Phase 7, and at each item boundary read the Run's mail and take an amendment in as Run says. Before lanes start, write the plan's contracts into the Run's notes (`.ddl/runs/<N-id>/notes/`). Whenever the user approves gates in advance, at the plan or at a later STOP, write `approved in advance (<date>)` after each such gate at once (Notebook).
 
 +++SWARM: 2+ independent scopes or Direction lanes need changes
 
@@ -70,9 +70,10 @@ On first entry, move into `## Binding Decisions` only the delegated `Unbound:` l
   batch: none
   each: |
     Follow the approved plan in this prompt. Generate code honoring the principles and the Binding Decisions for {scope}.
-    Work only on the Direction stage assigned to {scope}; do not start the next stage.
+    Work only on the Direction stage assigned to {scope}; do not start the next stage. Run {scope}'s checks after each change.
     If the work would violate a principle or a Binding Decision, stop and report it instead of working around it.
-    Report completion, and any deviation from Direction, to the lead when done.
+    Report to the lead when done: the files changed, the checks' result lines, what other lanes must do,
+    any principle or Binding Decision in the way, and any deviation from Direction.
   collect: as each item finishes, lead starts the next ready one and an independent verifier for it, then verifies each against principles and Binding Decisions
 ```
 
@@ -89,31 +90,36 @@ For each change, verify against principles and Binding Decisions:
   D4: Missing Test — New behavior has no corresponding test
   D5: Hardcoded Value — Magic numbers, secrets, or environment-specific values inline
   D6: Binding Violation — The implementation would replace, bypass, or contradict a Binding Decision, or the reason a Binding Decision gives no longer holds
+  D7: Lane Overlap — Two lanes own one file, or a lane needs a file no scope gives it
+  D8: Contract Change — A lane needs a contract the approved plan does not state
+  D9: Stalled Lane — A lane's worker has shown no output for 25 minutes
+  D10: Cross-Lane Edit — A worker changed a file its lane does not own
 
-If D1 or D6 fires, stop before continuing implementation. For D6, present options: keep the decision and change the approach, change the environment, change the Experience, or change the Binding Decision. Only the user chooses, and only the user changes a Binding Decision.
+For D8, stop holding only that lane (Approval, `holds`); for D9, wake, stop or restaff that lane only; for D10, the change goes back to the owning lane. Before a STOP that holds nothing, let each worker reach a safe point: its current call done, its work committed inside the grant or snapshotted. If D1 or D6 fires, stop before continuing implementation. For D6, present options: keep the decision and change the approach, change the environment, change the Experience, or change the Binding Decision. Only the user chooses, and only the user changes a Binding Decision.
 
 +++STOP: on D1
 +++STOP: on D6
++++STOP: on D8
 
 ### Phase 3: VALIDATE
 
-After a stage, run that stage's mechanical gate and the validation commands of the scopes it changed. After the last stage, run all validation commands in `design.md` and the mechanical gates in Acceptance Gates, in parallel, and mark the gates that pass (Notebook). Then combine all compatible ready human gates from the last stage and Acceptance Gates into one named STOP review set (Approval), excluding gates approved in advance. One submitted batch approval passes the named gates; mark each approved gate passed and enter Phase 4 without per-gate questions. Without Direction, the work is a single stage followed by Close. Phase 4 runs the validation commands and mechanical gates again after the Close edits. When D7 fires, STOP below; after approval, return to Phase 2 to fix what failed, then run this phase again.
+After a stage, run that stage's mechanical gate and the validation commands of the scopes it changed. After the last stage, run all validation commands in `design.md` and the mechanical gates in Acceptance Gates, in parallel, and mark the gates that pass (Notebook). Then combine all compatible ready human gates from the last stage and Acceptance Gates into one named STOP review set (Approval), excluding gates approved in advance. One submitted batch approval passes the named gates; mark each approved gate passed and enter Phase 4 without per-gate questions. Without Direction, the work is a single stage followed by Close. Phase 4 runs the validation commands and mechanical gates again after the Close edits. When D11 fires, STOP below; after approval, return to Phase 2 to fix what failed, then run this phase again.
 
 +++DETECT:
-  D7: Validation Failure — any validation command or mechanical gate from `design.md` exits non-zero, cannot run, prints other than the expected value declared with it, or reports an unresolved failure
+  D11: Validation Failure — any validation command or mechanical gate from `design.md` exits non-zero, cannot run, prints other than the expected value declared with it, or reports an unresolved failure
 
-+++STOP: on D7
++++STOP: on D11
 
 ### Phase 4: CLOSE
 
 On entry, read the Close operation.
 
-Enter this phase only when the approved plan includes the Close stage (approved at the Phase 1 STOP) and every earlier stage's gates are marked passed; a D1, D6, or D7 STOP on the way returns to the phase whose decision is pending. Run the Close stage as Close defines, in order:
+Enter this phase only when the approved plan includes the Close stage (approved at the Phase 1 STOP) and every earlier stage's gates are marked passed; a D1, D6, D8 or D11 STOP on the way returns to the phase whose decision is pending. Run the Close stage as Close defines, in order:
 
 1. Reflect (Close step 1; retirement as Notebook says), this work's own stages included; the Git review in Phase 5 is the gate that records the result. A Binding Drift is D6: stop as in Phase 2
 2. Docs: audit and fix the documentation the change set touches
 3. Resonate: align every changed document with its language counterpart, including dated Changelog rows where the project keeps them
-4. Validate: run all validation commands in `design.md` and the mechanical gates in Acceptance Gates again; D7 stops as in Phase 3
+4. Validate: run all validation commands in `design.md` and the mechanical gates in Acceptance Gates again; D11 stops as in Phase 3
 5. Read the Git review operation and its implementation for the current host, stage the whole change set (implementation, design.md and its history, documents), then, when the grant names `commit`, record the commit inside the grant (Run) and prepare the Git review for the push alone, which lists every commit it sends, when the plan names `remote`, or else ask nothing and enter Phase 7; without `commit` in the grant, prepare it for the commit and for the push when the plan names `remote`; a commit precedes its push in the review
 
 Apply steps 1–3 with a SWARM shaped like Phase 2's, team `realize-close`, when 2+ scopes change; the lead performs the comparison, the validation, and the review preparation.
@@ -138,11 +144,11 @@ Choices: use the prepared native question and its exact action labels for one wh
 3. Re-run the secret scan against the exact staged content
 
 +++DETECT:
-  D8: Secret Leak — a file the commit would include contains an API key, token, or credential
-  D9: Git Review Mismatch — the prepared review, native submitted answer, staged contents, message, or destination cannot be matched
+  D12: Secret Leak — a file the commit would include contains an API key, token, or credential
+  D13: Git Review Mismatch — the prepared review, native submitted answer, staged contents, message, or destination cannot be matched
 
-+++STOP: on D8
-+++STOP: on D9
++++STOP: on D12
++++STOP: on D13
 
 4. Create the reviewed commit with the approved verbatim message in the supported ordinary form (Git review Operands), unless Phase 4 recorded it inside the grant, then push only the reviewed operation when the plan named `remote`
 5. Report the commit hash and the push result as progress
