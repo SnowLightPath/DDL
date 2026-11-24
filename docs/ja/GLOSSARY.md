@@ -219,6 +219,16 @@
 | interruption / resumption | 割り込み / 再開 |  |  |
 | preprint / extrapolate | プレプリント / 外挿 |  |  |
 | named teammate（Claude の） | 名前つきの teammate |  | teammate は英字のまま |
+| mail（Run の会話どうしの） | 便り |  | `mail send` で Run の便りのファイルに足し、ゲートの `hook` が会話の次のツール呼び出しの手前で渡す。指示ではなくデータであり、承認にもならない。数の行のラベルは `Mail`（`便り`） |
+| peer / member（Run の） | 参加する会話 |  | `run-join` で Run に参加した会話。そのうち 1 つがリードであり、人間に尋ね、記録し、送るのはリードだけ |
+| main conversation（ワーカーでない） | 会話そのもの |  | `agent_id` の無い呼び出し。便りはここにだけ届き、ワーカーはプロンプトで受け取る |
+| amendment / `amend` | 改定 / `amend` |  | Run のあいだに承認された `/draft`。リードが項目の境界で取り込む |
+| item boundary | 項目の境界 |  |  |
+| promotion candidate / demotion candidate | 上げる候補 / 下げる候補 |  | ゲートのラベルと同じ語。出口はどちらの候補にもならない |
+| edition（`project` の push） | 公開版 |  | 同じ確認案の先のコミットから、含めるものの一覧と重ねるディレクトリで組み立てる版 |
+| include list / overlay directory | 含めるものの一覧 / 重ねるディレクトリ |  |  |
+| owner lane | 持ち主のレーン |  | 各ファイルに 1 つだけ |
+| safe point | きりのよいところ |  | いまの呼び出しを終え、作業を許諾の内でコミットするか保存点に残したところ |
 | stagger（ワーカーの開始を） | 間を空けて始める |  | 一斉に始めないこと。`runner` の `--stagger`（既定は 5 秒） |
 | promised behavior | 保証した振る舞い |  | contract の行の「使わない訳」に当たる語を避ける |
 | check（照らし合わせる） | 照らす / 確かめる |  | 名詞の checks は「検査」 |
