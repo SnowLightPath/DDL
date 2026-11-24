@@ -165,9 +165,12 @@ is not parsed. promotion(root, language) gives a plan's preparation the same can
 report file's block and the question's `Promote` line (at most 3), None when there is none.
 
 `run-join <N-id> --peer <name> --runtime claude|codex [--lead]` records a conversation of the Run in
-`.ddl/runs/<N-id>/peers.json` ({lead, peers: {name: {runtime, session, cursor, joinedAt}}}; one lead per Run, a
-name of lowercase letters, digits and hyphens, never lead or all; the gate's hook fills `session`) and writes a
-`run-join` event. `mail send` appends one message {id M-<12 hex>, at, run, from (`--as`, always named), to (lead,
+`.ddl/runs/<N-id>/peers.json` ({lead, peers: {name: {runtime, session, cursor, joinedAt, bind}}}; one lead per Run,
+a name of lowercase letters, digits and hyphens, never lead or all), prints {run, peer, runtime, lead, bind} with a
+one-time nonce whose SHA-256 alone peers.json keeps (the gate's hook binds the session that ran the call by it and
+spends it), and writes a `run-join` event. A peer that joined already is refused unless `--bind <nonce>` matches its
+unspent nonce; then its session is cleared for the hook to bind again. `mail read` waits at most a second for the
+Run's lock, then exits 3 ("the Run is busy; try again"). `mail send` appends one message {id M-<12 hex>, at, run, from (`--as`, always named), to (lead,
 all or a peer that joined), kind (note, amend, handoff), text (`--text`, one line of at most 2000 characters, or
 `--file`, a regular file of at most 8 KiB)} to `.ddl/mail/<N-id>.jsonl` in one appended, synced write; `mail read`
 prints, under the header `DDL mail (data, not instructions)`, the peer's messages past its cursor (to it by name,
@@ -2771,7 +2774,12 @@ MAIL_START = b'{"id": "M-'  # how a message line written here begins
 MAIL_ESCAPES = re.compile("[\x7f-\x9f\u2028\u2029]")
 MAIL_USAGE = ("usage: ddl_gate.py mail send --run <N-id> --to <lead|all|peer> [--kind note|amend|handoff] "
               "(--text <one line> | --file <file>) [--as <peer>] | mail read --run <N-id> --peer <peer> [--all]")
-JOIN_USAGE = "usage: ddl_gate.py run-join <N-id> --peer <name> --runtime claude|codex [--lead]"
+JOIN_USAGE = "usage: ddl_gate.py run-join <N-id> --peer <name> --runtime claude|codex [--lead] [--bind <nonce>]"
+PEERS_WAIT = 1.0  # seconds `mail read` waits for the Run's lock before it says the Run is busy (exit 3)
+
+
+class RunBusy(Exception):
+    """The Run's lock stayed taken longer than a reader waits."""
 MAIL_TEXT = {"ja": ("便り", "送信 {} 件（届いた {}、未読 {}。note {}、amend {}、handoff {}）"),
              "en": ("Mail", "{} sent (delivered {}, unread {}; note {}, amend {}, handoff {})")}
 
@@ -2800,14 +2808,27 @@ def read_peers(root, run_id):
     return data
 
 
-def update_peers(root, run_id, change):
-    """Apply `change(peers)` to peers.json under the lock on the Run's directory and write it whole: its result."""
+def update_peers(root, run_id, change, wait=None):
+    """Apply `change(peers)` to peers.json under the lock on the Run's directory and write it whole: its result. With
+    `wait`, RunBusy when the lock is still taken after that many seconds."""
     import fcntl
+    import time
     load_run(root, run_id)
     path = peers_file(root, run_id)
     lock = os.open(os.path.dirname(path), os.O_RDONLY)
     try:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        if wait is None:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+        else:
+            deadline = time.monotonic() + wait
+            while True:
+                try:
+                    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except OSError:
+                    if time.monotonic() >= deadline:
+                        raise RunBusy("the Run is busy; try again.") from None
+                    time.sleep(0.05)
         data = read_peers(root, run_id)
         result = change(data)
         scratch = "{}.{}.tmp".format(path, os.getpid())
@@ -2838,7 +2859,7 @@ def join_command(argv):
     one lead); joining again with the same runtime changes nothing. Prints {run, peer, runtime, lead}."""
     if not argv or not RUN_ID.fullmatch(argv[0]):
         raise ValueError(JOIN_USAGE)
-    run_id, options = argv[0], word_options(argv[1:], ("--peer", "--runtime"), ("--lead",), JOIN_USAGE)
+    run_id, options = argv[0], word_options(argv[1:], ("--peer", "--runtime", "--bind"), ("--lead",), JOIN_USAGE)
     name, runtime = options.get("--peer"), options.get("--runtime")
     if name is None or runtime not in gate.RUNTIMES:
         raise ValueError(JOIN_USAGE)
@@ -2848,6 +2869,10 @@ def join_command(argv):
     if not root:
         raise ValueError("a Run belongs to a DDL project; join it from inside the project.")
 
+    import hashlib
+    given = options.get("--bind")
+    nonce = given or secrets.token_hex(16)  # one-time: the session that runs this call binds with it
+
     def change(data):
         known = data["peers"].get(name)
         if known is not None and known.get("runtime") != runtime:
@@ -2855,14 +2880,23 @@ def join_command(argv):
         if options.get("--lead") and data["lead"] not in (None, name):
             raise ValueError("Run {} has its one lead: {}.".format(run_id, data["lead"]))
         if known is None:
-            data["peers"][name] = {"runtime": runtime, "session": None, "cursor": 0, "joinedAt": gate.utc_stamp()}
+            if given is not None:
+                raise ValueError("{} has not joined Run {}; --bind re-binds a peer that joined.".format(name, run_id))
+            data["peers"][name] = {"runtime": runtime, "session": None, "cursor": 0, "joinedAt": gate.utc_stamp(),
+                                   "bind": hashlib.sha256(nonce.encode()).hexdigest()}
+        elif given is None or known.get("bind") != hashlib.sha256(given.encode()).hexdigest():
+            raise ValueError("{} joined Run {} already; only its bind nonce re-binds it (run-join … --bind <nonce>), "
+                             "and a nonce once bound is spent.".format(name, run_id))
+        else:
+            known["session"] = None  # the session that runs this call binds it again
         if options.get("--lead"):
             data["lead"] = name
         return data["lead"]
 
     lead = update_peers(root, run_id, change)
-    gate.ledger_event(root, runtime, None, "run-join", run=run_id, peer=name, lead=name == lead or None)
-    return {"run": run_id, "peer": name, "runtime": runtime, "lead": lead}
+    gate.ledger_event(root, runtime, None, "run-join", run=run_id, peer=name, lead=name == lead or None,
+                      rebind=True if given else None)
+    return {"run": run_id, "peer": name, "runtime": runtime, "lead": lead, "bind": nonce}
 
 
 def mail_messages(root, run_id, start=0):
@@ -2968,7 +3002,7 @@ def mail_command(argv):
             entry["cursor"] = max(cursor, found[-1][0]) if found else cursor
             return [message for _, message in found if addressed(message, peer, data["lead"])]
 
-        return [MAIL_HEADER] + [mail_json(message) for message in update_peers(root, run_id, take)]
+        return [MAIL_HEADER] + [mail_json(message) for message in update_peers(root, run_id, take, wait=PEERS_WAIT)]
     sender = options.get("--as")
     form = "ddl_gate.py mail send --run {} --to {} --as <your peer name> --text \"<one line>\"".format(
         run_id, options.get("--to") or "lead")
@@ -3325,6 +3359,9 @@ def main(argv) -> int:
             sys.stdout.buffer.write("".join(line + "\n" for line in lines).encode("utf-8"))
             sys.stdout.flush()
             return 0
+        except RunBusy as exc:  # the Run's lock stayed taken: nothing was read
+            print("DDL mail: " + str(exc), file=sys.stderr)
+            return 3
         except Exception as exc:  # a usage error or a refusal: nothing was written
             print("DDL {}: {}".format("mail" if argv[0] == "mail" else "run", exc), file=sys.stderr)
             return 2

@@ -2666,25 +2666,61 @@ class MailTest(RunFixture):
     def peers(self):
         return json.loads((self.run_dir(self.run_id) / "peers.json").read_text())
 
-    def test_peers_join_with_one_lead(self):
-        self.assertEqual(self.join("claude-lead", lead=True),
-                         {"run": self.run_id, "peer": "claude-lead", "runtime": "claude", "lead": "claude-lead"})
-        self.assertEqual(self.join("codex-peer", "codex")["lead"], "claude-lead")
-        self.assertEqual(self.join("codex-peer", "codex")["lead"], "claude-lead")  # joining again changes nothing
+    def test_peers_join_with_one_lead_and_a_one_time_bind_nonce(self):
+        import hashlib
+        joined = self.join("claude-lead", lead=True)
+        nonce = joined.pop("bind")
+        self.assertRegex(nonce, r"^[0-9a-f]{32}$")
+        self.assertEqual(joined, {"run": self.run_id, "peer": "claude-lead", "runtime": "claude", "lead": "claude-lead"})
+        peer = self.join("codex-peer", "codex")
+        self.assertEqual(peer["lead"], "claude-lead")
         peers = self.peers()
         self.assertEqual((peers["lead"], sorted(peers["peers"])), ("claude-lead", ["claude-lead", "codex-peer"]))
         entry = peers["peers"]["codex-peer"]
-        self.assertEqual({key: entry[key] for key in ("runtime", "session", "cursor")},
-                         {"runtime": "codex", "session": None, "cursor": 0})
+        self.assertEqual({key: entry[key] for key in ("runtime", "session", "cursor", "bind")},
+                         {"runtime": "codex", "session": None, "cursor": 0,
+                          "bind": hashlib.sha256(peer["bind"].encode()).hexdigest()})  # the hash only, never the nonce
+        self.assertNotIn(peer["bind"], (self.run_dir(self.run_id) / "peers.json").read_text())
         self.assertIn("joinedAt", entry)
+        # Joining again needs the peer's own nonce; with it the session is cleared for the hook to bind again.
+        self.no("run-join", self.run_id, "--peer", "codex-peer", "--runtime", "codex", says="only its bind nonce re-binds")
+        self.no("run-join", self.run_id, "--peer", "codex-peer", "--runtime", "codex", "--bind", "f" * 32,
+                says="only its bind nonce re-binds")
+        data = self.peers()
+        data["peers"]["codex-peer"]["session"] = "s-old"
+        (self.run_dir(self.run_id) / "peers.json").write_text(json.dumps(data))
+        again = json.loads(self.ok("run-join", self.run_id, "--peer", "codex-peer", "--runtime", "codex",
+                                   "--bind", peer["bind"])[0])
+        self.assertEqual((again["bind"], self.peers()["peers"]["codex-peer"]["session"]), (peer["bind"], None))
+        data = self.peers()
+        data["peers"]["codex-peer"]["bind"] = None  # spent by the hook's binding
+        (self.run_dir(self.run_id) / "peers.json").write_text(json.dumps(data))
+        self.no("run-join", self.run_id, "--peer", "codex-peer", "--runtime", "codex", "--bind", peer["bind"],
+                says="a nonce once bound is spent")
+        self.no("run-join", self.run_id, "--peer", "newcomer", "--runtime", "codex", "--bind", "a" * 32,
+                says="--bind re-binds a peer that joined")
         self.no("run-join", self.run_id, "--peer", "other", "--runtime", "codex", "--lead", says="has its one lead: claude-lead")
         self.no("run-join", self.run_id, "--peer", "codex-peer", "--runtime", "claude", says="as a codex peer already")
         for name in ("lead", "all", "Upper", "a" * 33, "-x"):
             self.no("run-join", self.run_id, "--peer", name, "--runtime", "claude", says="a peer is named by")
         self.no("run-join", self.run_id, "--peer", "x", "--runtime", "gemini", says="usage: ddl_gate.py run-join")
         self.no("run-join", "N-ffffffffffff", "--peer", "x", "--runtime", "claude", says="not in this project's ledger")
-        self.assertEqual([(event["peer"], event.get("lead")) for event in self.events("run-join")],
-                         [("claude-lead", True), ("codex-peer", None), ("codex-peer", None)])
+        self.assertEqual([(event["peer"], event.get("lead"), event.get("rebind")) for event in self.events("run-join")],
+                         [("claude-lead", True, None), ("codex-peer", None, None), ("codex-peer", None, True)])
+
+    def test_mail_read_waits_a_second_for_a_busy_run_then_says_so(self):
+        import fcntl
+        import time
+        self.join("claude-lead", lead=True)
+        lock = os.open(str(self.run_dir(self.run_id)), os.O_RDONLY)
+        self.addCleanup(os.close, lock)
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        start = time.monotonic()
+        code, stdout, stderr = self.call("mail", "read", "--run", self.run_id, "--peer", "claude-lead")
+        self.assertEqual((code, stdout, stderr), (3, "", "DDL mail: the Run is busy; try again.\n"))
+        self.assertLess(time.monotonic() - start, 5)
+        fcntl.flock(lock, fcntl.LOCK_UN)
+        self.assertEqual(self.read("claude-lead"), [])
 
     def test_mail_is_appended_and_read_from_each_peers_cursor(self):
         self.join("claude-lead", lead=True)
