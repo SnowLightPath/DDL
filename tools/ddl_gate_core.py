@@ -843,6 +843,7 @@ def push_snapshot(cwd, args, commits=(), record=None, project=None):
 
 
 EDITION_KEYS = {"from", "include", "files", "message", "author", "base"}
+EDITION_DATE_SECONDS = 24 * 3600  # an edition commit's author and committer dates lie this near its push
 EDITION_MARKER = "\n\nBuilt-by: public-edition\n"  # how every edition message ends (edition.py)
 
 
@@ -891,11 +892,14 @@ def edition_entries(listing, read_blob, spec):
     edition.py projects it: each path of the include list (lines trimmed; blank and `#` lines skipped; a `./` prefix
     and a trailing `/` dropped), a file, a directory's whole subtree or a submodule's gitlink; then every record under
     the overlay directory (symbolic links and modes as they are) at its path relative to it, replacing an included
-    one. Nothing under the include list's own directory. ValueError for an empty, absolute, `.` or `..` line, one in
-    that directory or missing from the tree, an empty list, an overlay into that directory, or a file/directory
-    conflict between an overlay and what is included."""
+    one. Never anything in the directory that holds the include list, nor the overlay directory itself, whatever the
+    two paths name. Paths in Git's byte order. ValueError for an empty, absolute, `.` or `..` line, one that reaches
+    into either directory or is missing from the tree, an empty list, an overlay into the include list's directory,
+    or a file/directory conflict between an overlay and what is included."""
     config = spec["include"].rpartition("/")[0]
+    files = spec["files"].rstrip("/")
     under = lambda path, prefix: bool(prefix) and (path == prefix or path.startswith(prefix + "/"))
+    kept_out = lambda path: under(path, config) or under(path, files) or not config and path == spec["include"]
     by_path = {entry[3]: entry for entry in listing}
     if spec["include"] not in by_path or by_path[spec["include"]][1] != "blob":
         raise ValueError("project.include names no file of the commit.")
@@ -915,6 +919,9 @@ def edition_entries(listing, read_blob, spec):
         records = [item for item in listing if under(item[3], entry)]
         if not records:
             raise ValueError("include line {}: {} is not in the commit.".format(n, json.dumps(entry)))
+        if any(kept_out(item[3]) for item in records):
+            raise ValueError("include line {}: {} would take in the include list's or the overlay's directory.".format(
+                n, json.dumps(entry)))
         for item in records:
             final[item[3]] = item
     if not final:
@@ -925,15 +932,16 @@ def edition_entries(listing, read_blob, spec):
         if not path.startswith(prefix):
             continue
         rel = path[len(prefix):]
-        if under(rel, config):
-            raise ValueError("{} would place a file in the include list's own directory.".format(json.dumps(path)))
+        if kept_out(rel):
+            raise ValueError("{} would place a file in the include list's or the overlay's directory.".format(
+                json.dumps(path)))
         parts = rel.split("/")
         if any("/".join(parts[:i]) in included for i in range(1, len(parts))):
             raise ValueError("{} sits below an included file.".format(json.dumps(path)))
         if any(other.startswith(rel + "/") for other in included):
             raise ValueError("{} would replace an included directory.".format(json.dumps(path)))
         final[rel] = (mode, kind, oid, rel)
-    return [final[path] for path in sorted(final)]
+    return [final[path] for path in sorted(final, key=lambda path: path.encode("utf-8", "surrogateescape"))]
 
 
 def index_listing(cwd, pin=None):
@@ -965,7 +973,7 @@ def tree_listing(cwd, treeish):
 
 
 def edition_tree(cwd, entries):
-    """The tree object of `entries`, written through a temporary index (only at a preparation)."""
+    """The tree object of `entries`, written through a temporary index (only tree objects are added)."""
     import tempfile
     with tempfile.TemporaryDirectory(prefix="ddl-edition-") as tmp:
         env = dict(os.environ, GIT_INDEX_FILE=os.path.join(tmp, "index"))
@@ -973,8 +981,9 @@ def edition_tree(cwd, entries):
                            (["update-index", "-z", "--index-info"], b"".join(
                                "{} {} {}\t".format(mode, kind, oid).encode() + path.encode("utf-8", "surrogateescape") +
                                b"\0" for mode, kind, oid, path in entries)), (["write-tree"], None)):
+            budget = _git_review_deadline - time.monotonic() if _git_review_deadline else 20
             proc = subprocess.run(["git", "--no-pager", "-C", str(cwd), *args], input=data, capture_output=True,
-                                  env=env, timeout=20)
+                                  env=env, timeout=max(budget, 0.5))
             if proc.returncode:
                 raise ValueError("the edition's tree cannot be written ({}).".format(args[0]))
         return proc.stdout.decode().strip()
@@ -1032,7 +1041,7 @@ def verify_edition(cwd, record, op, source):
     projected = edition_entries(tree_listing(source_op["repo"], made),
                                 lambda oid: git_read(source_op["repo"], "cat-file", "blob", oid), spec)
     tip = git_text(cwd, "rev-parse", "--verify", source + "^{commit}")
-    if tree_listing(cwd, tip) != projected:
+    if git_text(cwd, "rev-parse", "--verify", tip + "^{tree}") != edition_tree(cwd, projected):
         raise ValueError("the edition's tree is not the projection of operation {}'s commit.".format(spec["from"]))
     started = time.monotonic()
     found = ls_remote(cwd, op["remote"], [], [op["destination"]], LS_REMOTE_PIN_SECONDS)
@@ -1044,17 +1053,22 @@ def verify_edition(cwd, record, op, source):
             op["destination"][len("refs/heads/"):]))
     data = git_read(cwd, "cat-file", "commit", tip)
     header, _, message = data.partition(b"\n\n")
-    lines = header.decode("utf-8", "replace").splitlines()
+    lines = header.decode("utf-8", "replace").split("\n")
+    if [line.split(" ", 1)[0] for line in lines if not line.startswith("parent ")] != ["tree", "author", "committer"] \
+            or lines[0].split(" ", 1)[0] != "tree" or sum(line.startswith("parent ") for line in lines) > 1:
+        raise ValueError("the edition commit carries only a tree, at most one parent, an author and a committer.")
     parents = [line.split(" ", 1)[1] for line in lines if line.startswith("parent ")]
-    people = {role: re.sub(r" \d+ [+-]\d{4}$", "", next((line[len(role) + 1:] for line in lines
-                                                          if line.startswith(role + " ")), "")) for role in ("author", "committer")}
     if parents != ([head] if head else []):
         raise ValueError("the edition commit's parent is not the target's head.")
-    if message.decode("utf-8", "replace") != spec["message"]:
+    if message != spec["message"].encode("utf-8"):
         raise ValueError("the edition commit's message is not the reviewed one.")
     expected = "{} <{}>".format(spec["author"]["name"], spec["author"]["email"])
-    if people["author"] != expected or people["committer"] != expected:
-        raise ValueError("the edition commit's author and committer are not the reviewed author.")
+    for role in ("author", "committer"):
+        found = re.fullmatch(r"(.*) (\d+) [+-]\d{4}", next(line for line in lines if line.startswith(role + " "))[len(role) + 1:])
+        if not found or found[1] != expected:
+            raise ValueError("the edition commit's author and committer are not the reviewed author.")
+        if abs(time.time() - int(found[2])) > EDITION_DATE_SECONDS:
+            raise ValueError("the edition commit's {} date is not within a day of its push.".format(role))
 
 
 def push_target(cwd, remote):

@@ -7306,11 +7306,11 @@ class EditionPushTest(GitReviewTest):
         index.unlink()
         return tree
 
-    def edition_commit(self, commit, parent, message, author=None, committer=None, tree=None):
+    def edition_commit(self, commit, parent, message, author=None, committer=None, tree=None, env=None, config=()):
         author, committer = author or self.AUTHOR, committer or author or self.AUTHOR
         env = dict(self.git_env, GIT_AUTHOR_NAME=author["name"], GIT_AUTHOR_EMAIL=author["email"],
-                   GIT_COMMITTER_NAME=committer["name"], GIT_COMMITTER_EMAIL=committer["email"])
-        return subprocess.run(["git", "-C", str(self.repo), "commit-tree", tree or self.edition_tree(commit),
+                   GIT_COMMITTER_NAME=committer["name"], GIT_COMMITTER_EMAIL=committer["email"], **(env or {}))
+        return subprocess.run(["git", "-C", str(self.repo), *config, "commit-tree", tree or self.edition_tree(commit),
                                *(["-p", parent] if parent else []), "-F", "-"], input=message, capture_output=True,
                               text=True, check=True, env=env).stdout.strip()
 
@@ -7321,7 +7321,8 @@ class EditionPushTest(GitReviewTest):
         made = self.git("rev-parse", "HEAD")
         changes = change(made) if change else {}
         edition = self.edition_commit(made, changes.get("parent", self.first), changes.get("message", self.MESSAGE),
-                                      changes.get("author"), changes.get("committer"), changes.get("tree"))
+                                      changes.get("author"), changes.get("committer"), changes.get("tree"),
+                                      changes.get("env"), changes.get("config", ()))
         self.git("branch", "-f", "public", edition)
         return made
 
@@ -7361,7 +7362,15 @@ class EditionPushTest(GitReviewTest):
                  "no parent": (lambda made: dict(parent=None), parent),
                  "another message": (lambda made: dict(message="Other\n\nBuilt-by: public-edition\n"), message),
                  "another author": (lambda made: dict(author=other), people),
-                 "another committer": (lambda made: dict(committer=other), people)}
+                 "another committer": (lambda made: dict(committer=other), people),
+                 "an empty directory more": (lambda made: dict(tree=self.with_empty_directory(self.edition_tree(made))),
+                                             projection),
+                 "an encoding header": (lambda made: dict(config=("-c", "i18n.commitEncoding=ISO-8859-1")),
+                                        "carries only a tree, at most one parent"),
+                 "an old author date": (lambda made: dict(env={"GIT_AUTHOR_DATE": "2001-01-01T00:00:00Z"}),
+                                        "author date is not within a day"),
+                 "an old committer date": (lambda made: dict(env={"GIT_COMMITTER_DATE": "2001-01-01T00:00:00Z"}),
+                                           "committer date is not within a day")}
         for label, (change, reason) in cases.items():
             for runtime in ("claude", "codex"):
                 with self.subTest(label=label, runtime=runtime):
@@ -7372,6 +7381,40 @@ class EditionPushTest(GitReviewTest):
                     self.built(change)
                     self.assertIn(reason, self.blocked(self.check(runtime, self.push)))
                     self.git("reset", "-q", "--soft", "HEAD~1")
+
+    def with_empty_directory(self, tree):
+        """`tree` with an empty subdirectory more: a listing of its files cannot tell the two apart."""
+        empty = self.git("hash-object", "-t", "tree", os.devnull)
+        lines = self.git("ls-tree", tree).splitlines() + ["040000 tree {}\tempty".format(empty)]
+        return subprocess.run(["git", "-C", str(self.repo), "mktree"], input="\n".join(lines) + "\n", capture_output=True,
+                              text=True, check=True, env=self.git_env).stdout.strip()
+
+    def test_the_directories_the_operand_names_never_enter_the_edition(self):
+        def refused(operations, reason):
+            proc = self.subcommand(["prepare-git-review", "--runtime", "claude"], {"language": "en", "operations": operations})
+            self.assertEqual(proc.returncode, 2, operations)
+            self.assertIn(reason, proc.stderr)
+
+        # Other names than .public-edition: derived from include and files, never hard-coded.
+        for path, text in (("conf/list", "docs\ntools/a.py\n"), ("pub/over/README.md", "Readme\n")):
+            (self.repo / path).parent.mkdir(parents=True, exist_ok=True)
+            (self.repo / path).write_text(text)
+        self.git("add", "-A")
+        named = dict(include="conf/list", files="pub/over")
+        proc = self.subcommand(["prepare-git-review", "--runtime", "claude"],
+                               {"language": "en", "operations": self.ops(**named)})
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        for line, reason in (("conf", "in the include list's own directory"),
+                             ("pub", "would take in the include list's or the overlay's directory"),
+                             ("pub/over", "would take in the include list's or the overlay's directory")):
+            (self.repo / "conf" / "list").write_text("docs\n" + line + "\n")
+            self.git("add", "conf/list")
+            refused(self.ops(**named), reason)
+        (self.repo / "conf" / "list").write_text("docs\n")
+        (self.repo / "pub" / "over" / "conf").mkdir()
+        (self.repo / "pub" / "over" / "conf" / "x").write_text("x\n")
+        self.git("add", "-A")
+        refused(self.ops(**named), "would place a file in the include list's or the overlay's directory")
 
     def test_an_edition_operand_that_cannot_be_reviewed_is_refused(self):
         def refused(operations, reason):
