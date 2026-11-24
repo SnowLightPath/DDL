@@ -114,7 +114,8 @@ FORMATS = {
                  "design-history.md", "## <date> <R-<id> | Close>"),
     "run": ("`grant`", "Scope:", "Budget:", "Expiry:", "範囲", "予算", "期限", "`Grant`", "許諾", "N-<id>",
             ".ddl/events.jsonl", ".ddl/runs/<run id>/run.json", "Questions", "Waiting", "Denials", "問い", "待ち", "拒否",
-            "not measured", "未計測"),
+            "not measured", "未計測", "$XDG_CONFIG_HOME/ddl/resources.toml", "~/.config/ddl/resources.toml",
+            "`confirm`", "`Confirm`", "確認"),
     "command-authoring": ("### Phase N: NAME", "+++DETECT:", "D1: name — trigger", "+++STOP: always",
                           "+++STOP: on D<n>", "**Pre-condition.**", "+++Report:", *REPORT_LABELS, "+++NEVER:",
                           "+++DDL_PHASE: <PhaseName>", "+++DDL_REPORT"),
@@ -155,11 +156,11 @@ CONCERNS = {"start": START_CONCERNS, "parallel-work": PARALLEL_CONCERNS, "approv
 BUDGET_PATHS = (
     ("validate", 20250, ("SKILL.md", "approval.md")),
     ("draft", 29250, ("notebook.md",)),
-    ("realize-plan", 47878, ("parallel-work.md", "run.md")),
-    ("realize-close", 62874, ("close.md", "git-review.md")),
+    ("realize-plan", 50348, ("parallel-work.md", "run.md")),
+    ("realize-close", 65554, ("close.md", "git-review.md")),
 )
-EXECUTION_LIMIT = 62874
-FILE_LIMITS = {"run.md": 10166}  # a generated file's own limit, the host's implementation folded in
+EXECUTION_LIMIT = 65554
+FILE_LIMITS = {"run.md": 12729}  # a generated file's own limit, the host's implementation folded in
 AUTHOR_ONLY = ("command-authoring",)  # operations read by authors only: outside the execution total
 # The folded implementations in the generated skill (P9 on dist): the file, the H2 section and the H3 sections.
 FOLDED_H3 = ("Mapping", "Observed", "Coverage")

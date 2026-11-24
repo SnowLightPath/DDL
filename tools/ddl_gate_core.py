@@ -36,11 +36,14 @@ Usage (the same command serves Claude Code and Codex CLI; the hook payload JSON 
                                    [--language ja|en]
   python3 tools/ddl_gate.py snapshot [--run N-ID] [--item ID] [--git-dir DIR --work-tree DIR]
   python3 tools/ddl_gate.py snapshot list [--run N-ID] [--git-dir DIR --work-tree DIR]
-run-start, run-item, report and snapshot (RUN_WORDS) live in tools/ddl_run.py beside this file, which `main`
-imports for those words only (`ddl_run.py <word> …` runs them too, alike); no hook event imports it.
+  python3 tools/ddl_gate.py resources | measure <machine> | remote <machine> [options] -- <command>
+  python3 tools/ddl_gate.py service <name> --prompt-file FILE [--schema FILE]
+run-start, run-item, report, snapshot, resources, measure, remote and service (RUN_WORDS) live in tools/ddl_run.py
+beside this file, which `main` imports for those words only (`ddl_run.py <word> …` runs them too, alike); no hook
+event imports it. The resource table they read is this module's (read_resource_table, below).
 
 prepare-report reads JSON {language, decision, recommendation, consequence, detail, options?,
-multiSelect?, grant?} on stdin, writes report.md and report.json under `<state dir>/reports/<id>/`,
+multiSelect?, grant?, confirm?} on stdin, writes report.md and report.json under `<state dir>/reports/<id>/`,
 and prints {reportId, report, question, nativeRequest}. prepare-git-review reads JSON
 {language: en|ja, operations: [{cwd, command}, ...]}, snapshots the staged changes and push
 targets, writes review detail in the private state directory, and prints the same shape with
@@ -49,14 +52,27 @@ stderr and exits 2.
 
 Grant, ledger and counts (no decision reads a ledger line; an active grant answers, see Decisions): a report
 may carry a `grant` {paths, commands, machines, handover, budget {minutes, fixAttempts}, expires}.
-It is hashed into the report ID with the project key, adds one generated line to the question and
+When the user's resource table exists ($XDG_CONFIG_HOME/ddl/resources.toml, else ~/.config/ddl/resources.toml),
+each machine is a declared compute resource, `handover` names data kinds (code, personal, business) and each
+machine takes every kind handed over; an invalid table refuses a grant that names machines; without a table the
+names are free. It is hashed into the report ID with the project key, adds one generated line to the question and
 a block to report.md, and is written once to the user-level store ($DDL_GATE_GRANT_DIR, else
 $XDG_STATE_HOME/ddl-gate, else $HOME/.local/state/ddl-gate) as `<project key>/grants/R-<id>.json`
 when the record proves that the human submitted the first option of the unchanged question; after
 that only its expiry ends it. The record appears whole or not at all, and a file that does not parse
-as that grant's record is no grant. In a DDL project the gate appends one JSON line per event to
+as that grant's record is no grant. A report may also carry `confirm`, 1 to 4 {resource, action} for
+compute resources of the table (a resource with `confirm = "each run"` runs only so), bound to what runs: an
+ssh resource's action is the exact command, and a service's entry adds `prompt`, a file of at most 32 KiB in
+the project (not protected) or a temporary directory, whose text report.md shows whole and whose SHA-256 is kept,
+an optional `schema` file bound alike, and `approve` (whether it may write; false unless given, "(may write)").
+It adds a `Confirm` (`確認`) line after the grant's and a block to report.md, and on the same proof is recorded
+once as `<project key>/confirmations/R-<id>.json` {id, projectKey, root, items [{resource, action, digest?,
+schemaDigest?, approve?, used: null}], approvedAt, session, host}; tools/ddl_run.py finds the unused items
+with confirmation_items (the first with confirmation_item) and marks one used with mark_confirmation_used
+before anything is sent. In a DDL project the gate appends one JSON line per event to
 `.ddl/events.jsonl` at the root of the main work tree (a silent pass writes nothing; an approved
-grant that was not recorded leaves a `warn` line whose rule is `grant-proof` or `grant-store`).
+grant that was not recorded leaves a `warn` line whose rule is `grant-proof` or `grant-store`; a recorded
+confirmation writes `confirmed`, one not recorded a `warn` of `confirm-proof` or `confirm-store`).
 `run-start` writes `.ddl/runs/<N-id>/run.json` from {report, items}; `run-item` sets one item's
 status; `report` prints four lines: questions, waiting, denials, grant; and `snapshot` commits the work
 tree under `refs/ddl/snapshots/` without moving a branch, the index or a file (tools/ddl_run.py says more).
@@ -86,7 +102,12 @@ Decisions (JSON on stdout; the exit status is always 0):
                       OPEN with an active grant (recorded, before its expiry): a read; from a working
                       directory inside the root, an edit inside its paths or granted command classes
                       in their allow-listed forms with literal arguments -> "allow"
-                      ("DDL: inside grant <id> (<kind>)"); a path, class or machine outside every
+                      ("DDL: inside grant <id> (<kind>)"); the gate's remote, measure and service are
+                      class remote-run for the resource they name (allowed when covered: a grant that
+                      names it hands over code, and no resource on its reach asks each run; else nothing);
+                      with a resource table, ssh reaches a granted compute resource only by the alias
+                      of its `reach = ssh:<alias>`, a resource with `confirm` is never covered (nothing)
+                      and a `codex:` one never by ssh; a path, class or machine outside every
                       active grant, or an exit behind ssh -> "deny"; a protected file (Git's files,
                       CI workflows, .ddl/, an agent's, editor's or direnv's settings, an instruction
                       file, the notebook), a call asking to leave the sandbox and anything else print nothing.
@@ -164,9 +185,9 @@ class _Pattern:
         return getattr(pattern, attr)
 
 
-datetime, hashlib, pathlib, re, secrets, shlex, shutil, subprocess, time = (
-    _Lazy(name) for name in ("datetime", "hashlib", "pathlib", "re", "secrets", "shlex", "shutil", "subprocess",
-                             "time"))
+datetime, hashlib, ipaddress, pathlib, re, secrets, shlex, shutil, subprocess, time = (
+    _Lazy(name) for name in ("datetime", "hashlib", "ipaddress", "pathlib", "re", "secrets", "shlex", "shutil",
+                             "subprocess", "time"))
 urlparse = _Lazy("urllib.parse", "urlparse")
 
 EVENTS = ("pre-tool-use", "permission-request", "session-start", "stop", "user-prompt-submit")
@@ -234,14 +255,14 @@ SHORT_SHA_LENGTH = 7  # Git's default abbreviation; it only names a pushed commi
 # A BCP 47-style language tag: a two-to-eight-letter primary subtag, then optional subtags.
 LANGUAGE_CODE = _Pattern("LANGUAGE_CODE", r"[A-Za-z]{2,8}(?:[-_][A-Za-z0-9]{1,8})*")
 MIN_OPTIONS, MAX_OPTIONS = 2, 4  # the bounds of one native Claude question's options
-REPORT_VERSION = 2  # the report.json schema; a change of fields bumps it (2: grant and projectKey)
+REPORT_VERSION = 3  # the report.json schema; a change of fields bumps it (2: grant and projectKey; 3: confirm)
 REPORT_INPUT_KEYS = {"language", "decision", "recommendation", "consequence", "detail", "options", "multiSelect",
-                     "grant"}
+                     "grant", "confirm"}
 REPORT_LINE_KEYS = ("decision", "recommendation", "consequence")
 # The fields the report ID hashes; report.json adds id, question, nativeRequest and reportHash.
-# `grant` is None for a report without one; `projectKey` is None when it was prepared outside a DDL project.
+# `grant` and `confirm` are None for a report without them; `projectKey` is None outside a DDL project.
 REPORT_CORE_KEYS = ("version", "runtime", "language", "nonce", "createdAt", *REPORT_LINE_KEYS,
-                    "options", "multiSelect", "detailHash", "grant", "projectKey")
+                    "options", "multiSelect", "detailHash", "grant", "confirm", "projectKey")
 DEFAULT_OPTIONS = {
     "ja": [{"label": "すべて承認（推奨）", "description": "表示した推奨をすべて適用する"},
            {"label": "一部・修正", "description": "項目を選ぶか修正を求める。報告を作り直して聞き直す"},
@@ -279,6 +300,19 @@ GRANT_BUDGET = {"minutes": (1, 10080), "fixAttempts": (0, 10)}
 GRANT_NAME_LIMIT = 80  # characters of one machine or handed-over entry
 # The question's extra line, then the three lines of the block in report.md.
 GRANT_LABELS = {"ja": ("許諾", "範囲", "予算", "期限"), "en": ("Grant", "Scope", "Budget", "Expiry")}
+# A report's confirmations: 1 to 4 {resource, action} for resources that ask each run, each used once.
+CONFIRM_ITEMS, CONFIRM_ACTION_LIMIT = (1, 4), 200
+CONFIRM_LABELS = {"ja": "確認", "en": "Confirm"}
+# A service's confirmation names the prompt it sends: a file of at most PROMPT_BYTES, whose text the report shows
+# and whose SHA-256 the record keeps, so that what runs is what the human read. An ssh resource's action is the
+# exact command (the run lane compares it).
+PROMPT_BYTES = 32 * 1024
+# Beyond {resource, action}, a service's entry: its prompt, an optional schema file (its answer's shape, bound the
+# same way) and `approve` (whether it may write; false unless given). The report keeps each file's text and SHA-256.
+SERVICE_KEYS = {"prompt", "schema", "approve"}
+STORED_SERVICE_KEYS = SERVICE_KEYS | {"text", "digest", "schemaText", "schemaDigest"}
+MAY_WRITE = {"ja": "（書き込みあり）", "en": " (may write)"}
+HEX64 = _Pattern("HEX64", r"[0-9a-f]{64}")
 # The grant's answers to one call (in the PreToolUse decision, which Codex's PermissionRequest shares).
 GRANT_ALLOW = "DDL: inside grant {} ({})"
 OUTSIDE_PATHS = ("DDL grant: {} is outside the paths of grant {}; widening a grant is an exit gate, so ask the "
@@ -287,6 +321,12 @@ OUTSIDE_CLASS = "DDL grant: the command class {} is outside grant {}; ask the hu
 OUTSIDE_MACHINE = "DDL grant: the machine {} is outside grant {}; ask the human for a revised plan"
 EXIT_BEHIND_SSH = ("DDL grant: `{}` behind ssh is an exit or another transfer, which no grant covers; an exit runs "
                    "here, through its own review")
+# ssh to a granted resource of the table by anything but its alias, or to a resource that ssh does not reach.
+SERVICE_BY_SSH = ("DDL grant: `{}` is a service in the resource table (codex:); it is reached only through the gate's "
+                  "`service`, never by ssh")
+NAME_FOR_ALIAS = ("DDL grant: `{}` is a resource's name; ssh reaches it by the alias its `reach` names in the resource "
+                  "table, or through the gate's `remote`")
+NOT_COMPUTE = "DDL grant: `{}` is not a compute resource in the resource table; ask the human for a revised plan"
 LEDGER_REASON = "DDL gate: only the gate writes the ledger ({}); use the gate's subcommands"
 # Claude's editing tools and the key that names the file each writes; Codex edits with apply_patch.
 EDIT_KEYS = {"Edit": "file_path", "Write": "file_path", "MultiEdit": "file_path", "NotebookEdit": "notebook_path"}
@@ -297,7 +337,15 @@ PYTHON_FLAGS = _Pattern("PYTHON_FLAGS", r"-[IBu]+")
 SSH_OPTION = _Pattern("SSH_OPTION", r"BatchMode=yes|ConnectTimeout=\d+")
 # A remote command is literal words only: nothing a shell on either side would read as quoting or syntax.
 SSH_SYNTAX = _Pattern("SSH_SYNTAX", r"['\"\\$`<>]")
-GATE_WORDS = ("status", "report", "run-start", "run-item", "prepare-report", "prepare-git-review")  # need no class
+GATE_WORDS = ("status", "report", "run-start", "run-item", "prepare-report", "prepare-git-review",
+              "resources")  # need no class
+# The gate's subcommands that reach the resource they name (class remote-run), the words of the command `remote`
+# runs there (literal: nothing a remote shell reads as syntax), and the values of their options.
+RESOURCE_WORDS = ("remote", "measure", "service")
+REMOTE_WORD = _Pattern("REMOTE_WORD", r"[A-Za-z0-9_./:=@%+,-]+")
+REMOTE_VALUES = {"--snapshot": r"[A-Za-z0-9_][A-Za-z0-9_./-]*", "--run": r"N-[0-9a-f]{12}",
+                 "--item": r"[A-Za-z0-9][A-Za-z0-9._-]{0,31}", "--timeout": r"[1-9][0-9]{0,5}"}
+ARTIFACT_GLOB = _Pattern("ARTIFACT_GLOB", r"[A-Za-z0-9_.*?+-][A-Za-z0-9_.*?/+-]*")
 # The options each class form takes (anything else leaves the call to the host): a flag, or an option with a
 # value (the next word or `=value`) that must match its pattern ("" for any literal word, "dir" for a directory
 # inside the root).
@@ -339,7 +387,8 @@ LEDGER = ".ddl"  # at the root of the main work tree; it ignores itself
 EVENT_VERSION = 1
 EVENT_TEXT_LIMIT = 200  # characters kept of a label, tool name or rule in one ledger line
 ARMED_LIMIT = 8  # prepared questions one session keeps waiting for their answers; past it the oldest is let go
-RUN_WORDS = ("report", "run-start", "run-item", "snapshot")  # the subcommands tools/ddl_run.py holds (see run_module)
+# The subcommands tools/ddl_run.py holds (see run_module); tools/test_ddl_run.py pins them to its WORDS.
+RUN_WORDS = ("report", "run-start", "run-item", "snapshot", "resources", "measure", "remote", "service")
 CACHE = "pycache"  # the launcher's bytecode cache under the state directory (ddl_gate.py reads the same name)
 ENTRY = None  # the launcher's path as it was run; ddl_gate.py sets it (gate_path_tokens)
 # A timestamp the gate reads: date, `T`, time to the minute or finer, then `Z` or `±HH:MM` (group 8, optional
@@ -966,6 +1015,70 @@ def validated_grant(grant, now):
     return grant
 
 
+def validated_confirm(confirm, stored=False):
+    """The confirmations unchanged once their shape passed: 1 to 4 different {resource, action}, with `prompt` (a
+    file's path) for a service; the resource a table name, the action one printable line of at most
+    CONFIRM_ACTION_LIMIT characters (an ssh resource's exact command, a service's summary). ValueError names the
+    first problem. The preparation checks each resource against the table and reads each prompt
+    (confirm_resources); `stored` checks the form the report keeps, where a prompt also has its text and digest."""
+    low, high = CONFIRM_ITEMS
+    if not isinstance(confirm, list) or not low <= len(confirm) <= high:
+        raise ValueError("confirm must be a list of {} to {} {{resource, action}} objects.".format(low, high))
+    for item in confirm:
+        extra = set(item) - {"resource", "action"} if isinstance(item, dict) else None
+        if extra is None or not {"resource", "action"} <= set(item) or extra and "prompt" not in extra \
+                or not extra <= (STORED_SERVICE_KEYS if stored else SERVICE_KEYS) \
+                or stored and extra and not {"text", "digest", "approve"} <= extra \
+                or stored and ("schema" in extra) != ("schemaText" in extra) or ("schemaText" in extra) != ("schemaDigest" in extra):
+            raise ValueError("each confirm entry is {resource, action}, and {resource, action, prompt, schema?, approve?} "
+                             "for a service.")
+        for key in ("prompt", "schema"):
+            if key in item and not one_line(item[key]):
+                raise ValueError("confirm: a {} is the path of a file.".format(key))
+        if "approve" in item and type(item["approve"]) is not bool:
+            raise ValueError("confirm: approve is true or false.")
+        for text, digest in (("text", "digest"), ("schemaText", "schemaDigest")):
+            if stored and text in item and not (isinstance(item[text], str) and HEX64.fullmatch(str(item[digest])) and
+                                                hashlib.sha256(item[text].encode("utf-8")).hexdigest() == item[digest]):
+                raise ValueError("confirm: a file's text does not match its digest.")
+        if not table_word("name", item["resource"]):
+            raise ValueError("confirm: a resource is a name of the resource table (lowercase letters, digits, hyphens).")
+        action = item["action"]
+        if not one_line(action) or action != action.strip() or not action.isprintable() \
+                or len(action) > CONFIRM_ACTION_LIMIT:
+            raise ValueError("confirm: each action is one printable line of at most {} characters, without surrounding "
+                             "spaces: what will run.".format(CONFIRM_ACTION_LIMIT))
+    if len({(item["resource"], item["action"]) for item in confirm}) != len(confirm):
+        raise ValueError("confirm entries must differ.")
+    return confirm
+
+
+def confirm_line(language, confirm):
+    """The value of the question's confirmation line: `resource: action` pairs, cut to one question line."""
+    write = MAY_WRITE["ja" if is_japanese(language) else "en"]
+    return fit_line(("、" if is_japanese(language) else "; ").join(
+        "{}: {}{}".format(item["resource"], item["action"], write if item.get("approve") else "") for item in confirm))
+
+
+def confirm_block(language, confirm):
+    """The confirmations in full, as report.md shows them after the grant's block: one line each in a code fence,
+    then each service's prompt, whole, under its SHA-256, in a fence longer than any run of backticks it holds."""
+    ja = is_japanese(language)
+    label, write = CONFIRM_LABELS["ja" if ja else "en"], MAY_WRITE["ja" if ja else "en"]
+    parts = ["```\n" + "\n".join("{}: {}: {}{}".format(label, item["resource"], item["action"],
+                                                    write if item.get("approve") else "") for item in confirm) + "\n```"]
+    heads = {"text": ("{} の依頼（sha256 {}）:", "Prompt for {} (sha256 {}):", "digest"),
+             "schemaText": ("{} の答えの形（sha256 {}）:", "Schema for {} (sha256 {}):", "schemaDigest")}
+    for item in confirm:
+        for key, (head_ja, head_en, digest) in heads.items():
+            if key in item:
+                fence = "`" * max([3] + [len(run) + 1 for run in re.findall(r"`+", item[key])])
+                head = (head_ja if ja else head_en).format(item["resource"], item[digest])
+                body = item[key] if item[key].endswith("\n") else item[key] + "\n"
+                parts.append(head + "\n" + fence + "\n" + body + fence)
+    return "\n\n".join(parts)
+
+
 def grant_line(language, grant):
     """The value of the question's generated grant line: sizes, command classes, budget and the expiry date.
 
@@ -1005,13 +1118,17 @@ def grant_block(language, grant):
 
 
 def report_question(record, path):
-    """The question and the host's native request for a prepared decision report: five lines, and a sixth,
-    generated from the grant, when the report carries one. The first five keep their positions."""
+    """The question and the host's native request for a prepared decision report: five lines, then one generated
+    from the grant when the report carries one, and one from its confirmations when it carries them. The first
+    five keep their positions."""
     values = [record[key] for key in REPORT_LINE_KEYS] + ["R-" + record["id"], str(path)]
     question = question_text(record["language"], values)
     if record["grant"]:
         label = GRANT_LABELS["ja" if is_japanese(record["language"]) else "en"][0]
         question += "\n" + label + ": " + grant_line(record["language"], record["grant"])
+    if record["confirm"]:
+        label = CONFIRM_LABELS["ja" if is_japanese(record["language"]) else "en"]
+        question += "\n" + label + ": " + confirm_line(record["language"], record["confirm"])
     if record["runtime"] == "codex":
         return question, {"questions": [{"title": question, "options": [o["label"] for o in record["options"]]}]}
     return question, {"questions": [{"question": question, "header": "DDL", "multiSelect": record["multiSelect"],
@@ -1035,6 +1152,484 @@ def report_options(language, options):
     if len({option["label"] for option in options}) != len(options):
         raise ValueError("option labels must differ, because the answer names one label.")
     return options
+
+
+# --- the resource table -----------------------------------------------------------------------
+# The machines and services a grant may name are the user's: the personal environment declares them in one
+# file per user, `$XDG_CONFIG_HOME/ddl/resources.toml` (an empty or relative XDG_CONFIG_HOME counts as unset),
+# else `~/.config/ddl/resources.toml`. DDL fixes the place and the format, a strict subset of TOML that the
+# personal environment's own reader enforces alike: `[name]` tables; double-quoted strings (escapes \" and \\
+# only), non-negative integers and one-line lists of strings; `#` comments outside strings; blank lines. The
+# table holds names and rules only, never how a machine is reached: a value shaped like an address, a path, a
+# key or a token is refused. A problem names a line, or a resource and a field, never a value. The gate reads
+# the file only when a preparation names machines or handed-over data, or a granted call reaches a resource.
+
+RESOURCE_KEYS = ("roles", "hostname", "reach", "slots", "labels", "data", "needs", "confirm", "note")
+RESOURCE_ROLES = ("host", "compute")
+DATA_KINDS = ("code", "personal", "business")
+CONFIRM_VALUES = ("each run",)
+# A word of the table: (its first character, the characters after it, its longest length). It is checked character
+# by character, and a secret shape's pattern is compiled only when its trigger is in the text, so that reading a
+# table compiles nearly nothing, and ipaddress loads only for a run of characters that could be an IPv6 address.
+ALNUM = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+LOWER_ALNUM = "abcdefghijklmnopqrstuvwxyz0123456789"
+TABLE_WORDS = {"name": (LOWER_ALNUM, LOWER_ALNUM + "-", None), "key": (ALNUM + "_-", ALNUM + "_-", None),
+               "hostname": (ALNUM, ALNUM + "-", 63), "alias": (ALNUM, ALNUM + "._-", None),
+               "plugin": (LOWER_ALNUM, LOWER_ALNUM + "._-", None), "label": (ALNUM, ALNUM + "._+-", None)}
+DIGITS = frozenset("0123456789")
+HEX_RUN = frozenset("0123456789ABCDEFabcdef:.%")  # the characters of an IPv6 candidate
+IPV4 = _Pattern("IPV4", r"(?<![0-9])[0-9]{1,3}(?:\.[0-9]{1,3}){3}(?![0-9])")
+KEY_PREFIXES = ("sk-", "AIza", "ghp_", "github_pat_", "xox", "-----BEGIN")
+# The shapes after an address, in order: (kind, the trigger no match lacks, the pattern).
+SECRET_SHAPES = (("user@host", lambda text: "@" in text, r"[^\s@]@[^\s@]"),
+                 ("a URL", lambda text: "://" in text, r"://"),
+                 ("a port", lambda text: any(text[i + 1:i + 2] in DIGITS for i, char in enumerate(text) if char == ":"),
+                  r"[A-Za-z0-9.\]-]:[0-9]{1,5}(?![0-9A-Za-z])"),
+                 # a path wherever it starts: at the start or after a character no path holds ("x:/srv", "`/srv`")
+                 ("a path", lambda text: "/" in text, r"(?:^|[^A-Za-z0-9._~/-])(?:/[A-Za-z0-9._~]|~[A-Za-z0-9._-]*/)"),
+                 ("a key", lambda text: any(prefix in text for prefix in KEY_PREFIXES),
+                  r"(?<![A-Za-z0-9])(?:sk-|AIza|ghp_|github_pat_|xox)|-----BEGIN"),
+                 ("a token", lambda text: len(text) >= 32, r"[A-Za-z0-9_-]{32,}"))
+LIST_VALUE = "a value that is not a double-quoted string, a non-negative integer or a one-line list of strings"
+TABLE_BYTES = 64 * 1024  # the largest table read
+# Lines end at \n alone (a \r before it is dropped); any other character that some reader takes for a line break
+# is refused, so that no reader of the same file can see a line, a `confirm` for one, that another hides.
+OTHER_BREAKS = frozenset("\r\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029")
+_SHAPES = {}  # pattern source -> compiled pattern, filled on first use
+
+
+def table_word(kind, text):
+    """True when `text` is a word of the kind TABLE_WORDS names (a resource name, a key, a host name, an ssh alias,
+    a Codex plugin, a label)."""
+    first, rest, longest = TABLE_WORDS[kind]
+    return isinstance(text, str) and bool(text) and text[0] in first and all(char in rest for char in text[1:]) \
+        and (longest is None or len(text) <= longest)
+
+
+def resource_table_path(env=None):
+    """Where the user's resource table lives, whether or not it exists."""
+    env = os.environ if env is None else env
+    base = env.get("XDG_CONFIG_HOME") or ""
+    if not os.path.isabs(base):
+        base = os.path.join(env.get("HOME") or os.path.expanduser("~"), ".config")
+    return os.path.join(base, "ddl", "resources.toml")
+
+
+def read_resource_table(env=None):
+    """(table, error) of the user's resource table (`env` defaults to this process's environment).
+
+    The table is {name: {key: value}} in the file's order, each resource with the keys it declares as written
+    (strings, lists of strings, `slots` an integer), and error is None. A missing file gives ({}, None): there is
+    no table. A file that cannot be read, is not a regular file of at most 64 KiB, breaks the format or declares
+    no resource gives ({}, reason)."""
+    path, unreadable = resource_table_path(env), "the resource table cannot be read"
+    try:
+        os.lstat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return {}, None
+    except OSError:
+        return {}, unreadable
+    try:
+        text = small_file(path, TABLE_BYTES).decode("utf-8")
+    except (OSError, UnicodeDecodeError):  # a dangling link, no permission, not UTF-8
+        return {}, unreadable
+    except ValueError as exc:
+        return {}, "the resource table " + ("is larger than 64 KiB" if "larger" in str(exc) else "is not a regular file")
+    return parse_resource_table(text)
+
+
+def small_file(path, limit):
+    """The bytes of the regular file at `path` (links followed), at most `limit` of them. It is looked at before any
+    open, so that a FIFO, a device or a directory is never opened, and again once open. ValueError("not a regular
+    file" or "larger than the limit"); OSError when it cannot be read."""
+    import stat
+    if not stat.S_ISREG(os.stat(path).st_mode):
+        raise ValueError("not a regular file")
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0))
+    try:
+        info, chunks, size = os.fstat(fd), [], 0
+        if not stat.S_ISREG(info.st_mode):  # replaced between the two looks
+            raise ValueError("not a regular file")
+        while info.st_size <= limit and size <= limit:
+            chunk = os.read(fd, limit + 1 - size)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            size += len(chunk)
+        if info.st_size > limit or size > limit:
+            raise ValueError("larger than the limit")
+        return b"".join(chunks)
+    finally:
+        os.close(fd)
+
+
+def secret_shape(text):
+    """The kind of secret-like shape in `text` (an IP address, user@host, a URL, a port, a path, a key, a token), or
+    None. Messages name the kind, never the text."""
+    if "." in text and IPV4.search(text) or text.count(":") >= 2 and ipv6_in(text):
+        return "an IP address"
+    for kind, trigger, source in SECRET_SHAPES:
+        if trigger(text):
+            if source not in _SHAPES:
+                _SHAPES[source] = re.compile(source)
+            if _SHAPES[source].search(text):
+                return kind
+    return None
+
+
+def ipv6_in(text):
+    """True when a run of hexadecimal digits, colons, dots and `%` that no letter or digit touches is, without its
+    scope and its outer dots, an IPv6 address as ipaddress reads one."""
+    i, n = 0, len(text)
+    while i < n:
+        if text[i] not in HEX_RUN:
+            i += 1
+            continue
+        j = i
+        while j < n and text[j] in HEX_RUN:
+            j += 1
+        token, touched, i = text[i:j], (i and text[i - 1].isalnum()) or (j < n and text[j].isalnum()), j
+        token = token.split("%", 1)[0].strip(".")
+        if not touched and token.count(":") >= 2 and could_be_ipv6(token):
+            try:
+                ipaddress.IPv6Address(token)
+                return True
+            except ValueError:
+                pass
+    return False
+
+
+def could_be_ipv6(token):
+    """A condition every IPv6 address meets (ipaddress's own count of groups and their length), so that the module is
+    loaded only for a token it may accept: at most 9 groups, exactly 8 without `::`, an IPv4 tail counting as two,
+    and each group at most 4 characters without a dot."""
+    parts = token.split(":")
+    if "." in parts[-1]:
+        parts = parts[:-1] + ["0", "0"]
+    return len(parts) <= 9 and ("::" in token or len(parts) == 8) and all(len(part) <= 4 and "." not in part
+                                                                        for part in parts)
+
+
+def header_name(line):
+    """The name in a `[name]` header (a stripped line), or None when the line is not one: `[`, blanks, the name (no
+    `]` and no white space), blanks, `]`, blanks and an optional `#` comment."""
+    i = _blank(line, 1)
+    j = i
+    while j < len(line) and line[j] != "]" and not line[j].isspace():
+        j += 1
+    k = _blank(line, j)
+    if k >= len(line) or line[k] != "]":
+        return None
+    k = _blank(line, k + 1)
+    return line[i:j] if k >= len(line) or line[k] == "#" else None
+
+
+def _blank(text, index):
+    while index < len(text) and text[index] in " \t":
+        index += 1
+    return index
+
+
+def _table_string(text, index):
+    """(string, index after it) of the double-quoted string at `index`; ValueError names what is wrong."""
+    if text.startswith('"""', index):
+        raise ValueError("a multi-line string")
+    out, index = [], index + 1
+    while index < len(text):
+        char = text[index]
+        if char == "\\":
+            if text[index + 1:index + 2] in ('"', "\\"):
+                out.append(text[index + 1])
+                index += 2
+                continue
+            raise ValueError("an escape other than \\\" or \\\\ in a string")
+        if char == '"':
+            return "".join(out), index + 1
+        if ord(char) < 0x20 or char == "\x7f":
+            raise ValueError("a control character in a string")
+        out.append(char)
+        index += 1
+    raise ValueError("a string that does not close on its line")
+
+
+def _table_value(text):
+    """The value after `key =`: a string, a non-negative integer or a one-line list of strings."""
+    index = _blank(text, 0)
+    if index >= len(text) or text[index] == "#":
+        raise ValueError("a key without a value")
+    char = text[index]
+    if char == '"':
+        value, index = _table_string(text, index)
+    elif "0" <= char <= "9":
+        end = index
+        while end < len(text) and text[end] in DIGITS:
+            end += 1
+        digits = text[index:end]
+        if len(digits) > 1 and digits[0] == "0":
+            raise ValueError("an integer with a leading zero")
+        value, index = int(digits), index + len(digits)
+        if index < len(text) and text[index] not in " \t#":
+            raise ValueError(LIST_VALUE)
+    elif char == "[":
+        value, index = [], _blank(text, index + 1)
+        if text[index:index + 1] == "]":
+            index += 1
+        else:
+            while True:
+                index = _blank(text, index)
+                if index >= len(text):
+                    raise ValueError("a list that does not close on its line")
+                if text[index] != '"':
+                    raise ValueError("a list item that is not a double-quoted string")
+                item, index = _table_string(text, index)
+                value.append(item)
+                index = _blank(text, index)
+                if text[index:index + 1] == ",":
+                    index = _blank(text, index + 1)
+                    if text[index:index + 1] == "]":
+                        index += 1
+                        break
+                    continue
+                if text[index:index + 1] == "]":
+                    index += 1
+                    break
+                if index >= len(text):
+                    raise ValueError("a list that does not close on its line")
+                raise ValueError("a list item followed by something other than a comma")
+    else:
+        raise ValueError(LIST_VALUE)
+    index = _blank(text, index)
+    if index < len(text) and text[index] != "#":
+        raise ValueError("text after the value")
+    return value
+
+
+def parse_resource_table(text):
+    """(table, error) of a resource table's text: what read_resource_table returns for a file holding it."""
+    resources, headers, errors, current = {}, {}, [], None  # name -> {key: (value, line)}; name -> its line
+    if text.startswith("\ufeff"):
+        text = text[1:]
+    for number, raw in enumerate(text.split("\n"), 1):
+        raw = raw[:-1] if raw.endswith("\r") else raw
+        if any(char in OTHER_BREAKS for char in raw):
+            errors.append("line {}: a line break other than \\n".format(number))
+            continue
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("["):
+            name = header_name(line)
+            current = {}  # the keys under a header in error belong to no resource
+            if name is None or line.startswith("[["):
+                errors.append("line {}: a table header that is not [name]".format(number))
+            elif not table_word("name", name):
+                errors.append("line {}: a resource name that is not lowercase letters, digits and hyphens".format(number))
+            elif secret_shape(name):
+                errors.append("line {}: a resource name that looks like a token".format(number))
+            elif name in resources:
+                errors.append("line {}: a resource declared twice (first on line {})".format(number, headers[name]))
+            else:
+                current, headers[name] = resources.setdefault(name, {}), number
+            continue
+        key, sep, rest = line.partition("=")
+        key = key.strip()
+        if not sep:
+            errors.append("line {}: a line that is neither a [name] header nor key = value".format(number))
+        elif not table_word("key", key):
+            errors.append("line {}: a key that is not a bare word".format(number))
+        elif current is None:
+            errors.append("line {}: key = value before the first [name] header".format(number))
+        else:
+            try:
+                value = _table_value(rest)
+            except ValueError as exc:
+                errors.append("line {}: {}".format(number, exc))
+                continue
+            if key in current:
+                errors.append("line {}: a key given twice in one resource".format(number))
+            else:
+                current[key] = (value, number)
+    if not errors:
+        hostnames = {}
+        for name, fields in resources.items():
+            errors += ["resource {}: {}".format(name, problem) for problem in resource_problems(fields, name, hostnames)]
+    if errors:
+        more = len(errors) - 1
+        return {}, errors[0] + (" (and {} more)".format(more) if more else "")
+    if not resources:
+        return {}, "the resource table declares no resource"
+    return {name: {key: entry[0] for key, entry in fields.items()} for name, fields in resources.items()}, None
+
+
+def resource_problems(fields, name, hostnames):
+    """What one resource's fields break, as `field <key> …` phrases; `hostnames` collects the hosts' names."""
+    problems, shaped = [], set()
+
+    def label(key, line):  # a key is named when it is short and plain, else by its line
+        return key if len(key) <= 24 and not secret_shape(key) else "on line {}".format(line)
+
+    def get(key):
+        return fields[key][0] if key in fields else None
+
+    for key, (value, line) in fields.items():
+        for text in [value] if isinstance(value, str) else value if isinstance(value, list) else []:
+            kind = secret_shape(text)
+            if kind:
+                problems.append("field {} looks like {} (the value is not printed)".format(label(key, line), kind))
+                shaped.add(key)
+                break
+    problems += ["unknown key " + label(key, line) for key, (_, line) in fields.items() if key not in RESOURCE_KEYS]
+    roles = get("roles")
+    valid = isinstance(roles, list) and bool(roles) and all(role in RESOURCE_ROLES for role in roles) \
+        and len(set(roles)) == len(roles)
+    if roles is None:
+        problems.append("field roles is required")
+    elif not valid:
+        problems.append("field roles must list host, compute or both")
+    known = roles if isinstance(roles, list) and roles and all(role in RESOURCE_ROLES for role in roles) else []
+    host, compute = "host" in known, "compute" in known
+    hostname = get("hostname")
+    if "hostname" in fields and "hostname" not in shaped:
+        if not table_word("hostname", hostname):
+            problems.append("field hostname must be a short host name (letters, digits, hyphens)")
+        elif known and not host:
+            problems.append("field hostname is for a host")
+        elif hostname.lower() in hostnames:
+            problems.append("field hostname is also declared by " + hostnames[hostname.lower()])
+        else:
+            hostnames[hostname.lower()] = name
+    elif host and "hostname" not in fields:
+        problems.append("field hostname is required for a host")
+    reach = get("reach")
+    if "reach" in fields and "reach" not in shaped:
+        scheme, _, target = reach.partition(":") if isinstance(reach, str) else ("", "", "")
+        if scheme == "ssh" and table_word("alias", target):
+            pass
+        elif scheme == "codex" and table_word("plugin", target):
+            if host:
+                problems.append("field reach of a host must be ssh:<alias>")
+        else:
+            problems.append("field reach must be ssh:<alias> or codex:<plugin>")
+    elif compute and "reach" not in fields:
+        problems.append("field reach is required for compute")
+    if "slots" in fields:
+        slots = get("slots")
+        if not isinstance(slots, int) or slots < 1:
+            problems.append("field slots must be an integer of at least 1")
+        elif known and not compute:
+            problems.append("field slots is for compute")
+    for key in ("labels", "needs"):
+        if key in fields and key not in shaped:
+            value = get(key)
+            if not isinstance(value, list) or any(not table_word("label", v) for v in value):
+                problems.append("field {} must be a list of words (letters, digits, . _ + -)".format(key))
+    if "data" in fields:
+        data = get("data")
+        if not isinstance(data, list) or not data or any(d not in DATA_KINDS for d in data) or len(set(data)) != len(data):
+            problems.append("field data must list code, personal, business or several of them")
+        elif known and not compute:
+            problems.append("field data is for compute")
+    elif compute:
+        problems.append("field data is required for compute")
+    if "confirm" in fields:
+        if get("confirm") not in CONFIRM_VALUES:
+            problems.append('field confirm must be "each run"')
+        elif known and not compute:
+            problems.append("field confirm is for compute")
+    if "note" in fields and not isinstance(get("note"), str):
+        problems.append("field note must be a string")
+    return problems
+
+
+def grant_resources(grant):
+    """Refuse (ValueError) a grant whose machines or handed-over data the resource table does not allow.
+
+    With a table, each machine is a declared compute resource, `handover` names data kinds, and each machine's
+    `data` holds every kind handed over. An invalid table refuses a grant that names machines. Without a table
+    the names are free, as before (a machine is then its own ssh alias). Nothing is read for a grant that names
+    neither machines nor handed-over data."""
+    machines, handover = grant["machines"], grant["handover"]
+    if not machines and not handover:
+        return
+    table, problem = read_resource_table()
+    if problem:
+        if machines:
+            raise ValueError("grant.machines: the resource table is invalid ({}); correct it before a grant names "
+                             "machines.".format(problem))
+        return
+    if not table:
+        return
+    for name in machines:
+        if name not in table:
+            raise ValueError("grant.machines: `{}` is not declared in the resource table.".format(name))
+        if "compute" not in table[name]["roles"]:
+            raise ValueError("grant.machines: `{}` is not a compute resource in the resource table.".format(name))
+    if any(kind not in DATA_KINDS for kind in handover):
+        raise ValueError("grant.handover names data kinds: {}.".format(", ".join(DATA_KINDS)))
+    for name in machines:
+        for kind in handover:
+            if kind not in table[name]["data"]:
+                raise ValueError("grant.handover: `{}` does not take `{}`.".format(name, kind))
+
+
+def confirm_resources(confirm):
+    """The confirmations as the report keeps them: each service's prompt read, with its text and SHA-256 added.
+
+    ValueError when a resource is not a compute resource of the table (without a table, or with one that is
+    invalid, there is nothing to confirm), a service names no prompt, an ssh resource names one, or a prompt file
+    is not one confirm_prompt reads."""
+    table, problem = read_resource_table()
+    if problem:
+        raise ValueError("confirm: the resource table is invalid ({}); correct it before confirming.".format(problem))
+    if not table:
+        raise ValueError("confirm names resources of the resource table, and there is none.")
+    stored = []
+    for item in confirm:
+        entry = table.get(item["resource"])
+        if entry is None:
+            raise ValueError("confirm: `{}` is not declared in the resource table.".format(item["resource"]))
+        if "compute" not in entry["roles"]:
+            raise ValueError("confirm: `{}` is not a compute resource in the resource table.".format(item["resource"]))
+        service = str(entry.get("reach")).startswith("codex:")
+        if service and "prompt" not in item:
+            raise ValueError("confirm: `{}` is a service: its entry names the prompt it sends (prompt: a file).".format(
+                item["resource"]))
+        if not service and set(item) & SERVICE_KEYS:
+            raise ValueError("confirm: `{}` is reached by ssh: its action is the exact command, and it takes no "
+                             "prompt.".format(item["resource"]))
+        if service:
+            item = dict(item, approve=item.get("approve", False))
+            for key, text, digest in (("prompt", "text", "digest"), ("schema", "schemaText", "schemaDigest")):
+                if key in item:
+                    data = confirm_prompt(item[key], key)
+                    try:
+                        item[text] = data.decode("utf-8")
+                    except UnicodeDecodeError:
+                        raise ValueError("confirm: a {} file is UTF-8 text.".format(key)) from None
+                    item[digest] = hashlib.sha256(data).hexdigest()
+        stored.append(dict(item))
+    return stored
+
+
+def confirm_prompt(given, what="prompt"):
+    """The bytes of a confirmation's prompt or schema file (`what`): `given` resolved from the working directory
+    (links followed) to a regular file of at most PROMPT_BYTES inside the project's root, outside its protected
+    places, or in a temporary directory. ValueError names what is wrong."""
+    cwd = os.getcwd()
+    decision = project_decision(cwd)
+    place = Place(decision, project_root(decision))
+    path = os.path.realpath(os.path.join(cwd, given))
+    compared = place.locate(path)[1]
+    if place.protected(compared) if compared is not None else not inside(path, place.temporary):
+        raise ValueError("confirm: a {} file lies inside the project, outside its protected places, or in a "
+                         "temporary directory.".format(what))
+    try:
+        return small_file(path, PROMPT_BYTES)
+    except OSError:
+        raise ValueError("confirm: the {} file cannot be read.".format(what)) from None
+    except ValueError as exc:
+        raise ValueError("confirm: the {} file {}.".format(
+            what, "holds more than 32 KiB" if "larger" in str(exc) else "is not a regular file")) from None
 
 
 def prepare_report(runtime, data):
@@ -1077,11 +1672,22 @@ def prepare_report(runtime, data):
             raise ValueError("a report with a grant takes one answer: its first option approves, so multiSelect is false.")
         if project is None:
             raise ValueError("a grant belongs to a DDL project; prepare the report from inside the project.")
+        grant_resources(grant)
+    confirm = data.get("confirm")
+    if confirm is not None:
+        validated_confirm(confirm)
+        if multi:
+            raise ValueError("a report with confirmations takes one answer: its first option confirms, so multiSelect "
+                             "is false.")
+        if project is None:
+            raise ValueError("a confirmation belongs to a DDL project; prepare the report from inside the project.")
+        confirm = confirm_resources(confirm)
     record = {"version": REPORT_VERSION, "runtime": runtime, "language": language,
               "nonce": secrets.token_hex(NONCE_BYTES), "createdAt": created,
               **{key: data[key] for key in REPORT_LINE_KEYS},
               "options": report_options(language, data.get("options")), "multiSelect": multi,
-              "detailHash": hashlib.sha256(detail.encode("utf-8")).hexdigest(), "grant": grant, "projectKey": project}
+              "detailHash": hashlib.sha256(detail.encode("utf-8")).hexdigest(), "grant": grant, "confirm": confirm,
+              "projectKey": project}
     record["id"] = review_hash(record)[:ID_HEX_LENGTH]
     directory = report_directory() / record["id"]
     question, request = report_question(record, directory / "report.md")
@@ -1096,8 +1702,10 @@ def prepare_report(runtime, data):
 
 
 def report_head(record, question):
-    """What the gate writes at the top of report.md: the question and, for a grant, its block; the detail follows."""
+    """What the gate writes at the top of report.md: the question, the grant's block and the confirmations' block
+    when the report carries them; the detail follows."""
     block = grant_block(record["language"], record["grant"]) + "\n\n" if record["grant"] else ""
+    block += confirm_block(record["language"], record["confirm"]) + "\n\n" if record["confirm"] else ""
     return question + "\n\n" + block
 
 
@@ -1249,13 +1857,14 @@ def approved_git_review(runtime, payload):
     return record
 
 
-def approved_report_grant(runtime, payload):
-    """The prepared report whose grant the human approved, proved like a Git review: from the question and
-    its answer. ValueError says what is missing.
+def approved_report(runtime, payload):
+    """The prepared report whose grant or confirmations the human approved, proved like a Git review: from the
+    question and its answer. ValueError says what is missing.
 
     The latest human input must be the submitted choice (never an idle timeout, a receipt or typed text) of
-    the first option of the unchanged prepared question, for a report that carries a grant, is not older
-    than the session's epoch, and has not expired. The proof records a grant; it permits nothing."""
+    the first option of the unchanged prepared question, for a report that carries a grant or confirmations, is
+    not older than the session's epoch, and whose grant has not expired. The proof records a grant and the
+    confirmations; it permits nothing."""
     proof = native_git_choice(runtime, payload.get("transcript_path"))
     if not proof:
         raise ValueError("no submitted native answer to a prepared report question is recorded.")
@@ -1269,13 +1878,16 @@ def approved_report_grant(runtime, payload):
     record = load_report(ident[1], runtime)
     if request != record["nativeRequest"]:
         raise ValueError("the question does not match the prepared report.")
-    if not record["grant"] or record["multiSelect"]:
-        raise ValueError("the report carries no grant.")
+    if not (record["grant"] or record["confirm"]) or record["multiSelect"]:
+        raise ValueError("the report carries no grant and no confirmation.")
     if answer != record["options"][0]["label"]:
         raise ValueError("the selected option does not approve the plan.")
     if predates_epoch(payload.get("session_id"), record["createdAt"]):
         raise ValueError("the report predates the latest user message, resume or compaction.")
-    validated_grant(record["grant"], time.time())  # a record written by hand passes no weaker check; expiry included
+    if record["grant"]:
+        validated_grant(record["grant"], time.time())  # a record written by hand passes no weaker check; expiry included
+    if record["confirm"]:
+        validated_confirm(record["confirm"], stored=True)
     return record
 
 
@@ -1955,14 +2567,36 @@ def proved_grant(runtime, payload, root, ident, approved_at=None):
 
     The proof raises when it does not hold. It reads the latest submitted answer, so it also raises when
     that answer belongs to another question than `ident`, or to a report of another project."""
-    record = approved_report_grant(runtime, payload)
+    record, key = proved_report(runtime, payload, root, ident)
+    if not record["grant"]:
+        raise ValueError("the report carries no grant.")
+    return {"id": ident, "projectKey": key, "root": root, "grant": record["grant"],
+            "approvedAt": approved_at or utc_stamp(), "session": payload.get("session_id"), "host": runtime}
+
+
+def proved_confirmation(runtime, payload, root, ident, approved_at=None):
+    """The record of the confirmations the human just approved under `ident`, ready for the store: each item
+    unused. The proof is the grant's (proved_report); it raises when it does not hold."""
+    record, key = proved_report(runtime, payload, root, ident)
+    if not record["confirm"]:
+        raise ValueError("the report carries no confirmation.")
+    return {"id": ident, "projectKey": key, "root": root,
+            "items": [dict({"resource": item["resource"], "action": item["action"], "used": None},
+                           **{key: item[key] for key in ("digest", "schemaDigest", "approve") if key in item})
+                      for item in record["confirm"]],
+            "approvedAt": approved_at or utc_stamp(), "session": payload.get("session_id"), "host": runtime}
+
+
+def proved_report(runtime, payload, root, ident):
+    """(report record, project key) of the report the latest submitted answer approved, when that is `ident` and it
+    was prepared in the project rooted at `root`; ValueError otherwise."""
+    record = approved_report(runtime, payload)
     key = project_key(root)
     if "R-" + record["id"] != ident:
         raise ValueError("the latest submitted answer is for another question.")
     if not key or record["projectKey"] != key:
         raise ValueError("the report was prepared in another project.")
-    return {"id": ident, "projectKey": key, "root": root, "grant": record["grant"],
-            "approvedAt": approved_at or utc_stamp(), "session": payload.get("session_id"), "host": runtime}
+    return record, key
 
 
 def store_grant(body):
@@ -1973,11 +2607,17 @@ def store_grant(body):
     the link fails when the name is taken. A file at that name that is no grant record (an empty one that
     an interrupted write left) is replaced. Later stages keep their use log under `uses/`, beside
     `grants/`; nothing is created there now."""
-    path = grant_file(body["projectKey"], body["id"])
-    if read_grant(path, body["id"]):
+    return store_once(body, "grants", read_grant)
+
+
+def store_once(body, kind, reader):
+    """Write `body` once as `<store>/<project key>/<kind>/<id>.json` (store_grant says how); False when a record
+    that `reader` accepts is there already."""
+    path = os.path.join(grant_store(), body["projectKey"], kind, body["id"] + ".json")
+    if reader(path, body["id"]):
         return False
     directory = grant_store()
-    for part in (None, body["projectKey"], "grants"):
+    for part in (None, body["projectKey"], kind):
         directory = os.path.join(directory, part) if part else directory
         private_directory(directory)
     scratch = "{}.{}.{}.tmp".format(path, os.getpid(), os.urandom(4).hex())
@@ -1990,7 +2630,7 @@ def store_grant(body):
         try:
             os.link(scratch, path)
         except FileExistsError:
-            if read_grant(path, body["id"]):
+            if reader(path, body["id"]):
                 return False  # another gate process recorded the same approval a moment ago
             os.replace(scratch, path)
         return True
@@ -1999,6 +2639,106 @@ def store_grant(body):
             os.unlink(scratch)
         except OSError:
             pass  # the replacement above took it
+
+
+def confirmation_file(key, ident):
+    """Where the store keeps the record of one report's confirmations: `<store>/<project key>/confirmations/<R-id>.json`."""
+    return os.path.join(grant_store(), key, "confirmations", ident + ".json")
+
+
+def read_confirmation(path, ident):
+    """The confirmation record in `path`, or None unless it parses as one that carries `ident`: items of a resource,
+    an action, and `used` (null, or when it was used)."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            record = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(record, dict) or record.get("id") != ident:
+        return None
+    items = record.get("items")
+    if not isinstance(items, list) or not items or not all(
+            isinstance(item, dict) and isinstance(item.get("resource"), str) and isinstance(item.get("action"), str)
+            and (item.get("used") is None or isinstance(item.get("used"), str))
+            and all(key not in item or HEX64.fullmatch(str(item[key])) for key in ("digest", "schemaDigest"))
+            and ("approve" not in item or type(item["approve"]) is bool) for item in items):
+        return None
+    return record
+
+
+def store_confirmation(body):
+    """Write one report's confirmation record, once, like a grant's (store_grant): False when it is there already.
+    A record whose items were used is never rewritten by a later recording."""
+    return store_once(body, "confirmations", read_confirmation)
+
+
+def confirmation_items(project_root, report_id, resource):
+    """[(path, index, item)] for every unused item naming `resource` in the confirmation record the human approved
+    under `report_id` in the project rooted at `project_root` (its ledger root, as a grant record keeps it), in the
+    record's order. An item holds its resource, action (an ssh resource's exact command), `used`, and for a
+    service `digest` (its prompt's SHA-256 hex), `schemaDigest` when a schema was confirmed and `approve`.
+    ValueError says why there is none. A Git review's G- ID is never a confirmation, and a grant never stands in for
+    one."""
+    if not isinstance(report_id, str) or not report_id.startswith("R-") or not PREPARED_ID.fullmatch(report_id):
+        raise ValueError("a confirmation is named by its decision report's ID: R- and 16 hexadecimal characters.")
+    key = project_key(os.path.realpath(project_root)) if project_root else None
+    if not key:
+        raise ValueError("a confirmation belongs to a DDL project.")
+    path = confirmation_file(key, report_id)
+    record = read_confirmation(path, report_id)
+    if record is None or record.get("projectKey") != key:
+        raise ValueError("{} is no confirmation the human approved in this project.".format(report_id))
+    named = [(index, item) for index, item in enumerate(record["items"]) if item["resource"] == resource]
+    if not named:
+        raise ValueError("the confirmation {} does not name {}.".format(report_id, resource))
+    unused = [(path, index, dict(item)) for index, item in named if item["used"] is None]
+    if not unused:
+        raise ValueError("the confirmation {} for {} was used already.".format(report_id, resource))
+    return unused
+
+
+def confirmation_item(project_root, report_id, resource, with_item=False):
+    """(path, index) of the first unused item naming `resource` (confirmation_items says which), and with
+    `with_item` (path, index, item)."""
+    path, index, item = confirmation_items(project_root, report_id, resource)[0]
+    return (path, index, item) if with_item else (path, index)
+
+
+def mark_confirmation_used(path, index):
+    """Mark item `index` of the confirmation record at `path` used, now, before anything is sent; return the time.
+
+    ValueError when that item was used already or the record is gone or changed. Under an exclusive lock beside the
+    record (so two runs never both take one item), the record is rewritten whole: a private temporary file beside it
+    replaces it by rename."""
+    import fcntl
+    ident = os.path.basename(path)[:-len(".json")] if path.endswith(".json") else None
+    lock = os.open(path + ".lock", os.O_WRONLY | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        record = read_confirmation(path, ident) if ident else None
+        if record is None or type(index) is not int or not 0 <= index < len(record["items"]):
+            raise ValueError("there is no such confirmation item.")
+        if record["items"][index]["used"] is not None:
+            raise ValueError("this confirmation was used already.")
+        record["items"][index]["used"] = stamp = utc_stamp()
+        scratch = "{}.{}.{}.tmp".format(path, os.getpid(), os.urandom(4).hex())
+        fd = os.open(scratch, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            try:
+                os.write(fd, (review_json(record) + "\n").encode("ascii"))
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+            os.replace(scratch, path)
+        except BaseException:
+            try:
+                os.unlink(scratch)
+            except OSError:
+                pass
+            raise
+        return stamp
+    finally:
+        os.close(lock)  # which releases the lock
 
 
 # --- shell allowlist --------------------------------------------------------------------------
@@ -2085,7 +2825,8 @@ def literal_shell(text) -> bool:
     """Recognize the small shell subset we inspect, never evaluate expansions.
 
     Single-quoted patterns may contain shell metacharacters. Double quotes still expand `$`,
-    so they do not turn a dynamic command into a statically checkable one.
+    so they do not turn a dynamic command into a statically checkable one. An unquoted word that starts
+    with `=` is refused, as is `==`: zsh's equals expansion turns `=name` into the path of a command.
     """
     quote, i = None, 0
     while i < len(text):
@@ -2102,6 +2843,8 @@ def literal_shell(text) -> bool:
             quote = ch
         elif ch in "$`*?(){}~" or text[i:i + 2] in ("<<", "<(", ">("):
             return False
+        elif ch == "=" and (i == 0 or text[i - 1] in " \t\n;&|<>="):
+            return False  # zsh expands `=name` (and, with MAGIC_EQUAL_SUBST, `x==name`) to a command's path
         elif ch == "[" and (not (i == 0 or text[i - 1].isspace()) or
                             text[i + 1:i + 2] not in (" ", "\t")):
             return False
@@ -3054,6 +3797,123 @@ def ssh_form(tokens):
     return tokens[i], tokens[i + 1:]
 
 
+def ssh_resource(machine, grants, found):
+    """How the active grants meet `ssh <machine>`, given the resource table as read_resource_table `found` it:
+    "covered", "host" (the host's own decision), or the reason of a deny.
+
+    Without a table a granted machine is its own ssh alias. With one, the ssh alias must be the `reach =
+    ssh:<alias>` of a granted compute resource; a resource's name is accepted only where it equals that alias.
+    A resource with `confirm` is never covered: the host's confirmation shows the command. A `codex:` service is
+    never reached by ssh. A table that cannot be read covers nothing and refuses nothing."""
+    table, problem = found
+    granted = {name for record in grants for name in record["grant"]["machines"]}
+    outside = OUTSIDE_MACHINE.format(machine, ", ".join(record["id"] for record in grants))
+    if problem:
+        return "host"
+    if not table:
+        return "covered" if machine in granted else outside
+    held = [name for name, entry in table.items() if entry.get("reach") == "ssh:" + machine]
+    entry = table.get(machine)
+    shared = [other for other in table.values() if entry is not None and other.get("reach") == entry.get("reach")]
+    if any("confirm" in table[name] for name in held) or any("confirm" in other for other in shared):
+        return "host"  # a resource that asks each run, by its alias or its name, or one that shares its reach
+    if any(name in granted and "compute" in table[name]["roles"] for name in held):
+        return "covered"
+    if entry is not None and str(entry.get("reach")).startswith("codex:"):
+        return SERVICE_BY_SSH.format(machine)
+    if entry is not None and machine in granted:
+        return NAME_FOR_ALIAS.format(machine) if entry.get("reach") != "ssh:" + machine else NOT_COMPUTE.format(machine)
+    return outside
+
+
+def subcommand_options(args, values, flags=(), lists=()):
+    """{option: value} of a gate subcommand's options when each word is a flag of `flags`, an option of `values`
+    ({option: pattern}) given once with its value (the next word or `=value`), or an option of `lists` followed by
+    one or more values (it may repeat); a value never starts with `-`. None for anything else."""
+    found, i = {}, 0
+    while i < len(args):
+        name, equal, value = args[i].partition("=")
+        if args[i] in flags and args[i] not in found:
+            found[args[i]] = True
+        elif name in values and name not in found and (equal or i + 1 < len(args)):
+            if not equal:
+                i += 1
+                value = args[i]
+            if value.startswith("-") or not re.fullmatch(values[name], value):
+                return None
+            found[name] = value
+        elif name in lists:
+            given = found.setdefault(name, [])
+            before = len(given)
+            if equal:
+                given.append(value)
+            while not equal and i + 1 < len(args) and not args[i + 1].startswith("-"):
+                i += 1
+                given.append(args[i])
+            if len(given) == before or any(item.startswith("-") or not item for item in given[before:]):
+                return None
+        else:
+            return None
+        i += 1
+    return found
+
+
+def resource_use(tokens, is_gate):
+    """(word, resource, remote command words, local files) of the gate's `remote`, `measure` or `service` in the
+    forms tools/ddl_run.py reads, False for one of those words in any other form, None for anything else:
+      remote <machine> [--snapshot REF] [--run N-ID] [--item ID] [--artifacts GLOB…] [--keep] [--timeout N] -- <command>
+      measure <machine>
+      service <name> --prompt-file FILE [--schema FILE]
+    An artifact glob is relative to the remote work tree; the command is literal words (REMOTE_WORD). Any other
+    option (`--confirmed` after the host's confirmation of a resource that asks each run, `--approve`) is False:
+    the host's."""
+    if not PYTHON.fullmatch(tokens[0]):
+        return None
+    i = 1
+    while i < len(tokens) and PYTHON_FLAGS.fullmatch(tokens[i]):
+        i += 1
+    if i + 1 >= len(tokens) or tokens[i + 1] not in RESOURCE_WORDS or tokens[i].startswith("-") or not is_gate(tokens[i]):
+        return None
+    word, args = tokens[i + 1], tokens[i + 2:]
+    if not args or not table_word("alias", args[0]):
+        return False
+    name, args = args[0], args[1:]
+    if word == "measure":
+        return (word, name, [], []) if not args else False
+    if word == "service":
+        found = subcommand_options(args, {"--prompt-file": r"[^\n]+", "--schema": r"[^\n]+"})
+        if found is None or "--prompt-file" not in found:
+            return False
+        return word, name, [], [found[key] for key in ("--prompt-file", "--schema") if key in found]
+    cut = args.index("--") if "--" in args else len(args)
+    found, command = subcommand_options(args[:cut], REMOTE_VALUES, {"--keep"}, {"--artifacts"}), args[cut + 1:]
+    if found is None or not command or not all(REMOTE_WORD.fullmatch(w) for w in command) or not all(
+            ARTIFACT_GLOB.fullmatch(glob) and ".." not in glob.split("/") for glob in found.get("--artifacts", [])):
+        return False
+    return word, name, command, []
+
+
+def resource_covered(word, name, grants, found):
+    """True when an active grant names the resource of `remote`, `measure` or `service` and hands over `code`, and
+    the table, as read_resource_table `found` it, lets a grant cover it: a compute resource that takes `code`,
+    reached by ssh for the first two and by codex for `service`, with neither it nor a resource sharing its reach
+    asking each run. Without a table a granted machine is its own ssh alias and no service exists; a table that
+    cannot be read covers nothing."""
+    table, problem = found
+    if problem or not any(name in record["grant"]["machines"] and "code" in record["grant"]["handover"]
+                          for record in grants):
+        return False
+    if not table:
+        return word != "service"
+    entry = table.get(name)
+    if entry is None or "compute" not in entry["roles"] or "code" not in entry.get("data", []):
+        return False
+    reach = str(entry.get("reach"))
+    if any("confirm" in other for other in table.values() if other.get("reach") == reach):
+        return False  # the resource itself, or one that the same alias or plugin reaches, asks each run
+    return reach.startswith("codex:" if word == "service" else "ssh:")
+
+
 def named(word):
     """What a word may name as a path: itself, or for an option its value (`--opt=value`, `-ovalue`)."""
     if not word.startswith("-"):
@@ -3132,7 +3992,13 @@ def shell_grant(command, cwd, place, grants, note):
     parts = split_segments(text, ends) if literal_shell(text) else None
     if not parts:
         return None
-    cwds, kinds, ids, host, segments = [cwd], [], [], False, 0
+    cwds, kinds, ids, host, segments, table = [cwd], [], [], False, 0, []
+
+    def resources():
+        """The resource table, read once per call and only when a segment reaches a resource."""
+        if not table:
+            table.append(read_resource_table())
+        return table[0]
 
     def resolved(word):
         """The real paths `word` names from every working directory a segment may run in."""
@@ -3172,15 +4038,41 @@ def shell_grant(command, cwd, place, grants, note):
                 host = True
                 continue
             machine, remote = form
-            if not any(machine in record["grant"]["machines"] for record in grants):
-                return refused(note, "grant-machine", grants, OUTSIDE_MACHINE.format(machine, names))
+            reach = ssh_resource(machine, grants, resources())
+            if reach not in ("covered", "host"):
+                return refused(note, "grant-machine", grants, reach)
             word = exit_word(" ".join(remote))
             if word:
                 return refused(note, "ssh-exit", grants, EXIT_BEHIND_SSH.format(word))
+            if reach == "host":
+                host = True
+                continue
             classes = ("remote-run",)
         elif segment_is_read_only(raw_segment, masked):
             continue
         else:
+            use = resource_use(tokens, is_gate)
+            if use is not None:
+                # The gate's remote, measure and service: class remote-run for the resource they name, allowed when
+                # an active grant covers it and the class; anything else, in any form, is the host's. No input
+                # reaches them, the command `remote` runs is literal words without an exit, and a file `service`
+                # hands over lies inside the root (not protected) or a temporary directory.
+                word = use and exit_word(" ".join(use[2]))
+                if word:
+                    return refused(note, "ssh-exit", grants, EXIT_BEHIND_SSH.format(word))
+                hit = granting(grants, "remote-run")
+                if not use or not hit or "<" in masked or piped(parts[0], ends, k) \
+                        or not resource_covered(use[0], use[1], grants, resources()):
+                    host = True
+                    continue
+                for path in (path for name in use[3] for path in resolved(name)):
+                    compared = place.locate(path)[1] if path else None
+                    if path is None or (place.protected(compared) if compared is not None
+                                        else not inside(path, place.temporary)):
+                        host = True
+                kinds.append("remote-run")
+                ids.append(hit)
+                continue
             form = segment_class(tokens, is_gate)
             if not form:
                 host = True
@@ -3302,7 +4194,8 @@ def question_guard(runtime, payload, state, pending, note):
     if request != expected:
         return deny((GIT_QUESTION_MISMATCH if kind == "G" else ASK_UNCHANGED).format(label))
     del note["rule"]
-    note["asked"] = {"id": label, "options": option_labels(expected), "grant": kind == "R" and bool(record["grant"])}
+    note["asked"] = {"id": label, "options": option_labels(expected), "grant": kind == "R" and bool(record["grant"]),
+                     "confirm": kind == "R" and bool(record["confirm"])}
     return None  # the prepared question; the host's own policy still applies
 
 
@@ -3424,10 +4317,12 @@ def armed_close_codex(path, ident):
 
 def note_answer(runtime, payload, root, armed, close):
     """The lines of one closed question: `answered`, unless Codex's reply was logged as it arrived, and for
-    the approving answer of a grant either `granted` or a `warn` that names why no record follows.
+    the approving answer of a grant either `granted` or a `warn` that names why no record follows; for one of
+    confirmations, `confirmed` or such a `warn`.
 
-    The warning's rule is `grant-proof` when the record does not prove the approval and `grant-store` when
-    the store could not take the record. Nothing is retried: the question is closed either way."""
+    The warning's rule is `grant-proof` (`confirm-proof`) when the record does not prove the approval and
+    `grant-store` (`confirm-store`) when the store could not take the record. Nothing is retried: the question
+    is closed either way."""
     session, ident = payload.get("session_id"), armed["id"]
     labels, label, seconds = armed.get("options") or [], close["label"], iso_seconds(close["ts"])
     stamp = None if seconds is None else utc_stamp(seconds)  # the host's own time of the answer, when it wrote one
@@ -3435,20 +4330,25 @@ def note_answer(runtime, payload, root, armed, close):
     if not armed.get("answered"):
         ledger_event(root, runtime, session, "answered", ts=stamp, id=ident, toolUseId=close["toolUseId"],
                      choice=choice, label=label, timeout=close["timeout"])
-    if not armed.get("grant") or choice != 0 or close["timeout"]:
+    if choice != 0 or close["timeout"]:
         return
-    rule = "grant-proof"
-    try:
-        body = proved_grant(runtime, payload, root, ident, stamp)
-        rule = "grant-store"
-        written = store_grant(body)
-    except Exception:
-        key = project_key(root)
-        if not key or not read_grant(grant_file(key, ident), ident):  # an earlier approval's record is no loss
-            ledger_event(root, runtime, session, "warn", id=ident, rule=rule, toolUseId=close["toolUseId"])
-        return
-    if written:
-        ledger_event(root, runtime, session, "granted", id=ident, toolUseId=close["toolUseId"])
+    for flag, prove, store, where, reader, done in (
+            ("grant", proved_grant, store_grant, grant_file, read_grant, "granted"),
+            ("confirm", proved_confirmation, store_confirmation, confirmation_file, read_confirmation, "confirmed")):
+        if not armed.get(flag):
+            continue
+        rule = flag + "-proof"
+        try:
+            body = prove(runtime, payload, root, ident, stamp)
+            rule = flag + "-store"
+            written = store(body)
+        except Exception:
+            key = project_key(root)
+            if not key or not reader(where(key, ident), ident):  # an earlier approval's record is no loss
+                ledger_event(root, runtime, session, "warn", id=ident, rule=rule, toolUseId=close["toolUseId"])
+            continue
+        if written:
+            ledger_event(root, runtime, session, done, id=ident, toolUseId=close["toolUseId"])
 
 
 def observe_answers(runtime, payload, root):
@@ -3672,7 +4572,7 @@ def prompt_note(runtime, payload, project, answered):
     # for a grant, which still needs its proof from the record at the next tool call; its line is done.
     armed = armed_questions(session)
     kept = [dict(entry, answered=True) if entry["id"] == label else entry
-            for entry in armed if entry["id"] != label or entry.get("grant")]
+            for entry in armed if entry["id"] != label or entry.get("grant") or entry.get("confirm")]
     if kept != armed:
         arm(session, kept)
 

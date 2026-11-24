@@ -1,0 +1,57 @@
+# A resource table for the gate's tests, in the format DDL fixes. The names are generic; no real machine is here.
+
+[desk]
+roles = ["host"]
+hostname = "desk"
+reach = "ssh:desk"
+
+[build-1]
+roles = ["compute"]
+reach = "ssh:build-1"   # the alias equals the name
+slots = 4
+labels = ["linux", "cpu"]
+data = ["code"]
+note = "builds and tests, 8/16 cores"
+
+[gpu-1]
+roles = ["compute"]
+reach = "ssh:gpu-alias"
+slots = 1
+labels = ["linux", "gpu"]
+data = ["code", "personal"]
+needs = ["cuda"]
+
+[batch-1]
+roles = ["compute"]
+reach = "ssh:batch-login"
+data = ["code"]
+confirm = "each run"
+
+[svc]
+roles = ["compute"]
+reach = "codex:example"
+data = ["code", "business"]
+
+[svc-paid]
+roles = ["compute"]
+reach = "codex:example-paid"
+data = ["code"]
+confirm = "each run"
+
+# Two resources that one ssh alias reaches; one of them asks each run, so neither is covered.
+[shared-1]
+roles = ["compute"]
+reach = "ssh:shared-login"
+data = ["code"]
+
+[shared-2]
+roles = ["compute"]
+reach = "ssh:shared-login"
+data = ["code"]
+confirm = "each run"
+
+# A resource that takes no code: nothing is handed over to it.
+[archive-1]
+roles = ["compute"]
+reach = "ssh:archive-1"
+data = ["business"]

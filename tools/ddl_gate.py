@@ -26,7 +26,8 @@ CACHE = "pycache"  # the same name as ddl_gate_core.CACHE
 # The words the core answers as subcommands (status, the preparations, and ddl_gate_core.RUN_WORDS). They are
 # named here because a missing core cannot name them; tools/test_ddl_run.py pins them to the core's. Any other
 # first argument, a hook event or not, fails open when the core is missing: a hook must never deny by accident.
-SUBCOMMANDS = ("status", "prepare-report", "prepare-git-review", "report", "run-start", "run-item", "snapshot")
+SUBCOMMANDS = ("status", "prepare-report", "prepare-git-review", "report", "run-start", "run-item", "snapshot",
+               "resources", "measure", "remote", "service")
 
 
 def cache_path():
