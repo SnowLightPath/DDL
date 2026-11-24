@@ -275,7 +275,9 @@ MAIL_EVENTS = {"pre-tool-use": "PreToolUse", "post-tool-use": "PostToolUse", "us
 LEAD_ONLY = ("DDL Run {0}: only the lead {1} asks the human, records and sends; send it to the lead: "
              "ddl_gate.py mail send --run {0} --to lead --as {2} --text \"<what you need>\"")
 RUN_ID = _Pattern("RUN_ID", r"N-[0-9a-f]{12}")
-_projects = {}  # session -> its project decision, as session_project gave it in this process
+PEERS_LOCK_SECONDS = 1  # the longest a hook waits for a Run's lock; then it delivers with a later call
+MAIL_SKIP_BYTES = 4 * 1024 * 1024  # how far one call passes over a line longer than a read
+GATE_FILES = ("ddl_gate.py", "ddl_gate_core.py", "ddl_run.py")
 PEER_NAME = _Pattern("PEER_NAME", r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 RUN_STATUSES = ("ready", "running", "done", "failed", "dropped")  # an item's status in run.json (ddl_run's)
 DEFAULT_PORTS = {"ssh": 22, "git+ssh": 22, "ssh+git": 22, "https": 443, "http": 80, "git": 9418, "ftp": 21, "ftps": 990}
@@ -3359,18 +3361,10 @@ def session_project(payload, refresh=False) -> dict:
                 cached = json.load(fh)
             if cached["cwd"] == cwd and (cached["ddl"] is False or
                                          os.stat(cached["source"]).st_mtime == cached["mtime"]):
-                _projects[payload.get("session_id")] = cached
                 return cached
         except (OSError, ValueError, TypeError, KeyError):
             pass
     decision = project_decision(cwd)
-    try:
-        if os.path.exists(path):  # a session's membership of a Run outlives a change of directory
-            with open(path, encoding="utf-8") as fh:
-                if json.load(fh).get("member"):
-                    decision["member"] = True
-    except (OSError, ValueError, AttributeError):
-        pass
     try:
         with open(path, "w", encoding="utf-8") as fh:
             json.dump(decision, fh)
@@ -3378,7 +3372,6 @@ def session_project(payload, refresh=False) -> dict:
         pass
     if decision["ddl"]:
         bytecode_cache()
-    _projects[payload.get("session_id")] = decision
     return decision
 
 
@@ -4578,6 +4571,9 @@ def ledger_guard(runtime, payload, project):
     member = next((path for path in resolved if member_file(path)), None)
     if member:
         return deny(LEDGER_REASON.format(os.path.basename(member)))
+    place = gate_dirs_hit(runtime, payload, None)
+    if place:
+        return deny(LEDGER_REASON.format(place))
     hits = [path for path in resolved if os.sep + LEDGER + os.sep in (path + os.sep).casefold()]
     ledger = ledger_root(project) if hits else None
     folds = folds_case(ledger) if ledger else False
@@ -6337,8 +6333,15 @@ def decide_call(runtime, payload, project, note):
 
 # --- a Run's peers: binding, mail, the lead ----------------------------------------------------
 
+def member_index(session):
+    """`<grant store>/members/<session>.json`: which Run's peer the session is ({root, run, peer}), written by the
+    hook alone like a grant; the one record membership comes from (a look creates nothing)."""
+    return os.path.join(grant_store(), "members", state_name(session) + ".json")
+
+
 def member_path(session):
-    """`<state>/<session>.member`: which Run's peer this session is ({root, run, peer, seen}); a look creates nothing."""
+    """`<state>/<session>.member`: a cache of how far the session's mail was looked at ({run, seen}); never trusted
+    for membership."""
     return os.path.join(state_base(), state_name(session) + ".member")
 
 
@@ -6349,13 +6352,13 @@ def run_paths(root, run):
 
 
 def run_is_open(root, run):
-    """True while Run `run` has an item ready or running."""
+    """True until every item of Run `run` is done or dropped (a failed one keeps it open)."""
     try:
         with open(run_paths(root, run)[1], encoding="utf-8") as fh:
             items = json.load(fh).get("items")
     except (OSError, ValueError, AttributeError):
         return False
-    return isinstance(items, list) and any(isinstance(item, dict) and item.get("status") in ("ready", "running")
+    return isinstance(items, list) and any(not isinstance(item, dict) or item.get("status") not in ("done", "dropped")
                                            for item in items)
 
 
@@ -6367,13 +6370,22 @@ def read_peers(root, run):
     return peers
 
 
-def update_peers(root, run, change):
-    """Apply `change(peers)` to peers.json under the lock ddl_run.py takes (flock on the Run's directory) and write
-    it whole when the change returns a true `written`: (written, result) of the change."""
+def update_peers(root, run, change, wait=PEERS_LOCK_SECONDS):
+    """Apply `change(peers)` to peers.json under the lock ddl_run.py takes (flock on the Run's directory), waited for
+    at most `wait` seconds (TimeoutError after), and write it whole when the change returns a true `written`:
+    (written, result) of the change."""
     import fcntl
     lock = os.open(os.path.dirname(run_paths(root, run)[0]), os.O_RDONLY)
     try:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        deadline = time.monotonic() + wait
+        while True:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("the Run's peers are busy") from None
+                time.sleep(0.02)
         peers = read_peers(root, run)
         written, result = change(peers)
         if written:
@@ -6390,9 +6402,9 @@ def addressed(message, peer, lead):
 
 
 def run_join_call(command):
-    """(run, peer, runtime, lead) of a literal `python3 [-I] <…>/ddl_gate.py run-join <N-id> --peer <name> --runtime
-    claude|codex [--lead]`, alone in the command (the gate's path may start with "$HOME/"), each option once; None
-    otherwise."""
+    """(run, peer, runtime, lead, bind) of a literal `python3 [-I] <…>/ddl_gate.py run-join <N-id> --peer <name>
+    --runtime claude|codex [--lead] [--bind <nonce>]`, alone in the command (the gate's path may start with
+    "$HOME/"), each option once; None otherwise."""
     if not isinstance(command, str) or "\n" in command.strip():
         return None
     command = re.sub(r'(^|[ \t])("?)\$(?:HOME|\{HOME\})/', r"\1\2/home/", command, count=1)
@@ -6415,27 +6427,31 @@ def run_join_call(command):
     rest, run, seen = rest[2:], None, {}
     while rest:
         word = rest.pop(0)
-        if word in seen:
+        name, equal, value = word.partition("=")
+        if name in seen:
             return None  # an option twice: not read
         if word == "--lead":
             seen[word] = True
-        elif word in ("--peer", "--runtime") and rest:
-            seen[word] = rest.pop(0)
+        elif name in ("--peer", "--runtime", "--bind") and (equal or rest):
+            seen[name] = value if equal else rest.pop(0)
         elif run is None and RUN_ID.fullmatch(word):
             run = word
         else:
             return None
-    peer, host = seen.get("--peer"), seen.get("--runtime")
-    if not run or not peer or not PEER_NAME.fullmatch(peer) or host not in RUNTIMES:
+    peer, host, bind = seen.get("--peer"), seen.get("--runtime"), seen.get("--bind")
+    if not run or not peer or not PEER_NAME.fullmatch(peer) or host not in RUNTIMES \
+            or bind is not None and not re.fullmatch(r"[0-9a-f]{16,128}", bind):
         return None
-    return run, peer, host, "--lead" in seen
+    return run, peer, host, "--lead" in seen, bind
 
 
 def join_printed(response, run, peer, host, lead):
-    """True when the call's own output shows that run-join succeeded for this peer: its printed {run, peer, runtime,
-    lead} (the lead its peer when --lead was given) and no non-zero exit code anywhere in the host's response."""
-    texts, codes, stack = [], [], [response]
-    while stack:
+    """run-join's own printed result in the host's response to the call ({run, peer, runtime, lead, bind?}, the lead
+    its peer when --lead was given), or None: also when any exit code in the response is not zero. A response, or a
+    part of it, that is itself JSON text is read as JSON."""
+    texts, codes, stack, budget = [], [], [response], 2000
+    while stack and budget:
+        budget -= 1
         value = stack.pop()
         if isinstance(value, dict):
             for key, item in value.items():
@@ -6447,8 +6463,13 @@ def join_printed(response, run, peer, host, lead):
             stack.extend(value)
         elif isinstance(value, str):
             texts.append(value)
+            if value.lstrip()[:1] in ("{", "[") and len(value) < 1 << 20:
+                try:
+                    stack.append(json.loads(value))
+                except ValueError:
+                    pass
     if any(codes):
-        return False
+        return None
     for text in texts:
         for line in text.splitlines():
             try:
@@ -6457,25 +6478,17 @@ def join_printed(response, run, peer, host, lead):
                 continue
             if isinstance(printed, dict) and (printed.get("run"), printed.get("peer"), printed.get("runtime")) == \
                     (run, peer, host) and (not lead or printed.get("lead") == peer):
-                return True
-    return False
-
-
-def mark_member(payload, member):
-    """Record in the session's project cache (made when missing) whether it is a Run's peer, so that no other session
-    looks further."""
-    session = payload.get("session_id")
-    cached = dict(session_project(payload))
-    cached["member"] = bool(member)
-    write_whole(os.path.join(state_directory(), state_name(session) + ".project"), json.dumps(cached))
-    _projects[session] = cached
+                return printed
+    return None
 
 
 def bind_session(runtime, payload):
     """After a `run-join` call of a main conversation succeeded (its output shows it): record its session as that
-    peer's in peers.json (under the Run directory's lock) and in the session's membership file. Not bound, with a
-    line that says why: a peer another session holds, a second peer for this session in the Run, the lead's name
-    without --lead, or a peer of another open Run. The hook output, or None."""
+    peer's in peers.json (under the Run directory's lock) and in the session's index in the grant store, when the
+    call carries the peer's one-time bind nonce (printed by that run-join, or given as `--bind`) whose hash peers.json
+    holds. Not bound, with a line that says why: no or another nonce, a peer another session holds, a second peer for
+    this session in the Run, the lead's name without --lead, a peer of another open Run, busy peers. The hook output,
+    or None."""
     session = payload.get("session_id")
     if payload.get("agent_id") or not isinstance(session, str) or not session \
             or payload.get("tool_name") not in SHELL_TOOLS.get(runtime, set()):
@@ -6483,17 +6496,21 @@ def bind_session(runtime, payload):
     joined = run_join_call(shell_command(payload.get("tool_input")))
     if joined is None:
         return None
-    run, peer, host, lead = joined
-    if not join_printed(payload.get("tool_response"), run, peer, host, lead):
+    run, peer, host, lead, given = joined
+    printed = join_printed(payload.get("tool_response"), run, peer, host, lead)
+    if printed is None:
         return None  # the call failed, or nothing shows it ran: nothing was joined
     project = project_decision(call_cwd(payload))
     root = ledger_root(project)
     if not project.get("ddl") or not root:
         return None
     say = lambda text: mail_output(MAIL_EVENTS["post-tool-use"], "DDL Run {}: {}".format(run, text))
-    path = member_path(session)
+    nonce = given or printed.get("bind")
+    if not isinstance(nonce, str) or not nonce:
+        return say("run-join printed no bind nonce for {}, so this session is not its peer.".format(peer))
+    index = member_index(session)
     try:
-        with open(path, encoding="utf-8") as fh:
+        with open(index, encoding="utf-8") as fh:
             current = json.load(fh)
     except (OSError, ValueError):
         current = None
@@ -6515,15 +6532,20 @@ def bind_session(runtime, payload):
             return False, "this session is {} already; one session is one peer of a Run.".format(others[0])
         if peers.get("lead") == peer and not lead:
             return False, "{} is the lead; only the session that joined with --lead takes that name.".format(peer)
-        found["session"] = session
+        if found.get("session") is None and found.get("bind") != hashlib.sha256(nonce.encode()).hexdigest():
+            return False, "the bind nonce does not match {}'s; only the session that ran its run-join binds it.".format(peer)
+        found.update(session=session, bind=None)  # the nonce is spent
         return True, None
 
-    _, refused = update_peers(root, run, bind)
+    try:
+        _, refused = update_peers(root, run, bind)
+    except TimeoutError:
+        return say("the Run's peers were busy; bind with: ddl_gate.py run-join {} --peer {} --runtime {} --bind {}".format(
+            run, peer, host, nonce))
     if refused:
         return say(refused)
-    state_directory()  # the membership file's directory, made when a session first joins
-    write_whole(path, json.dumps({"root": root, "run": run, "peer": peer, "seen": 0}))
-    mark_member(payload, True)
+    private_directory(os.path.dirname(index))
+    write_whole(index, json.dumps({"root": root, "run": run, "peer": peer}))
     return None
 
 
@@ -6531,23 +6553,22 @@ def mail_output(event_name, text):
     return {"hookSpecificOutput": {"hookEventName": event_name, "additionalContext": text}}
 
 
-def session_member(payload, project=None):
-    """The membership {root, run, peer, seen} of the event's session, or None. Only a session whose project cache
-    marks it a peer reads its membership file: any other session pays nothing more, in a DDL project or not."""
+def session_member(payload):
+    """The membership {root, run, peer} of the event's session, from its index in the grant store (one stat for a
+    session that is no peer), or None. Its Run's peers.json still has to name the session: callers check."""
     session = payload.get("session_id")
     if not isinstance(session, str) or not session:
         return None
-    if project is None:
-        project = _projects.get(session) or session_project(payload)
-    if not project.get("member"):
+    index = member_index(session)
+    if not os.path.exists(index):
         return None
     try:
-        with open(member_path(session), encoding="utf-8") as fh:
+        with open(index, encoding="utf-8") as fh:
             member = json.load(fh)
     except (OSError, ValueError):
-        return None
+        return {"root": None, "run": None, "peer": None}  # a peer whose record cannot be read: held as one
     if not isinstance(member, dict) or not all(isinstance(member.get(key), str) for key in ("root", "run", "peer")):
-        return None
+        return {"root": None, "run": None, "peer": None}
     return member
 
 
@@ -6593,20 +6614,27 @@ def shown_message(message):
 
 def mail_for(runtime, payload):
     """The mail a peer's main conversation (no agent_id) has not seen while its Run is open: from its cursor (a byte
-    offset in peers.json), read under the Run directory's lock with the file's size, at most MAIL_READ_BYTES a call,
-    the messages to it, to all (not its own) or to `lead` when it is the lead, at most MAIL_BYTES under MAIL_HEADER;
-    the cursor then moves to the end of what was read, so each message comes once. A cursor at or past the end is up
-    to date. None when there is nothing."""
+    offset in peers.json), read under the Run directory's lock (waited for at most a second: else the next call) with
+    the file's size, at most MAIL_READ_BYTES a call, the messages to it, to all (not its own) or to `lead` when it is
+    the lead, at most MAIL_BYTES under MAIL_HEADER; the cursor then moves to the end of what was read, so each message
+    comes once. A cursor at or past the end is up to date; a line longer than a read is passed over. None when there
+    is nothing."""
     session = payload.get("session_id")
     if payload.get("agent_id") or not isinstance(session, str) or not session:
         return None
     member = session_member(payload)
-    if member is None:
+    if member is None or member["root"] is None:
         return None
     root, run, peer = member["root"], member["run"], member["peer"]
     mail = run_paths(root, run)[2]
     try:
-        if os.stat(mail).st_size <= member.get("seen", 0):
+        with open(member_path(session), encoding="utf-8") as fh:
+            cache = json.load(fh)
+        seen = cache.get("seen", 0) if isinstance(cache, dict) and cache.get("run") == run else 0
+    except (OSError, ValueError):
+        seen = 0
+    try:
+        if os.stat(mail).st_size <= (seen if type(seen) is int else 0):
             return None
     except FileNotFoundError:
         return None
@@ -6622,9 +6650,22 @@ def mail_for(runtime, payload):
         if cursor >= size:
             return False, ([], cursor)  # up to date
         with open(mail, "rb") as fh:
-            fh.seek(cursor)
+            fh.seek(max(cursor - 1, 0))
+            inside = cursor > 0 and fh.read(1) != b"\n"  # the cursor is inside a line passed over before
             data = fh.read(min(size - cursor, MAIL_READ_BYTES))
-        lines, used, offset = [], len(MAIL_HEADER) + 1, cursor
+            offset = cursor
+            if inside or b"\n" not in data and len(data) == MAIL_READ_BYTES:
+                skipped, chunk = 0, data  # a line longer than a read: pass over it to its end, a bounded way
+                while b"\n" not in chunk and chunk and skipped < MAIL_SKIP_BYTES:
+                    skipped += len(chunk)
+                    chunk = fh.read(MAIL_READ_BYTES)
+                if b"\n" not in chunk:
+                    entry["cursor"] = offset + skipped
+                    return True, ([], entry["cursor"])
+                end = skipped + chunk.index(b"\n") + 1
+                entry["cursor"] = offset + end
+                return True, ([], entry["cursor"])
+        lines, used = [], len(MAIL_HEADER) + 1
         for raw in data.split(b"\n")[:-1]:  # whole lines only: a line still being written waits
             shown = [shown_message(message) for message in mail_lines(raw)
                      if isinstance(message.get("id"), str) and addressed(message, peer, peers.get("lead"))]
@@ -6643,13 +6684,18 @@ def mail_for(runtime, payload):
         entry["cursor"] = offset
         return True, (lines, offset)
 
-    _, taken = update_peers(root, run, take)
+    try:
+        _, taken = update_peers(root, run, take)
+    except TimeoutError:
+        return None  # busy: the next call delivers
     if taken is None:
-        os.unlink(member_path(session))
-        mark_member(payload, False)
         return None
-    lines, member["seen"] = taken  # what is past it (more than fitted, more than one read) comes next call
-    write_whole(member_path(session), json.dumps(member))
+    lines, seen = taken  # what is past it (more than fitted, more than one read) comes next call
+    try:
+        state_directory()
+        write_whole(member_path(session), json.dumps({"run": run, "seen": seen}))
+    except OSError:
+        pass
     if lines:
         ledger_event(root, runtime, session, "mail-delivered", run=run, peer=peer, count=len(lines))
     return "\n".join([MAIL_HEADER] + lines) if lines else None
@@ -6680,49 +6726,121 @@ def starts_workers(command):
     return False
 
 
-def mail_call(command):
-    """(verb, run, name) of a shell command that runs the gate's `mail send` or `mail read`: the peer it reads as
-    (--peer) or sends as (--as; None: the lead). None when it runs neither."""
-    if "mail" not in command:
+def shell_words(command):
+    """The shell-split words of each segment of a literal command, or None when it cannot be read so."""
+    if not literal_shell(command):
         return None
-    words = re.findall(r"[^\s;&|()<>`'\"=]+", command)
-    for i, word in enumerate(words[:-2]):
-        if os.path.basename(word) in ("ddl_gate.py", "ddl_run.py") and words[i + 1] == "mail" \
-                and words[i + 2] in ("send", "read"):
-            verb, rest = words[i + 2], words[i + 3:]
-            value = lambda flag: rest[rest.index(flag) + 1] if flag in rest[:-1] else None
-            run = value("--run")
-            return verb, run, value("--peer") if verb == "read" else value("--as")
+    parts = split_segments(command)
+    if parts is None:
+        return None
+    try:
+        return [shlex.split(raw) for raw in parts[0]]
+    except ValueError:
+        return None
+
+
+def gate_call(words):
+    """True when the words run one of the gate's files."""
+    return any(os.path.basename(word) in GATE_FILES for word in words)
+
+
+def mail_calls(segments):
+    """[(verb, run, name)] of the segments that run the gate's `mail send` or `mail read`: the peer it reads as
+    (--peer) or sends as (--as; None: the lead), each in either form (`--as x`, `--as=x`)."""
+    found = []
+    for words in segments:
+        for i, word in enumerate(words[:-2]):
+            if os.path.basename(word) in GATE_FILES and words[i + 1] == "mail" and words[i + 2] in ("send", "read"):
+                verb, options, rest = words[i + 2], {}, words[i + 3:]
+                while rest:
+                    name, equal, value = rest.pop(0).partition("=")
+                    if name in ("--run", "--peer", "--as", "--to", "--kind", "--text", "--file") and (equal or rest):
+                        options.setdefault(name, value if equal else rest.pop(0))
+                found.append((verb, options.get("--run"), options.get("--peer" if verb == "read" else "--as")))
+    return found
+
+
+def gate_dirs_hit(runtime, payload, member):
+    """The protected place a call writes, moves or deletes: the gate's state directory, the grant store (with the
+    membership index), or a parent of either, named literally (by an editing tool, a redirect, a writer such as rm or
+    mv, `find … -delete`); for a peer, also any shell command that names either path or the variables that place
+    them, unless it only reads. None otherwise."""
+    places = {os.path.realpath(state_base()), os.path.realpath(grant_store())}
+    edit, cwd = edit_targets(runtime, payload), call_cwd(payload)
+    if edit is not None:
+        paths = edit[0]
+    elif payload.get("tool_name") in SHELL_TOOLS.get(runtime, set()):
+        command = shell_command(payload.get("tool_input"))
+        if not isinstance(command, str):
+            return None
+        if member is not None and (re.search(r"\b(?:TMPDIR|DDL_GATE_STATE_DIR|DDL_GATE_GRANT_DIR|XDG_STATE_HOME)\b", command)
+                                   or any(place in command for place in places | {state_base(), grant_store()})) \
+                and not shell_is_read_only(command)[0]:  # reading a report there stays open
+            return "the gate's state or its grant store"
+        paths = list(shell_write_targets(command))
+        for words in shell_words(command) or []:
+            if words[:1] == ["find"] and ("-delete" in words or "-exec" in words or "-execdir" in words):
+                paths += [word for word in words[1:] if not word.startswith(("-", "(", "!", ")"))][:1]
+    else:
+        return None
+    for path in paths:
+        target = os.path.realpath(os.path.join(cwd, os.path.expanduser(path)))
+        for place in places:
+            if target == place or target.startswith(place + os.sep) or place.startswith(target.rstrip(os.sep) + os.sep):
+                return place
     return None
 
 
 def peer_guard(runtime, payload, project, note):
     """For a Run's peers, whatever the call's working directory: a session reads and sends mail only as its own peer,
-    and a session that is no peer never as the lead; in an open Run whose peers.json names a lead, a peer that is not
+    and never as the lead from a worker or from a session that is not the lead's; a peer's gate call must be literal;
+    a peer may not write the gate's state or store; in an open Run whose peers.json names a lead, a peer that is not
     the lead may not ask the human (a native question, ExitPlanMode), write Git, prepare a report or a Git review,
     start a worker (`claude -p`, `codex exec`, the runner) or leave the machine (a shell exit, an MCP or connector
-    tool, an outward tool). The lead's own session, its workers included, keeps the usual rules. A session that is no
-    peer pays one look at its project cache, nothing more; an error for a peer's such call denies."""
+    tool, an outward tool). Membership comes from the grant store's index and the Run's peers.json alone. The lead's
+    own session, its workers included, keeps the usual rules otherwise. A session that is no peer pays one stat; an
+    error for a peer's such call denies."""
     tool = payload.get("tool_name")
     shell = tool in SHELL_TOOLS.get(runtime, set())
     command = shell_command(payload.get("tool_input")) if shell else None
-    member = session_member(payload, project)
-    mailing = mail_call(command) if isinstance(command, str) else None
-    if mailing is not None and mailing[1]:
-        verb, run, name = mailing
-        own = member is not None and member["run"] == run
+    member = session_member(payload)
+    peers = None
+    if member is not None and member["root"] is not None:
         try:
-            lead = read_peers(member["root"] if own else ledger_root(project), run).get("lead")
+            peers = read_peers(member["root"], member["run"])
+            if (peers["peers"].get(member["peer"]) or {}).get("session") != payload.get("session_id"):
+                peers = None
         except Exception:
-            lead = None
-        acting = name if name is not None else (lead if verb == "send" else None)
-        if own and acting is not None and acting != member["peer"]:
-            note.update(rule="peer-mail", id=run)
-            return deny("DDL Run {}: this session is {}; it reads and sends mail as {} only.".format(
-                run, member["peer"], member["peer"]))
-        if not own and acting is not None and acting == lead:
-            note.update(rule="peer-mail", id=run)
-            return deny("DDL Run {}: only the lead's own session reads or sends mail as {}.".format(run, lead))
+            peers = None
+    hit = gate_dirs_hit(runtime, payload, member) if member is not None else None
+    if hit:
+        note.update(rule="ledger")
+        return deny(LEDGER_REASON.format(hit))
+    if isinstance(command, str) and re.search(r"ddl_(?:gate|run)|mail", command):
+        head = heredoc_head(command)  # a here-document's body is data, not commands
+        segments = shell_words(head if head is not None else command)
+        if segments is None:
+            if member is not None and re.search(r"ddl_(?:gate|run)", command):
+                note.update(rule="peer-mail", id=member["run"])
+                return deny("DDL Run {}: a peer runs the gate's subcommands as literal words only.".format(member["run"]))
+            segments = []
+        for verb, run, name in mail_calls(segments):
+            if not run:
+                continue
+            own = member is not None and member["run"] == run and peers is not None
+            try:
+                lead = peers.get("lead") if own else read_peers(member["root"] if member and member["root"] and
+                                                                member["run"] == run else ledger_root(project), run).get("lead")
+            except Exception:
+                lead = None
+            acting = name if name is not None else (lead if verb == "send" else None)
+            if own and acting is not None and acting != member["peer"]:
+                note.update(rule="peer-mail", id=run)
+                return deny("DDL Run {}: this session is {}; it reads and sends mail as {} only.".format(
+                    run, member["peer"], member["peer"]))
+            if acting is not None and acting == lead and (not own or payload.get("agent_id")):
+                note.update(rule="peer-mail", id=run)
+                return deny("DDL Run {}: only the lead's own conversation reads or sends mail as {}.".format(run, lead))
     if member is None:
         return None
     try:
@@ -6738,15 +6856,11 @@ def peer_guard(runtime, payload, project, note):
         restricted = True
     if not restricted:
         return None
-    try:
-        peers = read_peers(member["root"], member["run"])
-        lead, run = peers.get("lead"), member["run"]
-        if not lead or lead == member["peer"] or not run_is_open(member["root"], run):
-            return None
-        if (peers["peers"].get(member["peer"]) or {}).get("session") != payload.get("session_id"):
-            raise ValueError("membership and peers.json disagree")
-    except Exception:
+    if peers is None:
         return deny("DDL: this session's Run membership cannot be read; a peer's question, Git write or exit waits.")
+    lead, run = peers.get("lead"), member["run"]
+    if not lead or lead == member["peer"] or not run_is_open(member["root"], run):
+        return None
     note.update(rule="lead-only", id=run)
     return deny(LEAD_ONLY.format(run, lead, member["peer"]))
 
@@ -6836,7 +6950,8 @@ def look_after_commit(runtime, payload):
 def handle_pre_tool_use(runtime, payload):
     project = session_project(payload)
     if not project["ddl"]:
-        return peer_guard(runtime, payload, project, {}) if project.get("member") else None
+        return peer_guard(runtime, payload, project, {}) if os.path.exists(member_index(payload.get("session_id"))) \
+            else None
     note = {}
     decision = tool_decision(runtime, payload, project, note)
     if runtime == "codex" and verdict(decision) == "allow":
