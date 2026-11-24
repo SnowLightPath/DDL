@@ -87,7 +87,7 @@ Grant: R-3f9c0a7d1e2b4c68 (expires 2026-12-23, valid)
 | A `typed approval`, an option other than the first, or the report-less fallback | The gate records no grant: say so on entry to the work; Approval judges the approval. The fallback's ID starts no Run |
 | A `revised plan` | Prepare it again with its grant; the gate records only the approved report's |
 | A `compaction` or a restart | Read the Run from the newest `run.json`, its grant from the `Grant` count line; never start a second Run for one plan |
-| A count is `not measured` (no adapter, an unreadable ledger or conversation record) | Step 4; name the cause once, after the lines |
+| A count is `not measured` (no adapter, an unreadable record) | Step 4; name the cause once, after the lines |
 | The grant has `expired` | Report it as expired; the gate answers for nothing under it |
 | An `older gate` that rejects the key `grant` or lacks the subcommands | Prepare without the key, start no Run, report the limitation |
 
