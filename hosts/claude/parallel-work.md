@@ -13,19 +13,21 @@ Read before step 3 (Spawn) of the Parallel work operation; it maps `type`, `spaw
 | `type: general-purpose` | `Agent`, `subagent_type: worker` when `.claude/agents/worker.md` is installed (`disallowedTools`: Agent, SendMessage, TaskCreate, TaskUpdate; `omitClaudeMd: true`), else the built-in `general-purpose`. |
 | `spawn` | One `Agent` call per worker; the label goes in `name` only for writers or workers to continue with `SendMessage`, since a named spawn is a teammate with write tools even under `subagent_type: Explore` (the adapter roles keep `disallowedTools` whatever the name). |
 | Background | `run_in_background` where the tool accepts it; a `fork` worker inherits the lead's conversation, the others start fresh; definitions added mid-session load only after a reload. |
-| Completion | The background completion notification; `SendMessage` to a worker only when needed. |
+| Completion | The background completion notification, on which the lead refills (step 4); `SendMessage` to a worker only when needed. |
 | Nesting | `CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH=1` in the settings `env`, and both roles disallow `Agent`. |
-| Concurrency | No host cap; hold at `max`, the rest start as workers finish or from the team queue. |
-| Fallback | No `Agent` tool: the lead runs the assignments inline, one at a time. |
+| Concurrency | No cap observed (Observed); hold at `max`. |
+| Fallback | No `Agent` tool: Exceptions, `no primitive`. |
 
 ## Observed
 
 | Fact | Version | Date |
 |---|---|---|
 | A named spawn with `subagent_type: Explore` ran as a teammate with write tools; an unnamed `Explore` worker could not edit but had Bash; a `general-purpose` worker had `Agent` itself | Claude Code (version not recorded) | 2026-10-17 |
+| 38 workers in one session, at most 7 at once, no cap error; notices came as queued commands (tokens, tool uses, duration), those of a human wait after the answer; a pending STOP denied the workers' writing calls | Claude Code 2.1.330 | 2026-11-24 |
 | In a fresh session `explorer` had no Edit, Write or Agent tool and `worker` no Agent tool ("No such tool available"); neither received `CLAUDE.md` or design.md; both saw the depth variable; Bash stayed | Claude Code 2.1.302 | 2026-10-18 |
 
 ## Coverage
 
 - Enforced: the `disallowedTools`, `omitClaudeMd` and depth settings above, once `.claude/agents/` and the settings `env` are installed and loaded.
+- Unmeasured: a host cap, resuming a worker with `SendMessage`, the workflow tool.
 - Bash stays in both roles, so read-only shell use is an instruction, and a built-in `Explore` or `general-purpose` worker has no mechanical read-only guarantee.

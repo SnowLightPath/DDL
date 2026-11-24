@@ -10,7 +10,7 @@ errors and exit codes. No hook event (PreToolUse, Stop, UserPromptSubmit, Sessio
 module.
 
 Usage (from inside the project; the project and its `.ddl/` ledger come from the working directory):
-  python3 tools/ddl_run.py run-start [--runtime claude|codex]      (JSON {report, items} on stdin)
+  python3 tools/ddl_run.py run-start [--runtime claude|codex]      (JSON {report, items, slots?} on stdin)
   python3 tools/ddl_run.py run-item <N-id> <item id> <status>
   python3 tools/ddl_run.py report (--transcript FILE --runtime claude|codex | --session ID | --run N-ID)
                                   [--language ja|en]
@@ -22,11 +22,18 @@ Usage (from inside the project; the project and its `.ddl/` ledger come from the
                                   [--artifacts <glob>…] [--timeout <minutes>] [--keep] [--confirmed <id>]
                                   -- <command>…
   python3 tools/ddl_run.py service <name> --prompt-file FILE [--schema FILE] [--approve] [--confirmed <id>]
+  python3 tools/ddl_run.py runner <N-id> [--max <n>] [--stagger <seconds>] [--timeout <minutes>] [--model <m>]
 
-`run-start` writes `.ddl/runs/<N-id>/run.json` from {report, items} and prints {run, path}; `run-item`
-sets one item's status and prints {run, item, status}; `report` prints four lines: questions, waiting,
-denials, grant. A Run's lines count its plan's own question too, in the plan's language unless
-`--language` names one. A value that cannot be derived is printed as `未計測` (`not measured`). A usage or
+`run-start` writes `.ddl/runs/<N-id>/run.json` from {report, items, slots?} and prints {run, path}; `slots`
+{think, run} are the Run's thinking and run slots (default 5 and 0). `run-item` sets one item's status (under a
+lock on the Run's directory) and prints {run, item, status}, and writes an `item` event (run, item, status, itemKind).
+`report` prints four lines: questions (with `open <n>` for those asked and never answered, counted in no other
+bucket; for one ID only its latest ask, open until an answer to that ID), waiting, denials, grant; for a Run a
+fifth, the flow line: the summed running time of its thinking items (write, verify, explore) and of its compute
+items over capacity × the Run's wall time, as used/capacity (percent), from its `item` events, and its ready items
+(ready, with every dependency done); a slot kind with an item that ended without a start, or with a capacity that
+is no whole number from 0 to 64, is not measured. A Run's lines count
+its plan's own question too, in the plan's language unless `--language` names one. A value that cannot be derived is printed as `未計測` (`not measured`). A usage or
 input error prints `DDL report: …`, `DDL run: …` or `DDL snapshot: …` on stderr and exits 2. Nothing here
 is read back by a hook decision: an item's `done` is never a gate pass.
 
@@ -97,6 +104,31 @@ data: JSON with a schema, else text) | reason, authorization: true when a sign-i
 `service` event without the answer; exit 0 answered, 1 stopped or failed, 3 authorization or no codex, and
 nothing retries.
 
+`runner <N-id>` runs the Run's ready items as Codex workers on this machine while any is ready or running: for
+each, `codex exec --sandbox workspace-write --skip-git-repo-check --json -o out/<item>.md [-m <model>] -` in the
+caller's work tree (the Git top level of the working directory, a linked work tree too; else the project root)
+with `.ddl/runs/<N-id>/items/<item>.md` on stdin (an item without one, with an ID the Run never validated, or with
+a prompt that resolves outside items/ is skipped and reported; a link anywhere from the ledger to items/ or out/
+refuses the runner), at
+most `--max` at once (default 3), each start at least `--stagger` seconds after the one before (default 5: the
+shared `~/.codex` races when workers start together), each in its own process group, refilled as soon as one ends.
+One runner holds a Run at a time (a lock on `runner.lock` that ends with its process); it claims an item under
+the Run's lock (ready, every dependency done) by setting it `running` with its process ID and the work tree, then
+`done` on exit 0 with a final `turn.completed` (startup items of type error passed over) and a non-empty last
+message, else `failed`. While a worker runs, the process groups below it (codex runs its commands in groups of
+their own) are collected every PROCESS_POLL seconds; when it ends, by itself, at `--timeout` minutes (default 30)
+or when the runner stops, its own group and every collected one still there get TERM, GRACE seconds, then KILL.
+This is best effort: a group made and left between two looks is not seen, and a group whose ID another process
+now leads (another start time) is never touched; nor is the runner's own. A worker's group and its leader's start
+are kept with the claim: a later runner finds an item a dead runner claimed, stops what is provably left of that
+worker, and fails the item ("its runner died"); it never runs it again on its own. SIGTERM, SIGHUP or SIGINT, an unreadable record or
+any failure of the runner stops its workers and fails their items with the reason (in the ledger when the record
+cannot be written). Each end's `item` event carries the exit, the last message's path, why it failed and how long
+it took. An item that waits on a failed or dropped one stays ready and is listed as blocked. It prints one JSON
+line per state change and a summary {run, workTree, done, failed, skipped, blocked, stopped?, seconds}; exit 0
+when none failed and nothing stopped it, 1 otherwise, 2 for a usage error or a Run another runner holds, 3
+without codex. It never commits, pushes or asks the human.
+
 The import boundary: this module imports the gate's code `ddl_gate_core` from its own directory,
 symbolic links resolved, so an installed `~/.claude/hooks/ddl_run.py` link finds the gate beside the
 file it points at, and reads through it what the hook shares: project detection and the ledger root,
@@ -118,22 +150,33 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 import ddl_gate_core as gate  # noqa: E402
 
-WORDS = ("report", "run-start", "run-item", "snapshot", "resources", "measure", "remote", "service")
+WORDS = ("report", "run-start", "run-item", "snapshot", "resources", "measure", "remote", "service", "runner")
 RUN_ID_BYTES = 6  # a Run ID is N- and these random bytes in hex
 RUN_ID = re.compile(r"N-[0-9a-f]{%d}" % (2 * RUN_ID_BYTES))
 ITEM_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,31}")
 ITEM_KEYS = {"id", "kind", "files", "after"}
 ITEM_KINDS = ("write", "verify", "explore", "compute")
 ITEM_STATUSES = ("ready", "running", "done", "failed", "dropped")
+THINKING_KINDS = ("write", "verify", "explore")  # the kinds that take a thinking slot; compute takes a run slot
+SLOTS = {"think": 5, "run": 0}  # a Run's slots when run-start names none
+SLOT_LIMIT = 64
+OPEN_TEXT = {"ja": "、未回答 {}", "en": ", open {}"}  # inside the Questions line's bracket, when nonzero
+FLOW_TEXT = {
+    "ja": {"label": "稼働", "line": "考える枠 {}、回す枠 {}。用意できた項目 {}", "slot": "{}/{}（{}%）", "none": "なし"},
+    "en": {"label": "Flow", "line": "thinking slots {}, run slots {}; ready items {}", "slot": "{}/{} ({}%)",
+           "none": "none"}}
 MAX_RUN_ITEMS = 200
 REPORT_FLAGS = ("--transcript", "--runtime", "--session", "--run", "--language")
 REPORT_USAGE = ("usage: ddl_gate.py report (--transcript FILE --runtime claude|codex | --session ID | --run N-ID) "
                 "[--language ja|en]")
 RUN_USAGE = "usage: ddl_gate.py run-start (JSON on stdin) | run-item <N-id> <item id> <status>"
+RUNNER_USAGE = ("usage: ddl_gate.py runner <N-id> [--max <n>] [--stagger <seconds>] [--timeout <minutes>] "
+                "[--model <model>]")
 SNAPSHOT_USAGE = ("usage: ddl_gate.py snapshot [--run N-ID] [--item ID] [--git-dir DIR --work-tree DIR] "
                   "| snapshot list [--run N-ID] [--git-dir DIR --work-tree DIR]")
-USAGE = ("usage: ddl_run.py report|run-start|run-item|snapshot|resources|measure|remote|service … ({}; {}; {}; "
-         "and the resource words in the module's docstring)").format(REPORT_USAGE, RUN_USAGE, SNAPSHOT_USAGE)
+USAGE = ("usage: ddl_run.py report|run-start|run-item|snapshot|resources|measure|remote|service|runner … ({}; {}; "
+         "{}; {}; and the resource words in the module's docstring)").format(REPORT_USAGE, RUN_USAGE, SNAPSHOT_USAGE,
+                                                                             RUNNER_USAGE)
 SNAPSHOT_REFS = "refs/ddl/snapshots"
 SNAPSHOT_FLAGS = {"make": ("--run", "--item", "--git-dir", "--work-tree"), "list": ("--run", "--git-dir", "--work-tree")}
 # The identity of a snapshot made where Git has none configured: the tool's, at a domain that cannot exist.
@@ -270,6 +313,23 @@ def event_questions(events):
     return questions
 
 
+def open_questions(questions):
+    """The questions still open: for each ID only its latest ask counts, and it is open unless an answer to that ID
+    came at or after it (or, where the times are not known, any answer to that ID)."""
+    latest = {}
+    for index, question in enumerate(questions):
+        latest[question.get("id")] = index
+    still = []
+    for index, question in enumerate(questions):
+        if question["outcome"] is not None or latest[question.get("id")] != index:
+            continue
+        asked = question.get("asked")
+        if not any(other["outcome"] is not None and other.get("id") == question.get("id") and (
+                asked is None or other.get("answered") is None or other["answered"] >= asked) for other in questions):
+            still.append(question)
+    return still
+
+
 def count_lines(language, questions, denials, grant):
     """The four count lines. `questions` (each with outcome, asked, answered) and `denials` are None when the
     source cannot tell them; `grant` is a grant record, False for none, or None when it cannot be looked up.
@@ -286,6 +346,10 @@ def count_lines(language, questions, denials, grant):
     if questions is not None:
         tally = [sum(q["outcome"] == key for q in questions) for key in ("approved", "revised", "timeout")]
         asked = text["asked"].format(len(questions), *tally)
+        still = len(open_questions(questions))  # asked, never answered: in no other bucket
+        if still:
+            close = asked[-1]  # the bracket that ends the tally
+            asked = asked[:-1] + OPEN_TEXT[language].format(still) + close
         waits = [q["answered"] - q["asked"] if q.get("answered") is not None and q["asked"] is not None else None
                  for q in questions if q["outcome"] in ("approved", "revised")]
         if all(wait is not None and wait >= 0 for wait in waits):
@@ -371,7 +435,7 @@ def report_command(argv):
         raise ValueError("Run {} needs its DDL project as the working directory.".format(value))
     if not root:
         return count_lines(language, None, None, None)
-    events = ledger_lines(root)
+    events, flow = ledger_lines(root), []
     if mode == "--session":
         chosen = None if events is None else [event for event in events if event.get("session") == value]
         grants = [record for record in gate.grant_records(key) if record.get("session") == value]
@@ -391,10 +455,11 @@ def report_command(argv):
 
         chosen = None if events is None or start is None else [event for event in events if of_run(event)]
         grants = [record for record in gate.grant_records(key) if record["id"] == plan]
+        flow = [flow_line(language, run, events or [])]  # after the four count lines
     if chosen is None:
-        return count_lines(language, None, None, grants[-1] if grants else False)
+        return count_lines(language, None, None, grants[-1] if grants else False) + flow
     return count_lines(language, event_questions(chosen), sum(event.get("kind") == "denied" for event in chosen),
-                       grants[-1] if grants else False)
+                       grants[-1] if grants else False) + flow
 
 
 def run_items(items):
@@ -430,14 +495,25 @@ def run_items(items):
     return out
 
 
+def run_slots(slots):
+    """The Run's slots {think, run}: the given ones (each a whole number up to SLOT_LIMIT), the rest by default."""
+    if slots is None:
+        return dict(SLOTS)
+    if not isinstance(slots, dict) or not set(slots) <= set(SLOTS) or not all(
+            type(value) is int and 0 <= value <= SLOT_LIMIT for value in slots.values()):
+        raise ValueError("slots is {{think, run}}: whole numbers from 0 to {}.".format(SLOT_LIMIT))
+    return dict(SLOTS, **slots)
+
+
 def run_start(data, runtime=None):
     """`run-start`: write `.ddl/runs/<N-id>/run.json` for one approved plan's report and print {run, path}.
 
     The Run names the grant only when the store holds that grant's record, and keeps the plan's language,
     in which `report --run` prints. It is a record for people and reports. No hook reads it: an item's
     `done` is never a gate pass."""
-    if not isinstance(data, dict) or set(data) != {"report", "items"}:
-        raise ValueError("send one JSON object with report and items.")
+    if not isinstance(data, dict) or not {"report", "items"} <= set(data) <= {"report", "items", "slots"}:
+        raise ValueError("send one JSON object with report and items (and slots, when the Run names its own).")
+    slots = run_slots(data.get("slots"))
     match = gate.PREPARED_ID.fullmatch(data["report"]) if isinstance(data["report"], str) else None
     if not match or match[1] != "R":
         raise ValueError("report must be a prepared report ID such as R-0123456789abcdef.")
@@ -465,11 +541,73 @@ def run_start(data, runtime=None):
         except FileExistsError:
             continue
     run = {"id": run_id, "report": data["report"], "grant": data["report"] if granted else None,
-           "language": record["language"], "startedAt": gate.utc_stamp(), "items": items}
+           "language": record["language"], "startedAt": gate.utc_stamp(), "slots": slots, "items": items}
     with open(run_file(root, run_id), "w", encoding="utf-8") as fh:
         fh.write(json.dumps(run, ensure_ascii=False, indent=2) + "\n")
     gate.ledger_event(root, record["runtime"], None, "prepared", id=run_id, run=run_id)
     return {"run": run_id, "path": run_file(root, run_id)}
+
+
+def update_run(root, run_id, change):
+    """Apply `change(run)` to the Run's record under a lock on the Run's directory (the runner and the lead may both
+    change items; no file is added) and write the record whole when it returns True. Its result."""
+    import fcntl
+    path = run_file(root, run_id)
+    load_run(root, run_id)  # the ID and the record, before its directory is opened
+    lock = os.open(os.path.dirname(path), os.O_RDONLY)
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        run = load_run(root, run_id)
+        written = change(run)
+        if written:
+            scratch = "{}.{}.tmp".format(path, os.getpid())
+            with open(scratch, "w", encoding="utf-8") as fh:
+                fh.write(json.dumps(run, ensure_ascii=False, indent=2) + "\n")
+            os.replace(scratch, path)  # readers see the old record or the new one, never half of one
+        return written
+    finally:
+        os.close(lock)
+
+
+def run_entry(run, run_id, item_id):
+    item = next((item for item in run["items"] if isinstance(item, dict) and item.get("id") == item_id), None)
+    if item is None:
+        raise ValueError("Run {} has no item {}.".format(run_id, item_id))
+    return item
+
+
+def set_item(root, run_id, item_id, status, claim=None, **fields):
+    """Set one item's status in the Run's record (update_run) and append an `item` event (run, item, status,
+    itemKind, and `fields`): {run, item, status}. With `claim` (a runner's process ID) the item is taken only while
+    it is ready with every dependency done, and keeps the runner's ID: None when it is not, and then nothing is
+    written."""
+    if status not in ITEM_STATUSES:
+        raise ValueError("status must be one of {}.".format(", ".join(ITEM_STATUSES)))
+    found = {}
+
+    def change(run):
+        item = found["item"] = run_entry(run, run_id, item_id)
+        if claim is not None:
+            if item_id not in [ready["id"] for ready in ready_items(run)]:
+                return False  # another runner or the lead took it, or it is not ready
+            item["runner"] = claim
+        item["status"] = status
+        return True
+
+    if not update_run(root, run_id, change):
+        return None
+    gate.ledger_event(root, None, None, "item", run=run_id, item=item_id, status=status,
+                      itemKind=found["item"].get("kind"), runner=claim, **fields)  # `kind` is the event's own: "item"
+    return {"run": run_id, "item": item_id, "status": status}
+
+
+def note_item(root, run_id, item_id, **fields):
+    """Record `fields` in one item of the Run's record (update_run), without a change of status or an event."""
+    def change(run):
+        run_entry(run, run_id, item_id).update(fields)
+        return True
+
+    update_run(root, run_id, change)
 
 
 def run_item(argv):
@@ -482,17 +620,66 @@ def run_item(argv):
     root, _ = gate.cwd_ledger()
     if not root:
         raise ValueError("a Run belongs to a DDL project; run this from inside the project.")
-    run = load_run(root, run_id)
-    item = next((item for item in run["items"] if isinstance(item, dict) and item.get("id") == item_id), None)
-    if item is None:
-        raise ValueError("Run {} has no item {}.".format(run_id, item_id))
-    item["status"] = status
-    path = run_file(root, run_id)
-    scratch = "{}.{}.tmp".format(path, os.getpid())
-    with open(scratch, "w", encoding="utf-8") as fh:
-        fh.write(json.dumps(run, ensure_ascii=False, indent=2) + "\n")
-    os.replace(scratch, path)  # readers see the old record or the new one, never half of one
-    return {"run": run_id, "item": item_id, "status": status}
+    return set_item(root, run_id, item_id, status)
+
+
+def ready_items(run):
+    """The Run's items that are ready with every dependency done, in the Run's order."""
+    status = {item.get("id"): item.get("status") for item in run["items"] if isinstance(item, dict)}
+    return [item for item in run["items"] if isinstance(item, dict) and item.get("status") == "ready"
+            and all(status.get(name) == "done" for name in item.get("after", []))]
+
+
+def flow_line(language, run, events, now=None):
+    """The Run's flow line (E12 item 12): for the thinking slots (write, verify, explore) and the run slots (compute),
+    the items' summed running time over capacity × the Run's wall time, as used/capacity (percent), from the Run's
+    `item` events; and the ready items. Wall time runs from the Run's start to its last item event, or to now while
+    an item runs. What the record and the events cannot tell is not measured, never estimated: a slot kind with an
+    item that ended without a `running` event, or whose capacity in run.json is no whole number from 0 to
+    SLOT_LIMIT. A slot kind without capacity or time is none."""
+    import time
+    text, unmeasured = FLOW_TEXT[language], gate.COUNT_TEXT[language]["unmeasured"]
+    now = time.time() if now is None else now
+    start = gate.iso_seconds(run.get("startedAt"))
+    kinds = {item.get("id"): item.get("kind") for item in run["items"] if isinstance(item, dict)}
+
+    def slot(name):
+        return "run" if kinds.get(name) == "compute" else "think"
+
+    mine = sorted(((moment, event) for moment, event in ((gate.iso_seconds(event.get("ts")), event) for event in events)
+                   if moment is not None and event.get("kind") == "item" and event.get("run") == run["id"]),
+                  key=lambda pair: pair[0])  # the ledger's order among events of the same moment
+    running, busy, end, started, untimed = {}, {"think": 0.0, "run": 0.0}, None, set(), set()
+    for moment, event in mine:
+        name = event.get("item")
+        if name in running:
+            busy[slot(name)] += moment - running.pop(name)
+        elif event.get("status") in ("done", "failed"):
+            untimed.add(slot(name))  # an end without its start: that time is not known
+        if event.get("status") == "running":
+            running[name] = moment
+            started.add(name)
+        end = moment
+    for item in run["items"]:
+        if isinstance(item, dict) and item.get("status") in ("done", "failed") and item.get("id") not in started:
+            untimed.add(slot(item.get("id")))
+    for name, since in running.items():  # still running: up to now
+        busy[slot(name)] += max(0.0, now - since)
+        end = now
+    given = run.get("slots", SLOTS)
+    wall = end - start if end is not None and start is not None else None
+
+    def part(kind):
+        capacity = given.get(kind, SLOTS[kind]) if isinstance(given, dict) else None
+        if wall is None or wall <= 0 or kind in untimed or type(capacity) is not int or \
+                not 0 <= capacity <= SLOT_LIMIT:
+            return unmeasured
+        if capacity == 0:
+            return text["none"] if busy[kind] == 0 else text["slot"].format("{:.1f}".format(busy[kind] / wall), 0, "-")
+        return text["slot"].format("{:.1f}".format(busy[kind] / wall), capacity,
+                                   int(round(100.0 * busy[kind] / (capacity * wall))))
+
+    return text["label"] + ": " + text["line"].format(part("think"), part("run"), len(ready_items(run)))
 
 
 # --- snapshots --------------------------------------------------------------------------------
@@ -1660,6 +1847,411 @@ def service_command(argv):
     return exits.get(status, EXIT_UNAVAILABLE if code is None else EXIT_FAILED), result
 
 
+# --- the runner -------------------------------------------------------------------------------
+# Codex workers for a Run's ready items (a Codex lead, or a Claude lead using Codex workers): `codex exec` on this
+# machine, refilled as each one ends. The runner never commits, pushes or asks the human: those stay with the lead.
+
+RUNNER_FLAGS = {"--max": (3, 1, 16), "--stagger": (5, 0, 600), "--timeout": (30, 1, 1440)}  # default, least, most
+MODEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,63}")
+RUNNER_POLL = 0.2  # seconds between two looks at the workers and the Run
+PROCESS_POLL = 2  # seconds between two looks at the process table for the groups below each worker
+PROMPT_LIMIT = 1048576  # bytes of one item's prompt file
+# A worker's files in the Run's directory: the lead's prompt in items/, codex's last message, events and standard
+# error in out/, each named by the item's ID alone, so no item's file is another's.
+WORKER_FILES = {"out": ".md", "events": ".jsonl", "stderr": ".err"}
+
+
+class RunnerStopped(Exception):
+    """A signal or the Run's unreadable record stops the runner; the reason goes to its running items."""
+
+
+def runner_options(argv):
+    """(N-id, most at once, stagger seconds, timeout minutes, model or None); ValueError names the usage."""
+    if not argv or not RUN_ID.fullmatch(argv[0]):
+        raise ValueError(RUNNER_USAGE)
+    options, rest = {}, list(argv[1:])
+    while rest:
+        name, equal, value = rest.pop(0).partition("=")
+        if name not in tuple(RUNNER_FLAGS) + ("--model",) or name in options or not (equal or rest):
+            raise ValueError(RUNNER_USAGE)
+        options[name] = value if equal else rest.pop(0)
+    numbers = []
+    for name, (default, least, most) in RUNNER_FLAGS.items():
+        value = options.get(name, str(default))
+        try:
+            number = float(value) if name == "--stagger" else int(value) if value.isdigit() else None
+        except ValueError:
+            number = None
+        if number is None or not least <= number <= most or number != number:
+            raise ValueError("{} takes {} from {} to {}.".format(
+                name, "seconds" if name == "--stagger" else "a whole number", least, most))
+        numbers.append(number)
+    model = options.get("--model")
+    if model is not None and not MODEL.fullmatch(model):
+        raise ValueError("--model takes a model name: letters, digits, dots, colons, slashes and hyphens.")
+    return (argv[0], *numbers, model)
+
+
+def process_table():
+    """{pid: (ppid, pgid, start)} of every process, from `ps` (`start` is its start time as `ps` prints it); {} when
+    it cannot be read."""
+    import subprocess
+    try:
+        listed = subprocess.run(["ps", "-A", "-o", "pid=,ppid=,pgid=,lstart="], stdin=subprocess.DEVNULL,
+                                capture_output=True, timeout=10, env=dict(os.environ, LC_ALL="C")).stdout
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    table = {}
+    for line in listed.decode("ascii", "replace").splitlines():
+        words = line.split()
+        if len(words) > 3 and all(word.isdigit() for word in words[:3]):
+            table[int(words[0])] = (int(words[1]), int(words[2]), " ".join(words[3:]))
+    return table
+
+
+def descendant_groups(pid, table=None):
+    """{pgid: its leader's start, or None when the leader is gone} for the process group `pid` leads and the groups
+    of every process below it (codex runs a command in a group of its own). Never this process's own group."""
+    table = process_table() if table is None else table
+    below = {}
+    for child, (parent, _, _) in table.items():
+        below.setdefault(parent, []).append(child)
+    groups, todo, seen = {pid}, [pid], {pid}
+    while todo:
+        for child in below.get(todo.pop(), []):
+            if child not in seen:
+                seen.add(child)
+                groups.add(table[child][1])
+                todo.append(child)
+    return {group: table[group][2] if group in table else None for group in groups - {os.getpgrp(), 0, 1}}
+
+
+def same_group(group, start, table):
+    """True while `group` is still the group that was seen: its leader has the start time seen then, or its leader is
+    gone and the group is still there (a group's ID is not given to another process while the group exists). A
+    group whose ID a new process now leads is someone else's."""
+    now = table[group][2] if group in table else None
+    if now is None:
+        return group_alive(group)
+    return start is not None and now == start
+
+
+def stop_groups(groups):
+    """Stop the process groups {pgid: leader's start} that are still the ones seen (same_group): TERM, GRACE seconds,
+    then KILL, whatever they do with TERM. Never this process's own group."""
+    import signal
+    import time
+    table = process_table()
+    targets = [group for group, start in groups.items() if group != os.getpgrp() and same_group(group, start, table)]
+    signal_groups(targets, signal.SIGTERM)
+    deadline = time.monotonic() + GRACE
+    while time.monotonic() < deadline and any(group_alive(group) for group in targets):
+        time.sleep(0.1)
+    signal_groups(targets, signal.SIGKILL)
+    return targets
+
+
+def signal_groups(groups, sig):
+    for group in groups:
+        try:
+            os.killpg(group, sig)
+        except OSError:
+            pass
+
+
+def group_alive(group):
+    try:
+        os.killpg(group, 0)
+        return True
+    except OSError:
+        return False
+
+
+def stop_worker(worker):
+    """Stop a worker and every process group collected from below it while it ran (Worker.watch) and seen now:
+    best effort, since a group made and left between two looks at the process table is not seen. After a worker
+    ended by itself what it left behind is stopped this way too."""
+    if worker.proc.poll() is None:
+        worker.watch()
+    stop_groups(worker.groups)
+    worker.proc.wait()
+
+
+def worker_outcome(code, events, out):
+    """(status, reason) of a worker that ended: done on exit 0 with a final `turn.completed` (startup items of type
+    error are passed over) and a non-empty last message; failed otherwise, with why."""
+    last = None
+    try:
+        with open(events, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                if not isinstance(event, dict) or event.get("type") == "error" or (
+                        isinstance(event.get("item"), dict) and event["item"].get("type") == "error"):
+                    continue
+                last = event.get("type")
+    except OSError:
+        pass
+    try:
+        said = os.path.getsize(out) > 0
+    except OSError:
+        said = False
+    if code != 0:
+        return "failed", "codex ended with exit status {}".format(code)
+    if last != "turn.completed":
+        return "failed", "the last event is not turn.completed"
+    if not said:
+        return "failed", "the last message is empty"
+    return "done", None
+
+
+class Worker:
+    """One `codex exec` for one item, in its own process group (start_new_session), its prompt on stdin, in the
+    work tree the runner was started in."""
+
+    def __init__(self, codex, tree, item_id, prompt, files, model):
+        import subprocess
+        import threading
+        import time
+        self.item, self.files = item_id, files
+        handles = {}
+        try:
+            for name, path in files.items():  # an earlier try's file (or a planted link) never counts for this one
+                try:
+                    os.unlink(path)
+                except FileNotFoundError:
+                    pass
+                if name != "out":
+                    handles[name] = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            argv = [codex, "exec", "--sandbox", "workspace-write", "--skip-git-repo-check", "--json", "-o", files["out"]]
+            argv += ["-m", model] if model else []
+            self.proc = subprocess.Popen(argv + ["-"], stdin=subprocess.PIPE, stdout=handles["events"],
+                                         stderr=handles["stderr"], cwd=tree, start_new_session=True)
+        finally:
+            for handle in handles.values():
+                os.close(handle)
+        self.started = time.monotonic()
+        table = process_table()
+        self.groups = {self.proc.pid: table.get(self.proc.pid, (0, 0, None))[2]}  # it leads its own group
+        self.looked = self.started
+
+        def feed():
+            try:
+                self.proc.stdin.write(prompt)
+                self.proc.stdin.close()
+            except (OSError, ValueError):
+                pass
+
+        self.feeder = threading.Thread(target=feed, daemon=True)
+        self.feeder.start()
+
+    def watch(self, table=None):
+        """Add the process groups below the worker, as the process table shows them now."""
+        import time
+        for group, start in descendant_groups(self.proc.pid, table).items():
+            self.groups.setdefault(group, start)
+        self.looked = time.monotonic()
+
+
+def real_directory(path, what):
+    """`path` made when missing; ValueError for a symbolic link or anything but a directory there."""
+    if os.path.islink(path):
+        raise ValueError("{} is a symbolic link; the runner writes only in the Run's own directory.".format(what))
+    try:
+        os.mkdir(path, 0o700)
+    except FileExistsError:
+        if not os.path.isdir(path):
+            raise ValueError("{} is not a directory.".format(what)) from None
+    return path
+
+
+def blocked_items(run):
+    """The ready items that wait on a failed or dropped item, directly or through another such item: they stay
+    ready (the lead may run the failed one again) and the runner lists them."""
+    status = {item.get("id"): item.get("status") for item in run["items"] if isinstance(item, dict)}
+    after = {item.get("id"): item.get("after", []) for item in run["items"] if isinstance(item, dict)}
+    blocked, changed = set(), True
+    while changed:
+        changed = False
+        for name, needs in after.items():
+            if name not in blocked and status.get(name) == "ready" and any(
+                    status.get(need) in ("failed", "dropped") or need in blocked for need in needs):
+                blocked.add(name)
+                changed = True
+    return [name for name in after if name in blocked]
+
+
+def runner_command(argv):
+    """`runner <N-id> …`: run the Run's ready items as Codex workers until none is ready and none runs. One JSON line
+    per state change, then a summary {run, workTree, done, failed, skipped, blocked, stopped?, seconds}; exit 0
+    when none failed and nothing stopped it, 1 otherwise, 2 for a usage error or a Run another runner holds, 3
+    without codex."""
+    import fcntl
+    import shutil
+    import signal
+    import time
+    run_id, most, stagger, minutes, model = runner_options(argv)
+    root, _ = gate.cwd_ledger()
+    if not root:
+        raise ValueError("a Run belongs to a DDL project; start the runner from inside the project.")
+    load_run(root, run_id)
+    relative = os.path.join(gate.LEDGER, "runs", run_id)  # how the ledger names the Run's files
+    run_dir = os.path.join(root, relative)
+    for part in (gate.LEDGER, os.path.join(gate.LEDGER, "runs"), relative):
+        if os.path.islink(os.path.join(root, part)):
+            raise ValueError("{} is a symbolic link; the runner writes only in the project's own ledger.".format(part))
+    items_dir = real_directory(os.path.join(run_dir, "items"), "items/")
+    out_dir = real_directory(os.path.join(run_dir, "out"), "out/")
+    top = SnapshotGit({})("rev-parse", "--show-toplevel", optional=True)  # the caller's work tree, a linked one too
+    tree = os.path.realpath(os.fsdecode(top.rstrip(b"\n"))) if top and top.strip() else root
+    lock = os.open(os.path.join(run_dir, "runner.lock"), os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)  # one runner per Run; the lock ends with its process
+    except OSError:
+        holder = os.pread(lock, 32, 0).decode("ascii", "replace").strip()
+        os.close(lock)
+        raise ValueError("another runner{} holds Run {}; it runs its items.".format(
+            " (process {})".format(holder) if holder.isdigit() else "", run_id)) from None
+    os.ftruncate(lock, 0)
+    os.pwrite(lock, str(os.getpid()).encode("ascii"), 0)
+    began = time.monotonic()
+
+    def say(**fields):
+        gate.emit(dict({key: value for key, value in fields.items() if value is not None},
+                       seconds=round(time.monotonic() - began, 2)))
+
+    codex = shutil.which("codex")
+    if codex is None:
+        os.close(lock)
+        say(run=run_id, unavailable="codex is not on PATH")
+        return EXIT_UNAVAILABLE
+    workers, skipped, ended, kinds, last_start = {}, [], {"done": [], "failed": []}, {}, None
+    # Items a runner claimed and never ended (it died: this one holds the Run now): stop what is left of their worker
+    # when it is provably that worker's, and fail them; they are never run again on their own.
+    for item in [entry for entry in load_run(root, run_id)["items"] if isinstance(entry, dict)
+                 and entry.get("status") == "running" and "runner" in entry and entry.get("runner") != os.getpid()]:
+        groups, table = {}, process_table()
+        if type(item.get("worker")) is int and item["worker"] > 1:
+            groups = {item["worker"]: item.get("workerStart")}
+            if same_group(item["worker"], item.get("workerStart"), table):
+                for group, start in descendant_groups(item["worker"], table).items():
+                    groups.setdefault(group, start)
+        stopped_groups = sorted(stop_groups(groups)) if groups else []
+        set_item(root, run_id, item["id"], "failed", reason="its runner died", stoppedGroups=stopped_groups or None)
+        ended["failed"].append(item["id"])
+        say(item=item["id"], status="failed", reason="its runner died", stoppedGroups=stopped_groups or None)
+
+    def end(worker, code, reason=None):
+        status, why = ("failed", reason) if reason else worker_outcome(code, worker.files["events"], worker.files["out"])
+        out = os.path.join(relative, "out", worker.item + WORKER_FILES["out"])
+        took = round(time.monotonic() - worker.started, 2)
+        try:
+            set_item(root, run_id, worker.item, status, exit=code, out=out, reason=why, took=took)
+        except (OSError, ValueError):  # the record cannot be written: the ledger still says how the item ended
+            gate.ledger_event(root, None, None, "item", run=run_id, item=worker.item, status=status,
+                              itemKind=kinds.get(worker.item), exit=code, out=out, reason=why, took=took,
+                              record="the Run's record could not be written")
+        ended[status].append(worker.item)
+        say(item=worker.item, status=status, exit=code, out=out, reason=why, took=took)
+
+    def stop(signum, frame):
+        raise RunnerStopped("the runner was stopped by {}".format(signal.Signals(signum).name))
+
+    handlers = {}
+    for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+        try:
+            handlers[sig] = signal.signal(sig, stop)
+        except ValueError:  # not the main thread: signals keep their own handling
+            pass
+    stopped, run = None, None
+    try:
+        while True:
+            if any(time.monotonic() - worker.looked >= PROCESS_POLL for worker in workers.values()):
+                table = process_table()  # one look for every worker: the groups below each, while they are there
+                for worker in workers.values():
+                    if worker.proc.poll() is None:
+                        worker.watch(table)
+            for worker in list(workers.values()):
+                code = worker.proc.poll()
+                if code is None and time.monotonic() - worker.started >= minutes * MINUTE:
+                    stop_worker(worker)
+                    del workers[worker.item]
+                    end(worker, None, "no end in {} min; its process groups were stopped".format(minutes))
+                elif code is not None:
+                    stop_worker(worker)  # what it left behind, in its group and in the groups seen below it
+                    del workers[worker.item]
+                    worker.feeder.join(1)
+                    end(worker, code)
+            try:
+                run = load_run(root, run_id)
+            except ValueError:
+                raise RunnerStopped("the Run's record cannot be read") from None
+            kinds.update((item.get("id"), item.get("kind")) for item in run["items"] if isinstance(item, dict))
+            waiting = [item["id"] for item in ready_items(run) if item["id"] not in workers and item["id"] not in skipped]
+            for item_id in list(waiting):
+                if len(workers) >= most or last_start is not None and time.monotonic() - last_start < stagger:
+                    break
+                waiting.remove(item_id)
+                prompt = os.path.join(items_dir, str(item_id) + ".md")
+                why = None
+                if not isinstance(item_id, str) or not ITEM_ID.fullmatch(item_id):
+                    why = "not a valid item id"
+                elif os.path.dirname(os.path.realpath(prompt)) != os.path.realpath(items_dir):
+                    why = "its prompt file lies outside the Run's items/"
+                else:
+                    try:
+                        with open(prompt, "rb") as fh:
+                            data = fh.read(PROMPT_LIMIT + 1)
+                        if not data.strip() or len(data) > PROMPT_LIMIT:
+                            raise OSError
+                    except OSError:
+                        why = "no prompt file {} (1 B to {} B)".format(os.path.join(relative, "items", item_id + ".md"),
+                                                                       PROMPT_LIMIT)
+                if why:
+                    skipped.append(item_id)
+                    say(item=item_id, skipped=why)
+                    continue
+                if not set_item(root, run_id, item_id, "running", claim=os.getpid(), workTree=tree):
+                    continue  # taken by the lead meanwhile
+                files = {name: os.path.join(out_dir, item_id + suffix) for name, suffix in WORKER_FILES.items()}
+                try:
+                    worker = Worker(codex, tree, item_id, data, files, model)
+                except OSError as exc:
+                    set_item(root, run_id, item_id, "failed", reason="codex could not be started")
+                    ended["failed"].append(item_id)
+                    say(item=item_id, status="failed", reason="codex could not be started ({})".format(exc))
+                    continue
+                workers[item_id] = worker
+                last_start = worker.started
+                # The worker's group with its leader's start: a later runner can tell it from another group.
+                note_item(root, run_id, item_id, worker=worker.proc.pid, workerStart=worker.groups[worker.proc.pid])
+                say(item=item_id, status="running", workTree=tree)
+            if not workers and not waiting:
+                break
+            time.sleep(RUNNER_POLL)
+    except (RunnerStopped, KeyboardInterrupt) as exc:
+        stopped = str(exc) or "the runner was stopped"
+    except Exception as exc:  # noqa: BLE001 — no worker outlives a runner that failed, and its items say why
+        stopped = "the runner failed ({}: {})".format(type(exc).__name__, exc)
+    finally:
+        for sig, handler in handlers.items():
+            if handler is not None:
+                signal.signal(sig, handler)
+    for worker in list(workers.values()):
+        stop_worker(worker)
+        end(worker, None, stopped)
+    try:
+        blocked = blocked_items(load_run(root, run_id))
+    except ValueError:
+        blocked = None
+    os.close(lock)  # the next runner may take the Run
+    say(run=run_id, workTree=tree, done=ended["done"], failed=ended["failed"], skipped=skipped, blocked=blocked,
+        stopped=stopped)
+    return 1 if ended["failed"] or stopped else 0
+
+
 def main(argv) -> int:
     """One of WORDS and its arguments, as `ddl_gate.py` takes them; anything else is a usage error (exit 2)."""
     if argv and argv[0] == "report":
@@ -1698,6 +2290,12 @@ def main(argv) -> int:
             return 0
         except Exception as exc:
             print("DDL snapshot: " + str(exc), file=sys.stderr)
+            return 2
+    if argv and argv[0] == "runner":
+        try:
+            return runner_command(argv[1:])
+        except Exception as exc:  # a usage error or a Run that cannot be read: nothing was started
+            print("DDL runner: " + str(exc), file=sys.stderr)
             return 2
     if argv and argv[0] in RESOURCE_WORDS:
         word = argv[0]

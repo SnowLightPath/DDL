@@ -58,7 +58,7 @@ Lead with the decision to implement the complete proposed plan, the recommended 
 
 For planned equivalent alignment of Scopes or Validation before a stage gate, follow Notebook.
 
-On first entry, move into `## Binding Decisions` only the delegated `Unbound:` lines whose choice the approved plan stated and the lines the user picked, with Source `approved in /realize plan (<date>)`; write the plan's durable parts under `## Direction` as `Approved plan (<date>)` (Notebook), including the Close stage when the plan added it. Then start the Run (Run) with one item per lane or stage of the plan, each with its kind, owner files and dependencies; keep each item's status current until Phase 7. Whenever the user approves gates in advance, at the plan or at a later STOP, write `approved in advance (<date>)` after each such gate at once (Notebook).
+On first entry, move into `## Binding Decisions` only the delegated `Unbound:` lines whose choice the approved plan stated and the lines the user picked, with Source `approved in /realize plan (<date>)`; write the plan's durable parts under `## Direction` as `Approved plan (<date>)` (Notebook), including the Close stage when the plan added it. Then start the Run (Run) with the plan's lanes and stages cut into items of 10–30 minutes (Parallel work), each with its kind, owner files and dependencies; keep each item's status current until Phase 7. Whenever the user approves gates in advance, at the plan or at a later STOP, write `approved in advance (<date>)` after each such gate at once (Notebook).
 
 +++SWARM: 2+ independent scopes or Direction lanes need changes
 
@@ -67,13 +67,13 @@ On first entry, move into `## Binding Decisions` only the delegated `Unbound:` l
   spawn: impl-{scope}
   type: general-purpose
   max: 5
-  batch: auto
+  batch: none
   each: |
     Follow the approved plan in this prompt. Generate code honoring the principles and the Binding Decisions for {scope}.
     Work only on the Direction stage assigned to {scope}; do not start the next stage.
     If the work would violate a principle or a Binding Decision, stop and report it instead of working around it.
     Report completion, and any deviation from Direction, to the lead when done.
-  collect: lead verifies each implementation against principles and Binding Decisions
+  collect: as each item finishes, lead starts the next ready one and an independent verifier for it, then verifies each against principles and Binding Decisions
 ```
 
 Work through the Direction stages in order unless the approved plan says otherwise; the lanes of the current stage count like scopes for SWARM (Parallel work). After each stage, run Phase 3 for its mechanical gates, then review all compatible human gates ready at that boundary in one STOP batch (Approval); after approval, return here for the next stage. After the last implementation stage, complete Phase 3's checks and include its ready human gates with those in Acceptance Gates in one review; then enter Phase 4 CLOSE. Its normal path ends with one Git review; a human gate explicitly written into the approved Close stage and any triggered detection STOP still apply. Mark each gate that passes in `design.md`, and keep the gates of a merged, skipped, or reordered stage, as Notebook says. Do not delay a prerequisite gate for evidence that belongs to a later stage.
@@ -155,7 +155,7 @@ Choices: use the prepared native question and its exact action labels for one wh
 Outcome: the commit (and push) that closed the work, what now works, and either that nothing remains or what was left with its reason (for example a Binding Drift awaiting the user's choice).
 Recommendation: none after a Close; name a next command only when work this command cannot do itself remains, with the reason (Approval).
 Consequence: this report asks for no approval; a named leftover starts its own workflow only when the user chooses it.
-Review detail: implemented files/scopes and key decisions; Binding Decisions honored or explicitly changed; Direction stages and deviations; mechanical results and actual human gates passed; advance-approved gates and what each would have shown; the Close changes recorded; detections and their resolution; the Run's count lines (Run Formats). Distinguish native checks from simulated checks and unverified behavior.
+Review detail: implemented files/scopes and key decisions; Binding Decisions honored or explicitly changed; Direction stages and deviations; mechanical results and actual human gates passed; advance-approved gates and what each would have shown; the Close changes recorded; detections and their resolution; the Run's count and flow lines (Run Formats). Distinguish native checks from simulated checks and unverified behavior.
 Choices: none; state that no approval is needed and end the turn.
 
 ## Constraints

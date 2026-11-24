@@ -116,7 +116,10 @@ Decisions (JSON on stdout; the exit status is always 0):
                       else nothing (Codex asks it before its own confirmation; no tool_use_id)
   stop                writes the marker file when the turn ended with a report; prints nothing
                       (it also records an approved grant the tool path has not seen yet)
-  user-prompt-submit  removes the marker (a human spoke); prints nothing
+  user-prompt-submit  first records the answers the record already holds, then removes the marker (a human
+                      spoke); on Claude a prompt that starts like a worker's completion notice or another
+                      envelope (NOT_HUMAN_PREFIXES) is no human: it keeps the marker, the epoch and the
+                      asked questions and is logged as `prompt` with rule `notification`; prints nothing
   session-start       compact/resume while CLOSED -> additionalContext with a notice (naming the
                       pending ID and report when known);
                       codex also gets design.md injected (claude imports it through CLAUDE.md)
@@ -388,7 +391,7 @@ EVENT_VERSION = 1
 EVENT_TEXT_LIMIT = 200  # characters kept of a label, tool name or rule in one ledger line
 ARMED_LIMIT = 8  # prepared questions one session keeps waiting for their answers; past it the oldest is let go
 # The subcommands tools/ddl_run.py holds (see run_module); tools/test_ddl_run.py pins them to its WORDS.
-RUN_WORDS = ("report", "run-start", "run-item", "snapshot", "resources", "measure", "remote", "service")
+RUN_WORDS = ("report", "run-start", "run-item", "snapshot", "resources", "measure", "remote", "service", "runner")
 CACHE = "pycache"  # the launcher's bytecode cache under the state directory (ddl_gate.py reads the same name)
 ENTRY = None  # the launcher's path as it was run; ddl_gate.py sets it (gate_path_tokens)
 # A timestamp the gate reads: date, `T`, time to the minute or finer, then `Z` or `±HH:MM` (group 8, optional
@@ -2460,8 +2463,9 @@ def ledger_directory(root):
     return directory
 
 
-def ledger_event(root, runtime, session, kind, ts=None, **fields):
-    """Append one event line to `<root>/.ddl/events.jsonl`; fields that are None are left out.
+def ledger_event(root, runtime, session, kind, ts=None, nulls=(), **fields):
+    """Append one event line to `<root>/.ddl/events.jsonl`; fields that are None are left out, except those
+    `nulls` names, which are written as null (an answer's `choice` when the human typed free text).
 
     It never raises and prints nothing: a failed write loses the line and changes no decision. One
     `os.write` per line on an O_APPEND descriptor, no lock, so concurrent hooks interleave whole lines.
@@ -2471,7 +2475,7 @@ def ledger_event(root, runtime, session, kind, ts=None, **fields):
             return
         line = {"v": EVENT_VERSION, "ts": ts or utc_stamp(), "host": runtime, "session": session, "kind": kind}
         for key, value in fields.items():
-            if value is not None:
+            if value is not None or key in nulls:
                 line[key] = value[:EVENT_TEXT_LIMIT] if isinstance(value, str) else value
         data = (json.dumps(line, separators=(",", ":")) + "\n").encode("ascii")
         fd = os.open(os.path.join(ledger_directory(root), "events.jsonl"),
@@ -4328,8 +4332,9 @@ def note_answer(runtime, payload, root, armed, close):
     stamp = None if seconds is None else utc_stamp(seconds)  # the host's own time of the answer, when it wrote one
     choice = labels.index(label) if label in labels else None
     if not armed.get("answered"):
-        ledger_event(root, runtime, session, "answered", ts=stamp, id=ident, toolUseId=close["toolUseId"],
-                     choice=choice, label=label, timeout=close["timeout"])
+        ledger_event(root, runtime, session, "answered", ts=stamp, nulls=("choice",), id=ident,
+                     toolUseId=close["toolUseId"], choice=choice, label=label if choice is not None else None,
+                     timeout=close["timeout"])
     if choice != 0 or close["timeout"]:
         return
     for flag, prove, store, where, reader, done in (
@@ -4563,8 +4568,8 @@ def prompt_note(runtime, payload, project, answered):
         return
     label, reply, labels = answered
     choice = labels.index(reply[2]) if reply[2] in labels else None
-    ledger_event(root, runtime, session, "answered", id=label, toolUseId=reply[0], choice=choice, label=reply[2],
-                 timeout=False)
+    ledger_event(root, runtime, session, "answered", nulls=("choice",), id=label, toolUseId=reply[0], choice=choice,
+                 label=reply[2] if choice is not None else None, timeout=False)  # free text never enters the ledger
     if choice != 0:
         disarm(session)  # any other reply moved the epoch, as typed text does
         return
@@ -4581,7 +4586,18 @@ def handle_user_prompt_submit(runtime, payload):
     project = session_project(payload, refresh=True)
     if not project["ddl"]:
         return None
-    marker_path(payload.get("session_id")).unlink(missing_ok=True)
+    session = payload.get("session_id")
+    try:  # first: an answer the record already holds is recorded before anything below retires its question
+        observe_answers(runtime, payload, ledger_root(project))
+    except Exception:
+        pass
+    prompt = payload.get("prompt")
+    if runtime == "claude" and isinstance(prompt, str) and prompt.lstrip().startswith(NOT_HUMAN_PREFIXES):
+        # A background worker's completion notice, or another envelope the host submits as a prompt: no human
+        # spoke, so the marker, the epoch and the asked questions stay as they are.
+        ledger_event(ledger_root(project), runtime, session, "prompt", rule="notification")
+        return None
+    marker_path(session).unlink(missing_ok=True)
     # Revoke older preparations immediately, even if the new prompt has not reached the
     # asynchronous transcript yet. A possible matching native submission is not itself a grant:
     # PreToolUse must still prove its request/result association from the conversation record.

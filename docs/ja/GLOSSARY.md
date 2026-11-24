@@ -165,7 +165,7 @@
 | typed message | 入力されたメッセージ |  | 質問への回答ではなく、人間が書いて送った発言 |
 | thinking block / signed thinking block | 思考ブロック |  | Claude の記録の thinking。signed は訳さない（帰属表記の行で使わない訳に当たるため）。ゲートは読まない |
 | reasoning item（Codex の記録） | 推論の項目 |  | Codex の記録の reasoning。ゲートは読まない |
-| count lines（ゲートの `report` が出力する 4 行。`Questions` line、`Waiting` line など） | 数の行（`問い` の行、`待ち` の行など） |  | ラベルは英語で `Questions`、`Waiting`、`Denials`、`Grant`、日本語で `問い`、`待ち`、`拒否`、`許諾`。ラベルはゲートが出力するとおりに書き、本文の question は「質問」のままにする。サブコマンドの `report` は英字のままコード体で書き、「報告」とは訳さない |
+| count lines（ゲートの `report` が出力する 4 行と、Run の `Flow` の行。`Questions` line、`Waiting` line など） | 数の行（`問い` の行、`待ち` の行など） |  | ラベルは英語で `Questions`、`Waiting`、`Denials`、`Grant`、`Flow`、日本語で `問い`、`待ち`、`拒否`、`許諾`、`稼働`。`Questions` の行の `open` は `未回答`（まだ回答のない質問）。ラベルはゲートが出力するとおりに書き、本文の question は「質問」のままにする。サブコマンドの `report` は英字のままコード体で書き、「報告」とは訳さない |
 | not measured | `未計測` |  | 数の行のうち導き出せない値。推定した値では置き換えない。コード体で書く |
 | snapshot（ゲートの `snapshot` が作る途中の版） | 保存点 |  | 枝、index、作業ツリーを動かさずに作業ツリーを記録するコミット（`refs/ddl/snapshots/…`）。サブコマンドの `snapshot` は英字のままコード体で書く |
 | grant（計画が名指しする範囲、予算、期限） | 許諾 |  | `/realize` の計画の質問で人間が承認の選択肢を送信したときに、ゲートの `hook` が記録する。期限でだけ終わる。数の行のラベル `許諾` と同じ語。hook の allow（許可）と人間の approval（承認）とは区別する。許諾の scope は「範囲」と訳し、design.md の Scopes や作業単位の scope は「スコープ」の行に従う |
@@ -183,6 +183,16 @@
 | secret-shaped（ファイルの名前が） | 秘密情報に見える名前の |  | 受け渡しで除くファイル。secret そのものは「秘密情報」 |
 | busy（マシンが） | 混んでいる |  | `remote` が何も送らないマシンの状態（負荷がコアの数以上か、空きメモリが 1 割未満） |
 | exit status（コマンドの） | 終了コード |  | 出口（exit）とは別の語 |
+| item / ready item（Run の） | 項目 / 用意できた項目 | アイテム | 10〜30 分で終わる作業の単位。種類（`write`、`verify`、`explore`、`compute`）、持ち主のファイル、依存、確かめ方を持つ。依存が済んで始められる項目が「用意できた項目」 |
+| thinking slot / run slot | 考える枠 / 回す枠 | スロット | `稼働` の行のラベルと同じ語。考える枠には `write`、`verify`、`explore` の項目を、回す枠には計算だけの `compute` の項目を数える。本数を抑える仕組みではなく、`稼働` の行に使うだけである。「回す枠」は固定の語であり、本文でコマンドを走らせることは「走らせる」と書く |
+| refill | 補充 / 補充する |  | ワーカーが終わるたびに用意できた次の項目を始めること。Claude ではワーカーの完了の通知を受けたリードが行い、Codex ではゲートの `runner` が自分で行う |
+| runner（ゲートの `runner`） | `runner` | ランナー | 英字のままコード体で書く。Codex で Run ごとに 1 つ動き、用意できた項目を Run の順に `codex exec` のワーカーとして始める。項目ごとのプロンプトのファイル（`.ddl/runs/<N-id>/items/<item>.md`）が要り、無い項目は飛ばす |
+| wave | 波 |  | 全員の完了を待ってから次を始める進め方。Run は波を待たない |
+| writer / verifier | 書き手 / 確かめる役 |  | 確かめる役は書き手の会話を見ず、差分と受け入れの条件だけを受け取る |
+| acceptance conditions | 受け入れの条件 |  | 節の名前 Acceptance Gates は英字のまま |
+| background worker / completion notice | 背景のワーカー / 完了の通知 |  | 完了の通知は人間の発言ではない |
+| serial part | 直列の部分 |  | 書き手を増やしても縮まない部分（人間の確認、統合、長い確かめ） |
+| stagger（ワーカーの開始を） | 間を空けて始める |  | 一斉に始めないこと。`runner` の `--stagger`（既定は 5 秒） |
 | promised behavior | 保証した振る舞い |  | contract の行の「使わない訳」に当たる語を避ける |
 | check（照らし合わせる） | 照らす / 確かめる |  | 名詞の checks は「検査」 |
 | validation / Validation | 検証 / Validation |  | 節の名前は英字のまま |

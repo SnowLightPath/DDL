@@ -49,11 +49,11 @@ Execute the steps in order; the implementation names each step's tool; when a li
    > max, auto  at most `max` batches by proximity or dependency, about
                 ceil(count / max) units each; {scope} becomes {scopes}
    > max, none  the first `max` units start; the rest queue (as tasks where
-                the host has a task list) and are claimed as workers finish
+                the host has a task list)
    ```
-   Units whose changes depend on each other go in one assignment; name the merged units and the dependency in the report.
-3. **Spawn:** Per assignment, start one worker of the `type` role with the host's parallel primitive, labeled `{spawn}` resolved, in the background where the host allows. The prompt is `each` resolved plus what a worker without the lead's conversation cannot see: the unit's paths from design.md, the Experience items it serves, the principles that apply, its Binding Decisions, the Direction stage, its validation commands, the rows an apply or fix phase applies (verbatim) and, in `/realize`, the approved plan. It names the files and design.md sections the worker reads (no reload of the guidance file or design.md in full) and states the contract: the worker starts no workers of its own, reports its results to the lead and, for `Explore`, works read-only.
-4. **Monitor:** Wait for the host's completion signal; do not poll. With `batch: none`, start a queued assignment when a worker finishes. Once a worker reports a STOP condition, start no queued assignment: collect the running workers, then step 5.
+   Units whose changes depend on each other go in one assignment; name the merged units and the dependency in the report. In a Run, a unit is an item of 10–30 minutes with its verification. Writers never exceed the file-disjoint ready units, 2–4 per lead; spare slots verify and explore. Add a worker a minute up to `max`; halve on a rate-limit error.
+3. **Spawn:** Per assignment, start one worker of the `type` role with the host's parallel primitive, labeled `{spawn}` resolved, in the background where the host allows. The prompt is `each` resolved plus what a worker without the lead's conversation cannot see: the unit's paths from design.md, the Experience items it serves, the principles that apply, its Binding Decisions, the Direction stage, its validation commands, the rows an apply or fix phase applies (verbatim) and, in `/realize`, the approved plan. It names the files and design.md sections the worker reads (no reload of the guidance file or design.md in full) and states the contract: the worker starts no workers of its own, reports its results to the lead and, for `Explore`, works read-only. A verifier gets only the diff and the acceptance conditions, not the writer's conversation; executable checks decide, a model only advises. A worker's foreground commands end within 2 minutes.
+4. **Monitor:** Wait for the host's completion signal; do not poll. As each worker finishes, start the next ready assignment, longest verification first (for the runner, first in the Run's items), never waiting for a wave. Once a worker reports a STOP condition, start no queued assignment: collect the running workers, then step 5.
 5. **Collect:** Integrate the results as `collect` instructs. A worker that failed, returned nothing or was never launched is not done; never infer success from an attempted spawn or wait. A worker never ends the user's turn or approves anything: one that meets a STOP condition stops and reports it, and the lead executes that STOP after collecting ([Approval](approval.md)).
 6. **Shutdown:** Release what step 1 created (team, workers).
 
@@ -83,11 +83,11 @@ The READ fan-out of `/realize`, resolved:
 |---|---|
 | `0 units`; `1 unit` or a false condition; two or more `up to max`; more than `max` with `batch: auto` or `batch: none` | Step 2 decides each case |
 | `dependent` units | One assignment (step 2); never give conflicting edits to different workers |
-| A worker meets a `STOP` | Steps 4 and 5; no queued assignment starts |
+| A worker meets a `STOP` | Steps 4 and 5 |
 | A worker `failed` or returned nothing | Not done (step 5); when no worker can run it, do it in the lead under the same scope and report the host limitation, or report it as not run |
 | `no primitive` for parallel work | The lead runs the assignments itself under the same reporting contract, sequentially or with the parallel reads the implementation allows |
 | A scope or path `argument` | Only the units it selects count (Operands `condition`) |
 
 ## Implementation
 
-The host's implementation, [{Host}](hosts/{host}/parallel-work.md), is folded into this section in the installed skill. Read-only is enforced only where the adapter removes a worker's tools; where it cannot narrow a worker's permissions, the prompt contract alone holds. `each` and `collect` state the actual work; this operation authorizes nothing beyond an approved scope.
+The host's implementation, [{Host}](hosts/{host}/parallel-work.md), is folded into this section in the installed skill. Read-only is enforced only where the adapter removes a worker's tools; elsewhere the prompt contract alone holds. `each` and `collect` state the actual work; this operation authorizes nothing beyond an approved scope.

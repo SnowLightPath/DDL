@@ -44,6 +44,9 @@ ADAPTERS = {"claude": REPO / "hosts" / "claude" / "settings.json",
 EVENT_NAMES = {"pre-tool-use": "PreToolUse", "permission-request": "PermissionRequest", "session-start": "SessionStart", "stop": "Stop",
                "user-prompt-submit": "UserPromptSubmit"}
 REPORT_TEXT = "+++DDL_REPORT\n\n## Realize report\n\nAwaiting approval."
+# The flow line that ends `report --run` for a Run whose slots cannot be measured and that has no ready item.
+NO_FLOW = {"ja": "稼働: 考える枠 未計測、回す枠 未計測。用意できた項目 0",
+           "en": "Flow: thinking slots not measured, run slots not measured; ready items 0"}
 SEGMENT_SUFFIX = " Shell segment is not read-only: `{}`."
 MARKER_LINE = "→ DDL-PROTOCOL"
 
@@ -1764,6 +1767,18 @@ class GitReviewTest(GateTest):
                           cwd=str(self.repo), prompt="Please revise; do not execute."))
             self.blocked(self.check(runtime))  # the file still contains the earlier approved answer
 
+    def test_a_workers_notice_before_the_answer_keeps_the_review(self):
+        for runtime in ("claude", "codex"):
+            with self.subTest(runtime=runtime):
+                review = self.prepare(runtime)
+                self.run_gate("user-prompt-submit", runtime, payload(runtime, "user-prompt-submit", fixture(
+                    runtime + "_open.jsonl"), cwd=str(self.repo), prompt=NOTICE))
+                self.record(runtime, review)
+                if runtime == "claude":
+                    self.passed(runtime, self.check(runtime), review)  # no human spoke: the preparation stands
+                else:
+                    self.blocked(self.check(runtime))  # Codex submits no worker notice: such a prompt is typed
+
     def test_codex_native_submission_does_not_revoke_its_own_preparation(self):
         review = self.prepare("codex")
         rows = self.record("codex", review)
@@ -2985,9 +3000,13 @@ class GrantRecordTest(GrantFlowTest):
         report = self.subcommand(["report", "--run", run["id"]], cwd=self.cwd)
         self.assertEqual(report.stdout.splitlines(), [
             "問い: 2 件（承認 1、見直し 1、時間切れ 0）", "待ち: 人間 0 分（答えまで中央値 0 分、最長 0 分）", "拒否: 0 件",
-            "許諾: {}（期限 {}、有効）".format(plan["reportId"], given["expires"][:10])])
+            "許諾: {}（期限 {}、有効）".format(plan["reportId"], given["expires"][:10]), NO_FLOW["ja"]])
 
 
+# A background worker's completion notice as Claude Code submits it to the lead (the prefix observed in a session
+# transcript of Claude Code 2.1.330; the body here is made up).
+NOTICE = ("<task-notification>\n<task-id>a0b1c2d3e4f5a6b7c</task-id>\n<status>completed</status>\n"
+          "<summary>Agent finished</summary>\n</task-notification>")
 CONFIRM = [{"resource": "batch-1", "action": "run the nightly job on the cluster"}]
 PROMPT_TEXT = "List the jobs of the project.\nMake no change of any kind.\n```\nnot a fence of the report\n```\n"
 CONFIRM_LINE = {"ja": "確認: batch-1: run the nightly job on the cluster",
@@ -3375,6 +3394,102 @@ class ConfirmationTest(GrantFlowTest):
                     proc = self.call(runtime, fixture(runtime + "_open.jsonl"), tool,
                                      {key: GATE_CALL + " " + command.format("d" * 16)}, cwd=self.cwd)
                     self.assertEqual(proc.stdout, "")
+
+
+class NoticeTest(GrantFlowTest):
+    """A prompt that no human typed (a background worker's completion notice, which Claude submits as a queued
+    prompt) keeps the marker, the epoch and the asked questions; every prompt first records the answers the record
+    already holds; a free-text answer is `choice: null`, and its text never enters the ledger."""
+
+    def notice(self, runtime, transcript, session):
+        return self.prompt(runtime, transcript, NOTICE, session)
+
+    def marker_and_epoch(self, session):
+        """(marker, epoch) as files, written now with known contents."""
+        marker, epoch = (pathlib.Path(self.state) / (session + suffix) for suffix in (".pending", ".git-epoch"))
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text("1", encoding="utf-8")
+        epoch.write_text("12345", encoding="utf-8")
+        return marker, epoch
+
+    def test_a_notice_right_after_an_answer_is_no_human(self):
+        prepared, session = self.prepared("claude"), "claude-notice"
+        ident = prepared["reportId"]
+        self.assert_allowed(self.ask("claude", prepared, session))
+        marker, epoch = self.marker_and_epoch(session)
+        answered = self.flow("claude", prepared, "answered")
+        for text in (NOTICE, "\n" + NOTICE, "<system-reminder>\nx\n</system-reminder>"):
+            self.assert_allowed(self.prompt("claude", answered, text, session))
+            self.assertEqual((marker.read_text(), epoch.read_text()), ("1", "12345"))
+        self.assertIsNotNone(self.record(prepared))  # the answer was read first: its grant is recorded
+        self.assert_allowed(self.tool("claude", answered, session))
+        self.assertEqual([(row["kind"], row.get("id"), row.get("rule")) for row in events(self.root, session=session)],
+                         [("asked", ident, None), ("answered", ident, None), ("granted", ident, None),
+                          ("prompt", None, "notification"), ("prompt", None, "notification"),
+                          ("prompt", None, "notification")])
+        self.assertEqual(events(self.root, session=session, kind="answered")[0]["choice"], 0)
+        # A notice before the answer keeps the question armed, so the answer is still recorded when it comes.
+        later, session = self.prepared("claude"), "claude-early"
+        self.assert_allowed(self.ask("claude", later, session))
+        self.assert_allowed(self.notice("claude", self.flow("claude", later, "asked"), session))
+        self.assertTrue(self.armed(session))
+        self.assert_allowed(self.tool("claude", self.flow("claude", later, "answered"), session))
+        self.assertIsNotNone(self.record(later))
+        self.assertEqual([row["kind"] for row in events(self.root, session=session)], ["asked", "prompt", "answered", "granted"])
+
+    def test_on_codex_a_prompt_shaped_like_a_notice_is_typed(self):
+        prepared, session = self.prepared("codex"), "codex-notice"
+        self.assert_allowed(self.ask("codex", prepared, session))
+        marker, epoch = self.marker_and_epoch(session)
+        self.assert_allowed(self.notice("codex", self.flow("codex", prepared, "asked"), session))
+        self.assertFalse(marker.exists())
+        self.assertNotEqual(epoch.read_text(), "12345")
+        self.assertFalse(self.armed(session))
+        self.assertEqual([(row["kind"], row.get("rule")) for row in events(self.root, session=session)],
+                         [("asked", None), ("prompt", None)])
+
+    def test_a_typed_prompt_after_an_answer_in_the_record_still_writes_it(self):
+        for runtime in ("claude", "codex"):
+            with self.subTest(runtime=runtime):
+                prepared, session = self.prepared(runtime), runtime + "-typed-after"
+                ident = prepared["reportId"]
+                self.assert_allowed(self.ask(runtime, prepared, session))
+                marker, epoch = self.marker_and_epoch(session)
+                # The record holds the answer; no tool call or reply hook saw it before the human typed.
+                self.assert_allowed(self.prompt(runtime, self.flow(runtime, prepared, "answered"), "Next, please.", session))
+                self.assertFalse(marker.exists())
+                self.assertNotEqual(epoch.read_text(), "12345")  # a typed prompt still moves the epoch
+                self.assertFalse(self.armed(session))
+                self.assertIsNotNone(self.record(prepared))
+                self.assertEqual([(row["kind"], row.get("id"), row.get("choice")) for row in events(self.root, session=session)],
+                                 [("asked", ident, None), ("answered", ident, 0), ("granted", ident, None),
+                                  ("prompt", None, None)])
+
+    def test_a_free_text_answer_is_no_option_and_its_text_stays_out(self):
+        free = "Do something else entirely, please"
+        for runtime in ("claude", "codex"):
+            with self.subTest(runtime=runtime):
+                prepared, session = self.prepared(runtime), runtime + "-other"
+                self.assert_allowed(self.ask(runtime, prepared, session))
+                label = option_label(prepared, 0)
+                if runtime == "claude":
+                    def other(rows):
+                        rows[4] = render(rows[4], {label: free})
+
+                    answered = self.flow("claude", prepared, "answered", mutate=other)
+                    self.assert_allowed(self.tool("claude", answered, session))
+                else:
+                    text = codex_reply("report-question", prepared["question"], free)
+                    self.assert_allowed(self.prompt("codex", self.flow("codex", prepared, "asked"), text, session))
+                (row,) = events(self.root, session=session, kind="answered")
+                self.assertEqual((row["id"], row["choice"], "label" in row), (prepared["reportId"], None, False))
+                self.assertNotIn(free, (self.root / ".ddl" / "events.jsonl").read_text(encoding="utf-8"))
+                self.assertIsNone(self.record(prepared))
+                for option in (1, 0):  # an option's answer keeps its label
+                    chosen, name = self.prepared(runtime), "{}-option-{}".format(runtime, option)
+                    self.assert_allowed(self.approve(runtime, chosen, option, name))
+                    (row,) = events(self.root, session=name, kind="answered")
+                    self.assertEqual((row["choice"], row["label"]), (option, option_label(chosen, option)))
 
 
 class GrantStoreTest(GrantFlowTest):
@@ -4882,18 +4997,19 @@ class CountReportTest(ReportFlowTest):
 
     def test_claude_and_codex_transcripts_with_a_timeout_counted_apart(self):
         claude = ["--transcript", fixture("report_count_claude.jsonl"), "--runtime", "claude"]
-        self.assertEqual(self.lines(*claude), ["問い: 5 件（承認 2、見直し 1、時間切れ 1）",
+        self.assertEqual(self.lines(*claude), ["問い: 5 件（承認 2、見直し 1、時間切れ 1、未回答 1）",
                                                "待ち: 人間 12 分（答えまで中央値 4 分、最長 7 分）", "拒否: 未計測", "許諾: なし"])
         self.assertEqual(self.lines(*claude, "--language", "ja"), self.lines(*claude))
         self.assertEqual(self.lines("--language=en", "--runtime=claude", "--transcript=" + fixture("report_count_claude.jsonl")),
-                         ["Questions: 5 (approved 2, revised 1, timed out 1)",
+                         ["Questions: 5 (approved 2, revised 1, timed out 1, open 1)",
                           "Waiting: human 12 min (median to answer 4 min, longest 7 min)", "Denials: not measured",
                           "Grant: none"])
         codex = ["--transcript", fixture("report_count_codex.jsonl"), "--runtime", "codex"]
-        self.assertEqual(self.lines(*codex), ["問い: 3 件（承認 1、見直し 1、時間切れ 0）",
+        self.assertEqual(self.lines(*codex), ["問い: 3 件（承認 1、見直し 1、時間切れ 0、未回答 1）",
                                               "待ち: 人間 7 分（答えまで中央値 4 分、最長 5 分）", "拒否: 未計測", "許諾: なし"])
         self.assertEqual(self.lines(*codex, "--language", "en"), [
-            "Questions: 3 (approved 1, revised 1, timed out 0)", "Waiting: human 7 min (median to answer 4 min, longest 5 min)",
+            "Questions: 3 (approved 1, revised 1, timed out 0, open 1)",
+            "Waiting: human 7 min (median to answer 4 min, longest 5 min)",
             "Denials: not measured", "Grant: none"])
         self.assertFalse(os.path.exists(self.grants))  # reading creates no store
         # The grant line: the latest record among the reports the record asked about, whatever its project.
@@ -4915,7 +5031,7 @@ class CountReportTest(ReportFlowTest):
                 self.assertEqual(answered, ["問い: 1 件（承認 1、見直し 0、時間切れ 0）", "待ち: 未計測", "拒否: 未計測", "許諾: なし"])
                 # An unanswered question waited for nobody's answer yet.
                 asked = self.lines("--transcript", self.flow(runtime, prepared, "asked"), "--runtime", runtime, "--language", "en")
-                self.assertEqual(asked, ["Questions: 1 (approved 0, revised 0, timed out 0)",
+                self.assertEqual(asked, ["Questions: 1 (approved 0, revised 0, timed out 0, open 1)",
                                          "Waiting: human 0 min (median to answer not measured, longest not measured)",
                                          "Denials: not measured", "Grant: none"])
                 missing = os.path.join(self.tmp, "no-such-record.jsonl")
@@ -4965,13 +5081,13 @@ class CountReportTest(ReportFlowTest):
         # own plan, which was asked at 10:00 and answered at 10:04, before the Run started.
         self.assertEqual(self.lines("--run", "N-000000000001", cwd=cwd), [
             "問い: 3 件（承認 1、見直し 1、時間切れ 1）", "待ち: 人間 5 分（答えまで中央値 3 分、最長 4 分）", "拒否: 3 件",
-            "許諾: R-{}（期限 {}、有効）".format("a" * 16, day)])
+            "許諾: R-{}（期限 {}、有効）".format("a" * 16, day), NO_FLOW["ja"]])
         self.assertEqual(self.lines("--run=N-000000000002", "--language", "en", cwd=cwd), [
             "Questions: 1 (approved 1, revised 0, timed out 0)", "Waiting: human 7 min (median to answer 7 min, longest 7 min)",
-            "Denials: 0", "Grant: none"])
+            "Denials: 0", "Grant: none", NO_FLOW["en"]])
         os.unlink(root / ".ddl" / "events.jsonl")  # the Run is known, its events are not
         self.assertEqual(self.lines("--run", "N-000000000001", cwd=cwd), [
-            "問い: 未計測", "待ち: 未計測", "拒否: 未計測", "許諾: R-{}（期限 {}、有効）".format("a" * 16, day)])
+            "問い: 未計測", "待ち: 未計測", "拒否: 未計測", "許諾: R-{}（期限 {}、有効）".format("a" * 16, day), NO_FLOW["ja"]])
 
     def test_a_run_counts_the_question_of_its_own_plan(self):
         """A plan is asked, answered and granted before `run-start`: its lines carry the report's ID, not the
@@ -5003,18 +5119,19 @@ class CountReportTest(ReportFlowTest):
         # Both questions, each once; the waiting covers both: 6 minutes for the plan and 2 for the review.
         self.assertEqual(self.lines("--run", run, cwd=cwd), [
             "問い: 2 件（承認 2、見直し 0、時間切れ 0）", "待ち: 人間 8 分（答えまで中央値 4 分、最長 6 分）", "拒否: 1 件",
-            "許諾: {}（期限 {}、有効）".format(plan, day)])
+            "許諾: {}（期限 {}、有効）".format(plan, day), NO_FLOW["ja"]])
         # The Run after it counts neither that plan's question nor anything dated before its own start.
         self.assertEqual(self.lines("--run", following, cwd=cwd), [
             "問い: 0 件（承認 0、見直し 0、時間切れ 0）", "待ち: 人間 0 分（答えまで中央値 未計測、最長 未計測）", "拒否: 1 件",
-            "許諾: なし"])
+            "許諾: なし", NO_FLOW["ja"]])
 
     def test_a_run_reports_in_the_language_of_its_plan(self):
         root, cwd = self.project(design=False, git=True)
         english = ["Questions: 0 (approved 0, revised 0, timed out 0)",
-                   "Waiting: human 0 min (median to answer not measured, longest not measured)", "Denials: 0", "Grant: none"]
+                   "Waiting: human 0 min (median to answer not measured, longest not measured)", "Denials: 0", "Grant: none",
+                   NO_FLOW["en"]]
         japanese = ["問い: 0 件（承認 0、見直し 0、時間切れ 0）", "待ち: 人間 0 分（答えまで中央値 未計測、最長 未計測）", "拒否: 0 件",
-                    "許諾: なし"]
+                    "許諾: なし", NO_FLOW["ja"]]
 
         def started(language):
             prepared = self.prepare_report("claude", cwd=cwd, language=language)
@@ -5090,7 +5207,8 @@ class RunTest(GateTest):
         self.assertEqual(out["path"], str(path))
         run = json.loads(path.read_text(encoding="utf-8"))
         self.assertRegex(run.pop("startedAt"), ISO_UTC)
-        self.assertEqual(run, {"id": out["run"], "report": prepared["reportId"], "grant": None, "language": "ja", "items": [
+        self.assertEqual(run, {"id": out["run"], "report": prepared["reportId"], "grant": None, "language": "ja",
+                               "slots": {"think": 5, "run": 0}, "items": [
             {"id": "I1", "kind": "write", "files": ["tools/ddl_gate.py", "tools/test_ddl_gate.py"], "after": [], "status": "ready"},
             {"id": "I2", "kind": "verify", "files": [], "after": ["I1"], "status": "ready"},
             {"id": "I3", "kind": "explore", "files": [], "after": [], "status": "ready"},
@@ -5170,6 +5288,10 @@ class RunTest(GateTest):
                 self.assertEqual(json.loads(proc.stdout), {"run": out["run"], "item": "I2", "status": status})
                 run = json.loads(path.read_text(encoding="utf-8"))
                 self.assertEqual([item["status"] for item in run["items"]], ["ready", status, "ready", "ready"])
+                event = untimed(events(self.root, kind="item"))[-1]
+                self.assertEqual({key: event.get(key) for key in ("run", "item", "status", "itemKind")},
+                                 {"run": out["run"], "item": "I2", "status": status, "itemKind": "verify"})
+        self.assertEqual(len(events(self.root, kind="item")), len(ddl_run.ITEM_STATUSES))  # one event per change
         self.assertEqual(os.listdir(path.parent), ["run.json"])  # replaced in place, nothing left beside it
         before = path.read_bytes()
         for argv in ([], [out["run"]], [out["run"], "I2"], [out["run"], "I2", "done", "extra"], [out["run"], "I2", "passed"],
@@ -5200,7 +5322,8 @@ class RunTest(GateTest):
         proc = self.subcommand(["report", "--run", out["run"], "--language", "en"], cwd=self.cwd)
         self.assertEqual(proc.stdout.splitlines(), ["Questions: 0 (approved 0, revised 0, timed out 0)",
                                                     "Waiting: human 0 min (median to answer not measured, longest not measured)",
-                                                    "Denials: 4", "Grant: none"])
+                                                    "Denials: 4", "Grant: none",
+                                                    NO_FLOW["en"]])  # items marked done without a start
 
 
 class QuestionFormatTest(unittest.TestCase):

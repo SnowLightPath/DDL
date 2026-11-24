@@ -426,6 +426,10 @@ Rules:
 
 Scopes come from design.md; other work units come from the command's selected targets and findings. These units are never hardcoded, keeping the framework project-agnostic.
 
+In a Run, the work of one approved plan, the lead cuts the plan into items of 10 to 30 minutes, each with its kind (`write`, `verify`, `explore` or `compute`), owner files, dependencies and verification. `write`, `verify` and `explore` items count against thinking slots, and `compute` items, compute-only work such as tests and builds, against run slots; the slots (`think`, `run`) only feed the `Flow` line (§6) and are not enforced. The work never waits for a whole wave. On Claude, the lead starts the next ready item when a worker's completion notice arrives, the longest verification first. On Codex, the gate's `runner`, one per Run, refills by itself: the lead writes one prompt file per item at `.ddl/runs/<N-id>/items/<item>.md` and starts `runner <N-id>`. The runner starts the ready items in the Run's order as `codex exec` workers on this machine, spaced by `--stagger` (5 seconds by default) so that they do not start at once, at most `--max` at once (3 by default), each with a time limit (30 minutes by default). It skips an item without a prompt file and marks an item done when its worker exits cleanly with a final message. When a worker ends or reaches its time limit, the runner stops the worker's process groups; it never commits, pushes or asks the human. A worker's completion notice is never taken for the human's words.
+
+For the rest, the lead follows the rules of the Parallel work operation. It keeps writers few: no more than the ready items whose files do not overlap, two to four per lead, with spare slots given to verifying and exploring, since more writers do not shorten the serial parts (the human's confirmations, integration and long verifications) that set the pace. It gives a verifier only the diff and the acceptance conditions, never the writer's conversation, and lets executable checks decide whether an item passes, a model's judgment only advising. It adds a worker a minute up to `max`, halves the number on a rate-limit error, and keeps each worker's foreground commands within 2 minutes. The final report of a Run carries the `Flow` line (§6) and the number of questions still open.
+
 
 ## §4 Practical Examples
 
@@ -711,14 +715,15 @@ Metrics for understanding DDL effectiveness. Numbers are guidelines—adjust per
 | Design-Code Alignment | Are principles reflected in code? | Ratio of implemented principles to total in design.md | > 70% |
 | Document Freshness | Does design.md reflect current state? | Days since last update | < 1 week |
 | Binding Alignment | Does the code honor every Binding Decision? | Ratio of honored Binding Decisions | 100% |
-| Questions Asked | How often does the work stop to ask the human? | Number of questions in a session or a Run, split into approved, revised, and timed out: the `Questions` line of the gate's `report` | None set |
+| Questions Asked | How often does the work stop to ask the human? | Number of questions in a session or a Run, split into approved, revised, and timed out, with those still open: the `Questions` line of the gate's `report` | None set |
 | Time to an Answer | How long does a question wait for its answer? | Median and longest time from a question to its submitted answer: the `Waiting` line | None set |
 | Waiting on the Human | How long does the work wait for the human in total? | Minutes from each question to its submitted answer, added up: the `Waiting` line | None set |
 | Gate Denials | How often does the gate refuse a call? | Calls the gate itself denied in a session or a Run (the host's own denials are not counted): the `Denials` line | None set |
+| Flow | Do the slots stay in use while items are ready? | For a Run, per slot kind, the slots in use on average (the items' summed running time over the Run's wall time) against the capacity, as used/capacity (percent), and the items ready to start: the `Flow` line | None set |
 
 Note on "Session Continuity": No need for rigorous measurement. If "I can't remember what we were doing" or "I'm re-explaining everything to the LLM" happens frequently, there's a problem with design.md granularity or update frequency.
 
-Note on the last four rows: the `report` command of the gate (§2.5 Instructions and Mechanisms) prints them for a session or a Run (the work of one approved plan) as the `Questions`, `Waiting` and `Denials` lines, followed by the `Grant` line, which names the recorded grant, its expiry, and whether it is still valid. A count it cannot derive is printed as `not measured`, never as an estimate; when counted from a conversation record, denials are `not measured`. Because human attention is a budget (§3.5), these lines keep the cost of asking visible.
+Note on the last five rows: the `report` command of the gate (§2.5 Instructions and Mechanisms) prints them for a session or a Run (the work of one approved plan) as the `Questions`, `Waiting` and `Denials` lines, followed by the `Grant` line, which names the recorded grant, its expiry, and whether it is still valid. For a Run the `Flow` line follows, for example `Flow: thinking slots 4.1/5 (82%), run slots none; ready items 9`, and full use of the slots is not a goal (§3.6). When a question was asked and never answered, the `Questions` line also gives the number still open. A count it cannot derive is printed as `not measured`, never as an estimate; when counted from a conversation record, denials are `not measured`. Because human attention is a budget (§3.5), these lines keep the cost of asking visible.
 
 
 ## §7 Implementation Options

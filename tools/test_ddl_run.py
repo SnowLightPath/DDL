@@ -37,6 +37,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -226,7 +227,8 @@ class DirectInvocationTest(SplitTest):
         self.assertEqual(self.same(["report", "--run", started["run"]])[1].splitlines(),
                          ["Questions: 0 (approved 0, revised 0, timed out 0)",
                           "Waiting: human 0 min (median to answer not measured, longest not measured)",
-                          "Denials: 0", "Grant: none"])
+                          "Denials: 0", "Grant: none",
+                          "Flow: thinking slots not measured, run slots not measured; ready items 1"])
         for script, status in ((GATE, "running"), (RUN, "done")):
             proc = self.run_script(script, ["run-item", started["run"], "I1", status])
             self.assertEqual((proc.returncode, proc.stderr), (0, ""))
@@ -1229,7 +1231,7 @@ class ResourceTest(unittest.TestCase):
             with mock.patch.dict(os.environ, dict(self.env, **env), clear=True), \
                     mock.patch.object(ddl_run, "BREW_PATHS", self.brew_paths), \
                     mock.patch.object(ddl_run, "MEASURE_PAUSE", 0), mock.patch.object(ddl_run, "MINUTE", 1), \
-                    mock.patch.object(ddl_run, "GRACE", 1), \
+                    mock.patch.object(ddl_run, "GRACE", 1), mock.patch.object(ddl_run, "PROCESS_POLL", 0.2), \
                     contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
                 code = ddl_run.main(list(argv))
                 out.flush()
@@ -1836,6 +1838,465 @@ class ServiceTest(ResourceTest):
         self.assertEqual(self.events("service"), [])
 
 
+# --- the flow: slots, item events, the flow line, open questions, the runner ----------------------------------------
+
+# A fake `codex exec --json`: the prompt (stdin) says what to do. It logs its working directory and arguments, writes
+# the prompt beside its last message, prints the startup error items Codex prints, then ends as told: DELAY=<s>
+# first; MODE=fail (exit 1), MODE=noturn (exit 0 without turn.completed), MODE=empty (an empty last message),
+# MODE=hang (ignores TERM, with a child in a process group of its own that ignores TERM too), MODE=forkexit (ends
+# well, leaving a child behind in its group), MODE=setsid (ends well, leaving a child in a session of its own),
+# else done.
+FAKE_RUNNER_CODEX = r"""#!/bin/bash
+args="$*"
+out=''
+while [ $# -gt 0 ]; do case "$1" in -o) out="$2"; shift 2 ;; *) shift ;; esac; done
+prompt="$(cat)"
+printf '%s|%s\n' "$(pwd)" "$args" >> "$FAKE_RUNNER_LOG"
+printf '%s' "$prompt" > "$out.prompt"
+echo '{"type":"thread.started","thread_id":"t"}'
+echo '{"type":"error","message":"startup warning"}'
+echo '{"type":"item.completed","item":{"id":"e","type":"error","message":"a config warning"}}'
+echo '{"type":"turn.started"}'
+delay="$(printf '%s\n' "$prompt" | sed -n 's/^DELAY=//p')"
+if [ -n "$delay" ]; then sleep "$delay"; fi
+case "$prompt" in
+  *MODE=fail*) echo '{"type":"turn.failed","error":{"message":"no"}}'; exit 1 ;;
+  *MODE=noturn*) echo x > "$out"; exit 0 ;;
+  *MODE=empty*) : > "$out"; echo '{"type":"turn.completed"}'; exit 0 ;;
+  *MODE=forkexit*)
+    (exec sleep 40) &
+    echo $! > "$FAKE_RUNNER_PIDS"
+    echo ok > "$out"; echo '{"type":"turn.completed"}'; exit 0 ;;
+  *MODE=setsid*)
+    python3 -c 'import os, time; os.setsid(); time.sleep(40)' &
+    echo $! > "$FAKE_RUNNER_PIDS"
+    sleep 1
+    echo ok > "$out"; echo '{"type":"turn.completed"}'; exit 0 ;;
+  *MODE=hang*)
+    echo $$ > "$FAKE_RUNNER_PIDS"
+    set -m
+    (trap '' TERM; exec sleep 60) &
+    echo $! >> "$FAKE_RUNNER_PIDS"
+    set +m
+    trap '' TERM
+    sleep 60 ;;
+esac
+printf 'the answer\n' > "$out"
+echo '{"type":"item.completed","item":{"type":"agent_message","text":"done"}}'
+echo '{"type":"turn.completed","usage":{"input_tokens":1}}'
+"""
+
+
+class FlowTest(ResourceTest):
+    """run-start's slots, run-item's `item` event, the flow line and the open questions of `report`, and the runner
+    with a fake codex, in a disposable DDL project."""
+
+    def setUp(self):
+        super().setUp()
+        (self.tmp / "runner-bin").mkdir()
+        self.write(self.tmp / "runner-bin" / "codex", FAKE_RUNNER_CODEX)
+        self.env.update(PATH="{}:{}".format(self.tmp / "runner-bin", self.env["PATH"]),
+                        FAKE_RUNNER_LOG=str(self.tmp / "runner.log"), FAKE_RUNNER_PIDS=str(self.tmp / "worker.pids"))
+        self.root = str(self.project_key()[0])
+
+    def start_run(self, items, **extra):
+        data = dict({"report": self.prepared(), "items": items}, **extra)
+        previous = os.getcwd()
+        os.chdir(str(self.project))
+        try:
+            with mock.patch.dict(os.environ, self.env, clear=True):
+                started = ddl_run.run_start(data)
+        finally:
+            os.chdir(previous)
+        return started["run"]
+
+    def run_dir(self, run):
+        return pathlib.Path(self.root, ".ddl", "runs", run)
+
+    def run_record(self, run):
+        return json.loads((self.run_dir(run) / "run.json").read_text())
+
+    def statuses(self, run):
+        return {item["id"]: item["status"] for item in self.run_record(run)["items"]}
+
+    def prompt(self, run, item, text):
+        path = self.run_dir(run) / "items" / (item + ".md")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+
+    def runner(self, run, *argv, code=0, **env):
+        got, stdout, stderr = self.call("runner", run, *argv, **env)
+        self.assertEqual((got, stderr), (code, ""), stdout)
+        return [json.loads(line) for line in stdout.splitlines()]
+
+    def spawn(self, *argv, cwd=None):
+        return subprocess.Popen([sys.executable, "-I", RUN, *argv], cwd=str(cwd or self.project), env=self.env,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding="utf-8")
+
+    def logged(self):
+        path = self.tmp / "runner.log"
+        return path.read_text().splitlines() if path.exists() else []
+
+    def pids(self):
+        return [int(pid) for pid in (self.tmp / "worker.pids").read_text().split()]
+
+    def alive(self, pid):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        os.kill(pid, 9)
+        return True
+
+    def test_slots_are_stored_and_run_item_writes_an_item_event(self):
+        run = self.start_run([{"id": "I1", "kind": "write"}], slots={"run": 2})
+        self.assertEqual(self.run_record(run)["slots"], {"think": 5, "run": 2})
+        self.assertEqual(self.run_record(self.start_run([{"id": "I1", "kind": "verify"}]))["slots"], {"think": 5, "run": 0})
+        for slots in ({"think": -1}, {"other": 1}, {"run": True}, [1], {"think": 65}):
+            with self.subTest(slots=slots), self.assertRaises(ValueError):
+                self.start_run([], slots=slots)
+        code, stdout, stderr = self.call("run-item", run, "I1", "running")
+        self.assertEqual((code, json.loads(stdout), stderr), (0, {"run": run, "item": "I1", "status": "running"}, ""))
+        event = self.events("item")[-1]
+        self.assertEqual({key: event[key] for key in ("kind", "run", "item", "status", "itemKind")},
+                         {"kind": "item", "run": run, "item": "I1", "status": "running", "itemKind": "write"})
+        self.assertIn("ts", event)
+        self.assertEqual(sorted(os.listdir(str(self.run_dir(run)))), ["run.json"])  # the lock adds no file
+
+    def test_a_claim_takes_only_a_ready_item_once(self):
+        run = self.start_run([{"id": "I1", "kind": "write"}, {"id": "I2", "kind": "write", "after": ["I1"]}])
+        with mock.patch.dict(os.environ, self.env, clear=True):
+            self.assertIsNone(ddl_run.set_item(self.root, run, "I2", "running", claim=111))  # its dependency is not done
+            self.assertEqual(ddl_run.set_item(self.root, run, "I1", "running", claim=111)["status"], "running")
+            self.assertIsNone(ddl_run.set_item(self.root, run, "I1", "running", claim=222))  # taken
+        self.assertEqual(self.run_record(run)["items"][0]["runner"], 111)
+        self.assertEqual([event.get("runner") for event in self.events("item")], [111])
+
+    def test_the_flow_line_is_running_time_over_capacity_and_wall_time(self):
+        start = 1764000000.0
+        run = {"id": RUN_ID, "startedAt": ddl_gate_core.utc_stamp(start), "slots": {"think": 2, "run": 1},
+               "items": [{"id": "I1", "kind": "write", "after": [], "status": "done"},
+                         {"id": "I2", "kind": "compute", "after": [], "status": "done"},
+                         {"id": "I3", "kind": "verify", "after": [], "status": "done"},
+                         {"id": "I4", "kind": "write", "after": ["I1"], "status": "ready"},
+                         {"id": "I5", "kind": "write", "after": ["I4"], "status": "ready"}]}
+
+        def event(seconds, item, status, run_id=RUN_ID):
+            return {"ts": ddl_gate_core.utc_stamp(start + seconds), "kind": "item", "run": run_id, "item": item,
+                    "status": status}
+
+        events = [event(0, "I1", "running"), event(0, "I2", "running"), event(30, "I3", "running"),
+                  event(45, "I2", "done"), event(60, "I1", "done"), event(90, "I3", "done"),
+                  event(10, "I1", "running", "N-ffffffffffff"), {"kind": "asked", "ts": "x"}]
+        self.assertEqual(ddl_run.flow_line("en", run, events, now=start + 999),
+                         "Flow: thinking slots 1.3/2 (67%), run slots 0.5/1 (50%); ready items 1")
+        self.assertEqual(ddl_run.flow_line("ja", run, events, now=start + 999),
+                         "稼働: 考える枠 1.3/2（67%）、回す枠 0.5/1（50%）。用意できた項目 1")
+        running = events + [event(100, "I4", "running")]  # still running: counted up to now, the wall time too
+        now_running = dict(run, items=[dict(item, status="running") if item["id"] == "I4" else item
+                                       for item in run["items"]])
+        self.assertEqual(ddl_run.flow_line("en", now_running, running, now=start + 120),
+                         "Flow: thinking slots 1.2/2 (58%), run slots 0.4/1 (38%); ready items 0")
+        unslotted = {key: value for key, value in run.items() if key != "slots"}  # a Run from before slots
+        self.assertEqual(ddl_run.flow_line("en", unslotted, [], now=start + 5),
+                         "Flow: thinking slots not measured, run slots not measured; ready items 1")
+        self.assertEqual(ddl_run.flow_line("en", unslotted, events[:2] + events[3:5], now=start + 999),
+                         "Flow: thinking slots not measured, run slots 0.8/0 (-%); ready items 1")  # I3 done, never run
+        timed = dict(unslotted, items=[item for item in run["items"] if item["id"] != "I3"])
+        self.assertEqual(ddl_run.flow_line("en", timed, events[:2] + events[3:5], now=start + 999),
+                         "Flow: thinking slots 1.0/5 (20%), run slots 0.8/0 (-%); ready items 1")
+        self.assertEqual(ddl_run.flow_line("en", timed, events[:1] + events[4:5], now=start + 999),
+                         "Flow: thinking slots 1.0/5 (20%), run slots not measured; ready items 1")  # I2 done, never run
+        ended = events[:2] + [event(45, "I2", "done"), event(60, "I1", "done"), event(70, "I3", "done")]
+        self.assertEqual(ddl_run.flow_line("en", run, ended, now=start + 999),  # I3 ends without a start
+                         "Flow: thinking slots not measured, run slots 0.6/1 (64%); ready items 1")
+        for slots in ({"think": 999, "run": 1}, {"think": "2", "run": 1}, {"think": True, "run": 1}):
+            with self.subTest(slots=slots):
+                self.assertEqual(ddl_run.flow_line("en", dict(run, slots=slots), events, now=start + 999),
+                                 "Flow: thinking slots not measured, run slots 0.5/1 (50%); ready items 1")
+        self.assertEqual(ddl_run.flow_line("en", dict(run, slots=[2, 1]), events, now=start + 999),
+                         "Flow: thinking slots not measured, run slots not measured; ready items 1")
+
+    def test_report_run_ends_with_the_flow_line_and_counts_open_questions(self):
+        run = self.start_run([{"id": "I1", "kind": "write"}, {"id": "I2", "kind": "verify", "after": ["I1"]}])
+        code, stdout, _ = self.call("report", "--run", run, "--language", "en")
+        lines = stdout.splitlines()
+        self.assertEqual((code, len(lines), lines[0]), (0, 5, "Questions: 0 (approved 0, revised 0, timed out 0)"))
+        self.assertEqual(lines[4], "Flow: thinking slots not measured, run slots not measured; ready items 1")
+        self.call("run-item", run, "I1", "running")
+        self.call("run-item", run, "I1", "done")
+        lines = self.call("report", "--run", run)[1].splitlines()  # in the plan's language
+        self.assertRegex(lines[4], r"^Flow: thinking slots \d+\.\d/5 \(\d+%\), run slots none; ready items 1$")
+        lines = self.call("report", "--run", run, "--language", "ja")[1].splitlines()
+        self.assertRegex(lines[4], r"^稼働: 考える枠 \d+\.\d/5（\d+%）、回す枠 なし。用意できた項目 1$")
+        record = self.run_dir(run) / "run.json"
+        record.write_text(json.dumps(dict(self.run_record(run), slots={"think": 10 ** 6})))
+        code, stdout, _ = self.call("report", "--run", run, "--language", "en")  # the rest of the report prints
+        self.assertEqual((code, stdout.splitlines()[4]),
+                         (0, "Flow: thinking slots not measured, run slots none; ready items 1"))
+        questions = [{"id": "R-1", "outcome": "approved", "asked": 0, "answered": 60}, {"id": "R-2", "outcome": None,
+                                                                                         "asked": 10}]
+        self.assertEqual(ddl_run.count_lines("en", questions, 0, False)[0],
+                         "Questions: 2 (approved 1, revised 0, timed out 0, open 1)")
+        self.assertEqual(ddl_run.count_lines("ja", questions, 0, False)[:2],
+                         ["問い: 2 件（承認 1、見直し 0、時間切れ 0、未回答 1）",
+                          "待ち: 人間 1 分（答えまで中央値 1 分、最長 1 分）"])  # an open question waits in no bucket
+        twice = [{"id": "R-3", "outcome": None, "asked": 0}, {"id": "R-3", "outcome": "approved", "asked": 5,
+                                                              "answered": 9}]
+        self.assertEqual(ddl_run.count_lines("en", twice, 0, False)[0],
+                         "Questions: 2 (approved 1, revised 0, timed out 0)")  # asked twice, answered once
+        again = [{"id": "R-4", "outcome": "approved", "asked": 0, "answered": 3}, {"id": "R-4", "outcome": None,
+                                                                                   "asked": 5}]
+        self.assertEqual(ddl_run.count_lines("en", again, 0, False)[0],
+                         "Questions: 2 (approved 1, revised 0, timed out 0, open 1)")  # asked again after its answer
+        self.assertEqual(len(self.call("report", "--session", "S")[1].splitlines()), 4)  # a session has no flow line
+
+    def test_the_runner_refills_marks_done_and_failed_and_skips_an_item_without_a_prompt(self):
+        run = self.start_run([{"id": "I1", "kind": "write"}, {"id": "I2", "kind": "verify"},
+                              {"id": "I3", "kind": "explore"}, {"id": "I4", "kind": "write", "after": ["I1"]},
+                              {"id": "I5", "kind": "write"}, {"id": "I6", "kind": "write"}])
+        for item, text in (("I1", "DELAY=1.5\nWrite one file.\n"), ("I2", "DELAY=0.2\nMODE=fail\n"),
+                           ("I4", "Then the next.\n"), ("I5", "MODE=noturn\n"), ("I6", "MODE=empty\n")):
+            self.prompt(run, item, text)
+        lines = self.runner(run, "--max", "2", "--stagger", "0", code=1)
+        summary = lines.pop()
+        self.assertIsInstance(summary.pop("seconds"), float)
+        self.assertEqual(summary, {"run": run, "workTree": self.root, "done": ["I1", "I4"],
+                                   "failed": ["I2", "I5", "I6"], "skipped": ["I3"], "blocked": []})
+        order = [(line["item"], line.get("status") or "skipped") for line in lines]
+        self.assertEqual(order[:2], [("I1", "running"), ("I2", "running")])
+        # An item is skipped when a slot is free for it; no waves: I2's slot is refilled (I5, I6) while I1 still runs;
+        # I4 waits for I1, its dependency.
+        self.assertLess(order.index(("I3", "skipped")), order.index(("I5", "running")))
+        self.assertLess(order.index(("I5", "running")), order.index(("I1", "done")))
+        self.assertLess(order.index(("I1", "done")), order.index(("I4", "running")))
+        ends = {line["item"]: line for line in lines if line.get("status") in ("done", "failed")}
+        self.assertEqual((ends["I1"]["exit"], ends["I1"]["out"]), (0, ".ddl/runs/{}/out/I1.md".format(run)))
+        self.assertEqual({item: ends[item]["reason"] for item in ("I2", "I5", "I6")},
+                         {"I2": "codex ended with exit status 1", "I5": "the last event is not turn.completed",
+                          "I6": "the last message is empty"})
+        self.assertEqual(self.statuses(run), {"I1": "done", "I2": "failed", "I3": "ready", "I4": "done", "I5": "failed",
+                                              "I6": "failed"})
+        out = self.run_dir(run) / "out"
+        self.assertIn("{}|exec --sandbox workspace-write --skip-git-repo-check --json -o {} -".format(
+            self.root, out / "I1.md"), self.logged())  # in the work tree, the prompt on stdin
+        self.assertEqual((out / "I1.md.prompt").read_text(), "DELAY=1.5\nWrite one file.")  # $(cat) ends it
+        self.assertEqual((out / "I1.md").read_text(), "the answer\n")
+        events = [(event["item"], event["status"]) for event in self.events("item")]
+        self.assertEqual(events.count(("I1", "running")), 1)
+        claimed = [event for event in self.events("item") if event["item"] == "I1" and event["status"] == "running"][0]
+        self.assertEqual((claimed["workTree"], type(claimed["runner"])), (self.root, int))
+        done = [event for event in self.events("item") if event["item"] == "I1" and event["status"] == "done"][0]
+        self.assertEqual((done["exit"], done["out"], done["itemKind"]), (0, ".ddl/runs/{}/out/I1.md".format(run), "write"))
+        self.assertEqual(self.git("status", "--porcelain"), "")  # it never commits, and its files stay in the ledger
+
+    def test_a_failed_dependency_leaves_its_dependents_ready_and_listed_as_blocked(self):
+        run = self.start_run([{"id": "I1", "kind": "write"}, {"id": "I2", "kind": "write", "after": ["I1"]},
+                              {"id": "I3", "kind": "verify", "after": ["I2"]}, {"id": "I4", "kind": "write"}])
+        for item, text in (("I1", "MODE=fail\n"), ("I2", "x\n"), ("I3", "x\n"), ("I4", "x\n")):
+            self.prompt(run, item, text)
+        summary = self.runner(run, "--stagger", "0", code=1)[-1]
+        self.assertEqual((summary["failed"], summary["done"], summary["blocked"]), (["I1"], ["I4"], ["I2", "I3"]))
+        self.assertEqual(self.statuses(run), {"I1": "failed", "I2": "ready", "I3": "ready", "I4": "done"})
+
+    def test_item_files_never_collide_and_an_invalid_id_or_a_linked_directory_is_refused(self):
+        run = self.start_run([{"id": "A", "kind": "write"}, {"id": "A.last", "kind": "write"}])
+        self.prompt(run, "A", "Do A.\n")
+        self.prompt(run, "A.last", "Do the real A.last task.\n")
+        self.runner(run, "--max", "1", "--stagger", "0")
+        out = self.run_dir(run) / "out"
+        self.assertEqual(((out / "A.md.prompt").read_text(), (out / "A.last.md.prompt").read_text()),
+                         ("Do A.", "Do the real A.last task."))
+        # An id the Run never validated (a hand-edited record) runs nothing and writes nothing outside the Run.
+        run = self.start_run([{"id": "I1", "kind": "write"}])
+        record = self.run_dir(run) / "run.json"
+        record.write_text(json.dumps(dict(self.run_record(run), items=[
+            {"id": "../../../../outside", "kind": "write", "files": [], "after": [], "status": "ready"}])))
+        (pathlib.Path(self.root).parent / "outside.md").write_text("a prompt outside\n")
+        before = sorted(os.listdir(str(pathlib.Path(self.root).parent)))
+        lines = self.runner(run, "--stagger", "0")
+        self.assertEqual(lines[0]["skipped"], "not a valid item id")
+        self.assertEqual(sorted(os.listdir(str(pathlib.Path(self.root).parent))), before)
+        # A prompt that is a link to a file outside the Run's items/ is not read.
+        run = self.start_run([{"id": "I1", "kind": "write"}])
+        (self.run_dir(run) / "items").mkdir()
+        os.symlink(str(pathlib.Path(self.root).parent / "outside.md"), str(self.run_dir(run) / "items" / "I1.md"))
+        started = len(self.logged())
+        self.assertEqual(self.runner(run, "--stagger", "0")[0]["skipped"], "its prompt file lies outside the Run's items/")
+        self.assertEqual(len(self.logged()), started)  # no worker started
+        # A linked items/ or out/ directory: the runner refuses to start.
+        for name in ("items", "out"):
+            with self.subTest(directory=name):
+                run = self.start_run([{"id": "I1", "kind": "write"}])
+                elsewhere = self.tmp / ("elsewhere-" + name)
+                elsewhere.mkdir()
+                os.symlink(str(elsewhere), str(self.run_dir(run) / name))
+                code, stdout, stderr = self.call("runner", run)
+                self.assertEqual((code, stdout), (2, ""))
+                self.assertIn("is a symbolic link", stderr)
+                self.assertEqual(os.listdir(str(elsewhere)), [])
+
+    def test_a_second_runner_on_the_same_run_is_refused_and_no_item_starts_twice(self):
+        run = self.start_run([{"id": "I1", "kind": "write"}, {"id": "I2", "kind": "write"}])
+        self.prompt(run, "I1", "DELAY=2\n")
+        self.prompt(run, "I2", "DELAY=2\n")
+        first = self.spawn("runner", run, "--stagger", "0")
+        lock = self.run_dir(run) / "runner.lock"
+        for _ in range(100):
+            if len(self.logged()) == 2:
+                break
+            time.sleep(0.1)
+        second = self.spawn("runner", run, "--stagger", "0")
+        out, err = second.communicate(timeout=60)
+        self.assertEqual((second.returncode, out), (2, ""))
+        self.assertIn("another runner (process {}) holds Run {}".format(first.pid, run), err)
+        out, err = first.communicate(timeout=60)
+        self.assertEqual((first.returncode, err), (0, ""))
+        self.assertEqual(len(self.logged()), 2)  # each item started once
+        self.assertEqual(lock.read_text(), str(first.pid))
+        third = self.spawn("runner", run, "--stagger", "0")  # the lock ended with the first runner
+        out, err = third.communicate(timeout=60)
+        self.assertEqual((third.returncode, json.loads(out.splitlines()[-1])["done"]), (0, []))
+
+    def test_workers_run_in_the_callers_work_tree(self):
+        tree = self.tmp / "lane"
+        self.git("worktree", "add", "-q", str(tree), "-b", "lane")
+        run = self.start_run([{"id": "I1", "kind": "write"}])
+        self.prompt(run, "I1", "x\n")
+        lines = self.runner(run, "--stagger", "0", cwd=tree)
+        self.assertEqual((lines[0]["workTree"], lines[-1]["workTree"]), (str(tree.resolve()), str(tree.resolve())))
+        self.assertEqual(self.logged()[0].split("|")[0], str(tree.resolve()))
+        self.assertEqual(self.events("item")[0]["workTree"], str(tree.resolve()))
+
+    def test_a_worker_that_ends_leaves_nothing_behind_in_its_group(self):
+        run = self.start_run([{"id": "I1", "kind": "write"}])
+        self.prompt(run, "I1", "MODE=forkexit\n")
+        self.runner(run, "--stagger", "0")
+        self.assertEqual([self.alive(pid) for pid in self.pids()], [False])
+
+    def test_a_child_in_a_session_of_its_own_is_stopped_when_its_worker_ends(self):
+        run = self.start_run([{"id": "I1", "kind": "write"}])
+        self.prompt(run, "I1", "MODE=setsid\n")
+        self.assertEqual(self.runner(run, "--stagger", "0")[-1]["done"], ["I1"])
+        self.assertEqual([self.alive(pid) for pid in self.pids()], [False])
+
+    def test_an_item_a_dead_runner_claimed_is_failed_and_what_is_left_of_its_worker_stopped(self):
+        run = self.start_run([{"id": "I1", "kind": "write"}, {"id": "I2", "kind": "write"},
+                              {"id": "I3", "kind": "write"}, {"id": "I4", "kind": "write"}])
+        orphans = [subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], start_new_session=True)
+                   for _ in range(2)]
+        self.addCleanup(lambda: [proc.kill() or proc.wait() for proc in orphans])
+        table = ddl_run.process_table()
+        with mock.patch.dict(os.environ, self.env, clear=True):
+            for item, orphan, start in (("I1", orphans[0], table[orphans[0].pid][2]),
+                                        ("I2", orphans[1], "Mon Jan  1 00:00:00 2001")):  # another process's start
+                ddl_run.set_item(self.root, run, item, "running", claim=2 ** 22 + 1)
+                ddl_run.note_item(self.root, run, item, worker=orphan.pid, workerStart=start)
+            ddl_run.set_item(self.root, run, "I3", "running")  # set by the lead: no runner of its own
+        for item in ("I1", "I2", "I4"):
+            self.prompt(run, item, "x\n")
+        lines = self.runner(run, "--stagger", "0", code=1)
+        self.assertEqual([(line["item"], line["status"], line["reason"], line.get("stoppedGroups")) for line in lines[:2]],
+                         [("I1", "failed", "its runner died", [orphans[0].pid]), ("I2", "failed", "its runner died", None)])
+        self.assertEqual((orphans[0].wait(timeout=10) != 0, orphans[1].poll()), (True, None))  # only the provable one
+        self.assertEqual(self.statuses(run), {"I1": "failed", "I2": "failed", "I3": "running", "I4": "done"})
+        self.assertEqual(len(self.logged()), 1)  # I4 ran; I1 and I2 are never run again on their own
+
+    def test_a_link_anywhere_from_the_ledger_to_the_run_is_refused(self):
+        for part in (".ddl/runs", ".ddl"):
+            with self.subTest(part=part):
+                run = self.start_run([{"id": "I1", "kind": "write"}])
+                self.prompt(run, "I1", "x\n")
+                real = pathlib.Path(self.root, part)
+                moved = self.tmp / ("moved-" + part.replace("/", "-"))
+                real.rename(moved)
+                os.symlink(str(moved), str(real))
+                code, stdout, stderr = self.call("runner", run)
+                self.assertEqual((code, stdout), (2, ""))
+                self.assertIn("{} is a symbolic link".format(part), stderr)
+                self.assertEqual(self.logged(), [])
+                real.unlink()
+                moved.rename(real)
+
+    def test_starts_are_staggered(self):
+        run = self.start_run([{"id": name, "kind": "explore"} for name in ("I1", "I2", "I3")])
+        for name in ("I1", "I2", "I3"):
+            self.prompt(run, name, "DELAY=0.1\n")
+        lines = self.runner(run, "--max", "3", "--stagger", "1", "--model", "a-model")
+        starts = [line["seconds"] for line in lines if line.get("status") == "running"]
+        self.assertEqual(len(starts), 3)
+        self.assertTrue(all(later - earlier >= 0.9 for earlier, later in zip(starts, starts[1:])), starts)
+        self.assertIn("-m a-model -", self.logged()[0])
+
+    def test_a_timeout_kills_every_process_group_of_the_worker(self):
+        run = self.start_run([{"id": "I1", "kind": "verify"}])
+        self.prompt(run, "I1", "MODE=hang\n")
+        lines = self.runner(run, "--timeout", "2", code=1)
+        self.assertEqual((lines[1]["status"], lines[1]["reason"], lines[1].get("exit")),
+                         ("failed", "no end in 2 min; its process groups were stopped", None))
+        self.assertEqual(len(self.pids()), 2)
+        self.assertEqual([self.alive(pid) for pid in self.pids()], [False, False])  # the TERM-ignoring child too
+        self.assertEqual(self.statuses(run), {"I1": "failed"})
+
+    def test_a_signal_stops_the_workers_fails_their_items_and_prints_the_summary(self):
+        import signal
+        for sig in (signal.SIGTERM, signal.SIGHUP):
+            with self.subTest(signal=sig.name):
+                run = self.start_run([{"id": "I1", "kind": "verify"}])
+                self.prompt(run, "I1", "MODE=hang\n")
+                proc = self.spawn("runner", run)
+                for _ in range(100):
+                    if (self.tmp / "worker.pids").exists() and len(self.pids()) == 2:
+                        break
+                    time.sleep(0.1)
+                proc.send_signal(sig)
+                out, err = proc.communicate(timeout=60)
+                lines = [json.loads(line) for line in out.splitlines()]
+                self.assertEqual((proc.returncode, err), (1, ""))
+                reason = "the runner was stopped by " + sig.name
+                self.assertEqual((lines[-2]["status"], lines[-2]["reason"]), ("failed", reason))
+                self.assertEqual((lines[-1]["failed"], lines[-1]["stopped"]), (["I1"], reason))
+                self.assertEqual([self.alive(pid) for pid in self.pids()], [False, False])
+                self.assertEqual(self.statuses(run), {"I1": "failed"})
+                (self.tmp / "worker.pids").unlink()
+
+    def test_an_unreadable_record_stops_the_runner_and_its_items_end_in_the_ledger(self):
+        import threading
+        run = self.start_run([{"id": "I1", "kind": "write"}, {"id": "I2", "kind": "write"}])
+        self.prompt(run, "I1", "DELAY=3\n")
+        self.prompt(run, "I2", "DELAY=3\n")
+        record = self.run_dir(run) / "run.json"
+
+        def spoil():
+            for _ in range(100):
+                if len(self.logged()) == 2:
+                    break
+                time.sleep(0.1)
+            record.write_text("{not json")
+
+        spoiler = threading.Thread(target=spoil)
+        spoiler.start()
+        lines = self.runner(run, "--stagger", "0", code=1)
+        spoiler.join()
+        self.assertEqual((lines[-1]["stopped"], sorted(lines[-1]["failed"])),
+                         ("the Run's record cannot be read", ["I1", "I2"]))
+        ends = [event for event in self.events("item") if event["status"] == "failed"]
+        self.assertEqual(sorted(event["item"] for event in ends), ["I1", "I2"])
+        self.assertTrue(all(event["record"] == "the Run's record could not be written" for event in ends))
+
+    def test_usage_errors_and_no_codex(self):
+        run = self.start_run([{"id": "I1", "kind": "write"}])
+        for argv in ([], ["N-1"], [run, "--max", "0"], [run, "--stagger", "x"], [run, "--timeout", "1.5"],
+                     [run, "--model", "-bad"], [run, "--max", "2", "--max", "3"], ["N-ffffffffffff"]):
+            with self.subTest(argv=argv):
+                code, stdout, stderr = self.call("runner", *argv)
+                self.assertEqual((code, stdout), (2, ""))
+                self.assertTrue(stderr.startswith("DDL runner: "), stderr)
+        self.prompt(run, "I1", "x\n")
+        self.assertEqual(self.runner(run, code=3, PATH="/usr/bin:/bin")[0]["unavailable"], "codex is not on PATH")
+        self.assertEqual(self.statuses(run), {"I1": "ready"})
+
+
 class ResourceBoundaryTest(SplitTest):
     def test_the_resource_words_load_the_run_module_through_the_gate_and_no_hook_event_does(self):
         for word in ddl_run.RESOURCE_WORDS:
@@ -1845,7 +2306,7 @@ class ResourceBoundaryTest(SplitTest):
                 self.assertEqual((proc.returncode, proc.stdout), (2, ""))
                 self.assertIn("DDL {}: usage: ddl_gate.py {}".format(word, word), proc.stderr)
                 self.assertEqual(imported(proc.stderr).count("ddl_run"), 1)
-        self.assertEqual(ddl_run.RESOURCE_WORDS, ddl_gate_core.RUN_WORDS[4:])
+        self.assertEqual(ddl_run.RESOURCE_WORDS, ddl_gate_core.RUN_WORDS[4:8])
         self.assertLessEqual(set(ddl_run.RESOURCE_WORDS), set(launcher().SUBCOMMANDS))
 
 
