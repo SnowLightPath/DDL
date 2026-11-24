@@ -470,7 +470,7 @@ EVENT_TEXT_LIMIT = 200  # characters kept of a label, tool name or rule in one l
 ARMED_LIMIT = 8  # prepared questions one session keeps waiting for their answers; past it the oldest is let go
 # The subcommands tools/ddl_run.py holds (see run_module); tools/test_ddl_run.py pins them to its WORDS.
 RUN_WORDS = ("report", "run-start", "run-item", "snapshot", "resources", "measure", "remote", "service", "runner",
-             "restore")
+             "restore", "mail", "run-join")
 CACHE = "pycache"  # the launcher's bytecode cache under the state directory (ddl_gate.py reads the same name)
 ENTRY = None  # the launcher's path as it was run; ddl_gate.py sets it (gate_path_tokens)
 # A timestamp the gate reads: date, `T`, time to the minute or finer, then `Z` or `±HH:MM` (group 8, optional

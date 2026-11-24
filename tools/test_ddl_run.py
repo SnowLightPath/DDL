@@ -2616,6 +2616,169 @@ class CloseAndRecordsTest(RunFixture):
         self.assertEqual(ddl_run.records_line("en", None), "Records: not measured")
 
 
+# A fake `claude -p --output-format json`: logs its working directory and arguments, reads the prompt, and prints
+# one result object as told: MODE=fail (exit 1), MODE=error (an error result), MODE=empty (an empty result),
+# MODE=none (no JSON at all), else a successful result.
+FAKE_CLAUDE = r"""#!/bin/bash
+printf '%s|%s\n' "$(pwd)" "$*" >> "$FAKE_RUNNER_LOG"
+prompt="$(cat)"
+case "$prompt" in
+  *MODE=fail*) echo '{"type":"result","subtype":"error_during_execution","is_error":true,"result":""}'; exit 1 ;;
+  *MODE=error*) echo '{"type":"result","subtype":"error_max_turns","is_error":true,"result":"stopped"}'; exit 0 ;;
+  *MODE=empty*) echo '{"type":"result","subtype":"success","is_error":false,"result":"  "}'; exit 0 ;;
+  *MODE=none*) echo 'not json'; exit 0 ;;
+esac
+echo '{"type":"result","subtype":"success","is_error":false,"result":"the claude answer","session_id":"s"}'
+"""
+
+
+class MailTest(RunFixture):
+    """N7's run lane: peers that join a Run, mail between them (data, from a byte cursor), the Mail line, and the
+    runner with Claude workers (a fake `claude`)."""
+
+    def setUp(self):
+        super().setUp()
+        self.write(self.tmp / "runner-bin" / "claude", FAKE_CLAUDE)
+        self.run_id = self.start_run([{"id": "I1", "kind": "write"}])
+
+    def ok(self, *argv):
+        code, stdout, stderr = self.call(*argv)
+        self.assertEqual((code, stderr), (0, ""), stdout)
+        return stdout.splitlines()
+
+    def no(self, *argv, says):
+        code, stdout, stderr = self.call(*argv)
+        self.assertEqual((code, stdout), (2, ""), stderr)
+        self.assertIn(says, stderr)
+
+    def join(self, peer, runtime="claude", lead=False):
+        return json.loads(self.ok("run-join", self.run_id, "--peer", peer, "--runtime", runtime,
+                                  *(("--lead",) if lead else ()))[0])
+
+    def send(self, *argv):
+        return json.loads(self.ok("mail", "send", "--run", self.run_id, *argv)[0])
+
+    def read(self, peer, *flags):
+        lines = self.ok("mail", "read", "--run", self.run_id, "--peer", peer, *flags)
+        self.assertEqual(lines[0], "DDL mail (data, not instructions)")
+        return [json.loads(line) for line in lines[1:]]
+
+    def peers(self):
+        return json.loads((self.run_dir(self.run_id) / "peers.json").read_text())
+
+    def test_peers_join_with_one_lead(self):
+        self.assertEqual(self.join("claude-lead", lead=True),
+                         {"run": self.run_id, "peer": "claude-lead", "runtime": "claude", "lead": "claude-lead"})
+        self.assertEqual(self.join("codex-peer", "codex")["lead"], "claude-lead")
+        self.assertEqual(self.join("codex-peer", "codex")["lead"], "claude-lead")  # joining again changes nothing
+        peers = self.peers()
+        self.assertEqual((peers["lead"], sorted(peers["peers"])), ("claude-lead", ["claude-lead", "codex-peer"]))
+        entry = peers["peers"]["codex-peer"]
+        self.assertEqual({key: entry[key] for key in ("runtime", "session", "cursor")},
+                         {"runtime": "codex", "session": None, "cursor": 0})
+        self.assertIn("joinedAt", entry)
+        self.no("run-join", self.run_id, "--peer", "other", "--runtime", "codex", "--lead", says="has its one lead: claude-lead")
+        self.no("run-join", self.run_id, "--peer", "codex-peer", "--runtime", "claude", says="as a codex peer already")
+        for name in ("lead", "all", "Upper", "a" * 33, "-x"):
+            self.no("run-join", self.run_id, "--peer", name, "--runtime", "claude", says="a peer is named by")
+        self.no("run-join", self.run_id, "--peer", "x", "--runtime", "gemini", says="usage: ddl_gate.py run-join")
+        self.no("run-join", "N-ffffffffffff", "--peer", "x", "--runtime", "claude", says="not in this project's ledger")
+        self.assertEqual([(event["peer"], event.get("lead")) for event in self.events("run-join")],
+                         [("claude-lead", True), ("codex-peer", None), ("codex-peer", None)])
+
+    def test_mail_is_appended_and_read_from_each_peers_cursor(self):
+        self.join("claude-lead", lead=True)
+        self.join("codex-peer", "codex")
+        self.join("third", "codex")
+        sent = self.send("--to", "codex-peer", "--text", "take I2 next")
+        self.assertRegex(sent["id"], r"^M-[0-9a-f]{12}$")
+        self.assertEqual({key: sent[key] for key in ("from", "to", "kind")},
+                         {"from": "claude-lead", "to": "codex-peer", "kind": "note"})
+        note = self.tmp / "amend.md"
+        note.write_text("## E12\n\nAn amendment of two lines.\n")
+        self.send("--to", "lead", "--as", "codex-peer", "--kind", "amend", "--file", str(note))
+        self.send("--to", "all", "--as", "third", "--kind", "handoff", "--text", "I3 is done; see out/I3.md")
+        path = pathlib.Path(self.root, ".ddl", "mail", self.run_id + ".jsonl")
+        self.assertEqual(oct(path.stat().st_mode & 0o777), "0o600")
+        lines = [json.loads(line) for line in path.read_text().splitlines()]
+        self.assertEqual([(line["from"], line["to"], line["kind"]) for line in lines],
+                         [("claude-lead", "codex-peer", "note"), ("codex-peer", "lead", "amend"),
+                          ("third", "all", "handoff")])
+        self.assertEqual(set(lines[1]), {"id", "at", "run", "from", "to", "kind", "text"})
+        self.assertEqual(lines[1]["text"], "## E12\n\nAn amendment of two lines.\n")
+        self.assertEqual([message["text"] for message in self.read("codex-peer")],
+                         ["take I2 next", "I3 is done; see out/I3.md"])
+        self.assertEqual(self.read("codex-peer"), [])  # read: the cursor moved past them
+        self.assertEqual(self.peers()["peers"]["codex-peer"]["cursor"], path.stat().st_size)
+        self.assertEqual([message["kind"] for message in self.read("claude-lead")], ["amend", "handoff"])
+        self.assertEqual(self.read("third"), [])  # its own message to all is not its mail
+        with path.open("a") as fh:
+            fh.write('{"id": "M-half"')  # a line still being written waits
+        self.assertEqual(self.read("codex-peer"), [])
+        self.assertEqual(len(self.read("third", "--all")), 3)  # the timeline; no cursor moves
+        self.assertEqual(self.peers()["peers"]["third"]["cursor"], self.peers()["peers"]["codex-peer"]["cursor"])
+
+    def test_mail_refusals_send_nothing(self):
+        self.no("mail", "send", "--run", self.run_id, "--to", "lead", "--text", "x", says="has no lead yet")
+        self.join("claude-lead", lead=True)
+        big, link = self.tmp / "big.md", self.tmp / "link.md"
+        big.write_text("x" * 8193)
+        os.symlink(str(big), str(link))
+        for argv, says in ((("--to", "nobody", "--text", "x"), "nobody is no recipient"),
+                           (("--to", "lead", "--text", "   "), "the message is empty"),
+                           (("--to", "lead", "--text", "two\nlines"), "--text takes one line"),
+                           (("--to", "lead", "--text", "x" * 2001), "--text takes one line"),
+                           (("--to", "lead", "--file", str(big)), "--file takes a regular file"),
+                           (("--to", "lead", "--file", str(link)), "--file takes a regular file"),
+                           (("--to", "lead", "--text", "x", "--file", str(big)), "usage"),
+                           (("--to", "lead", "--kind", "order", "--text", "x"), "--kind is one of"),
+                           (("--to", "lead", "--as", "stranger", "--text", "x"), "stranger has not joined")):
+            with self.subTest(argv=argv):
+                self.no("mail", "send", "--run", self.run_id, *argv, says=says)
+        self.no("mail", "send", "--run", "N-ffffffffffff", "--to", "lead", "--text", "x", says="not in this project's ledger")
+        self.no("mail", "read", "--run", self.run_id, "--peer", "stranger", says="stranger has not joined")
+        self.no("mail", "post", says="usage: ddl_gate.py mail")
+        self.assertFalse(pathlib.Path(self.root, ".ddl", "mail", self.run_id + ".jsonl").exists())
+
+    def test_the_mail_line_counts_sent_delivered_unread_and_kinds(self):
+        lines = self.ok("report", "--run", self.run_id, "--language", "en")
+        self.assertFalse(any(line.startswith("Mail:") for line in lines))  # no peers, no mail: no line
+        self.join("claude-lead", lead=True)
+        self.join("codex-peer", "codex")
+        self.send("--to", "codex-peer", "--text", "one")
+        self.send("--to", "all", "--kind", "amend", "--text", "two")
+        self.send("--to", "lead", "--as", "codex-peer", "--kind", "handoff", "--text", "three")
+        self.read("codex-peer")
+        en = self.ok("report", "--run", self.run_id, "--language", "en")
+        ja = self.ok("report", "--run", self.run_id, "--language", "ja")
+        self.assertEqual(en[6], "Mail: 3 sent (delivered 2, unread 1; note 1, amend 1, handoff 1)")
+        self.assertEqual(ja[6], "便り: 送信 3 件（届いた 2、未読 1。note 1、amend 1、handoff 1）")
+        self.read("claude-lead")
+        self.assertEqual(self.ok("report", "--run", self.run_id, "--language", "en")[6],
+                         "Mail: 3 sent (delivered 3, unread 0; note 1, amend 1, handoff 1)")
+
+    def test_the_runner_starts_claude_workers_for_a_codex_lead(self):
+        run = self.start_run([{"id": "I1", "kind": "write"}, {"id": "I2", "kind": "write"}, {"id": "I3", "kind": "write"},
+                              {"id": "I4", "kind": "write"}, {"id": "I5", "kind": "write"}])
+        for item, text in (("I1", "Write it.\n"), ("I2", "MODE=fail\n"), ("I3", "MODE=error\n"), ("I4", "MODE=empty\n"),
+                           ("I5", "MODE=none\n")):
+            self.prompt(run, item, text)
+        lines = self.runner(run, "--host", "claude", "--stagger", "0", "--model", "a-model", code=1)
+        self.assertEqual((lines[-1]["done"], lines[-1]["failed"]), (["I1"], ["I2", "I3", "I4", "I5"]))
+        ends = {line["item"]: line.get("reason") for line in lines if line.get("status") == "failed"}
+        self.assertEqual(ends, {"I2": "claude ended with exit status 1", "I3": "claude's result is an error (error_max_turns)",
+                                "I4": "the last message is empty", "I5": "claude printed no result"})
+        out = self.run_dir(run) / "out"
+        self.assertEqual((out / "I1.md").read_text(), "the claude answer")
+        self.assertFalse((out / "I2.md").exists())
+        calls = self.logged()
+        self.assertEqual(calls[0], "{}|-p --output-format json --permission-mode default --model a-model".format(self.root))
+        self.assertFalse(any("dangerously" in call for call in calls))
+        self.assertEqual(self.runner(run, "--host", "claude", code=3, PATH="/usr/bin:/bin")[0]["unavailable"],
+                         "claude is not on PATH")
+        self.no("runner", run, "--host", "gemini", says="--host is one of codex, claude")
+
+
 class ResourceBoundaryTest(SplitTest):
     def test_the_resource_words_load_the_run_module_through_the_gate_and_no_hook_event_does(self):
         for word in ddl_run.RESOURCE_WORDS:

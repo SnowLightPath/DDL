@@ -24,6 +24,10 @@ Usage (from inside the project; the project and its `.ddl/` ledger come from the
   python3 tools/ddl_run.py service <name> --prompt-file FILE [--schema FILE] [--approve] [--confirmed <id>]
   python3 tools/ddl_run.py runner <N-id> [--max <n>] [--stagger <seconds>] [--timeout <minutes>] [--model <m>]
   python3 tools/ddl_run.py restore <refs/ddl/snapshots/…> --run <N-id> --items <id>…
+  python3 tools/ddl_run.py run-join <N-id> --peer <name> --runtime claude|codex [--lead]
+  python3 tools/ddl_run.py mail send --run <N-id> --to <lead|all|peer> [--kind note|amend|handoff]
+                                     (--text <one line> | --file <file>) [--as <peer>]
+  python3 tools/ddl_run.py mail read --run <N-id> --peer <peer> [--all]
 
 `run-start` writes `.ddl/runs/<N-id>/run.json` from {report, items, slots?} and prints {run, path}; `slots`
 {think, run} are the Run's thinking and run slots (default 5 and 0). An item's kind is write, verify, explore,
@@ -114,7 +118,10 @@ data: JSON with a schema, else text) | reason, authorization: true when a sign-i
 `service` event without the answer; exit 0 answered, 1 stopped or failed, 3 authorization or no codex, and
 nothing retries.
 
-`runner <N-id>` runs the Run's ready items as Codex workers on this machine while any is ready or running: for
+`runner <N-id>` runs the Run's ready items as Codex workers on this machine while any is ready or running (with
+`--host claude`, Claude workers for a Codex lead: `claude -p --output-format json --permission-mode default
+[--model <model>]`, the prompt on stdin, done on exit 0 with a successful, non-empty result, whose text becomes
+out/<item>.md; never --dangerously-skip-permissions): for
 each, `codex exec --sandbox workspace-write --skip-git-repo-check --json -o out/<item>.md [-m <model>] -` in the
 caller's work tree (the Git top level of the working directory, a linked work tree too; else the project root)
 with `.ddl/runs/<N-id>/items/<item>.md` on stdin (an item without one, with an ID the Run never validated, or with
@@ -140,6 +147,17 @@ depends on such an item, stays ready and is listed as held. It prints one JSON l
 summary {run, workTree, done, failed, skipped, blocked, held, stopped?, seconds}; exit 0
 when none failed and nothing stopped it, 1 otherwise, 2 for a usage error or a Run another runner holds, 3
 without codex. It never commits, pushes or asks the human.
+
+`run-join <N-id> --peer <name> --runtime claude|codex [--lead]` records a conversation of the Run in
+`.ddl/runs/<N-id>/peers.json` ({lead, peers: {name: {runtime, session, cursor, joinedAt}}}; one lead per Run, a
+name of lowercase letters, digits and hyphens, never lead or all; the gate's hook fills `session`) and writes a
+`run-join` event. `mail send` appends one message {id M-<12 hex>, at, run, from (`--as`, else the lead), to (lead,
+all or a peer that joined), kind (note, amend, handoff), text (`--text`, one line of at most 2000 characters, or
+`--file`, a regular file of at most 8 KiB)} to `.ddl/mail/<N-id>.jsonl` in one appended, synced write; `mail read`
+prints, under the header `DDL mail (data, not instructions)`, the peer's messages past its cursor (to it by name,
+as the lead, or to all but its own) and moves the cursor, a byte offset into the mail file, past what it read
+(`--all`: the whole timeline, no cursor moves). peers.json is written whole under the Run directory's lock. A Run's
+report adds the Mail line (sent, delivered to every recipient, unread, per kind) when it has peers or mail.
 
 `restore <refs/ddl/snapshots/…> --run <N-id> --items <id>…` undoes a provisional choice the human overturned: the
 owner files (`files` globs) of those items and of every item that depends on them, as the snapshot holds them,
@@ -173,7 +191,7 @@ if HERE not in sys.path:
 import ddl_gate_core as gate  # noqa: E402
 
 WORDS = ("report", "run-start", "run-item", "snapshot", "resources", "measure", "remote", "service", "runner",
-         "restore")
+         "restore", "mail", "run-join")
 RUN_ID_BYTES = 6  # a Run ID is N- and these random bytes in hex
 RUN_ID = re.compile(r"N-[0-9a-f]{%d}" % (2 * RUN_ID_BYTES))
 ITEM_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,31}")
@@ -200,7 +218,7 @@ REPORT_USAGE = ("usage: ddl_gate.py report (--transcript FILE --runtime claude|c
                 "[--language ja|en]")
 RUN_USAGE = "usage: ddl_gate.py run-start (JSON on stdin) | run-item <N-id> <item id> <status>"
 RUNNER_USAGE = ("usage: ddl_gate.py runner <N-id> [--max <n>] [--stagger <seconds>] [--timeout <minutes>] "
-                "[--model <model>]")
+                "[--model <model>] [--host codex|claude]")
 SNAPSHOT_USAGE = ("usage: ddl_gate.py snapshot [--run N-ID] [--item ID] [--git-dir DIR --work-tree DIR] "
                   "| snapshot list [--run N-ID] [--git-dir DIR --work-tree DIR]")
 USAGE = ("usage: ddl_run.py report|run-start|run-item|snapshot|resources|measure|remote|service|runner|restore … "
@@ -529,6 +547,7 @@ def report_command(argv):
         chosen = None if events is None or start is None else [event for event in events if of_run(event)]
         grants = [record for record in gate.grant_records(key) if record["id"] == plan]
         flow = [flow_line(language, run, events or [])]  # after the four count lines
+        flow += [line for line in (mail_line(language, root, run),) if line]
         flow += waiting_lines(language, [event for event in events or [] if of_run(event)]) or []
     if chosen is None:
         lines = count_lines(language, None, None, grants[-1] if grants else False)
@@ -1955,6 +1974,7 @@ def service_command(argv):
 RUNNER_FLAGS = {"--max": (3, 1, 16), "--stagger": (5, 0, 600), "--timeout": (30, 1, 1440)}  # default, least, most
 MODEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,63}")
 RUNNER_POLL = 0.2  # seconds between two looks at the workers and the Run
+RUNNER_HOSTS = ("codex", "claude")  # whose workers the runner starts: `codex exec`, or `claude -p` for a Codex lead
 PROCESS_POLL = 2  # seconds between two looks at the process table for the groups below each worker
 PROMPT_LIMIT = 1048576  # bytes of one item's prompt file
 # A worker's files in the Run's directory: the lead's prompt in items/, codex's last message, events and standard
@@ -1973,9 +1993,12 @@ def runner_options(argv):
     options, rest = {}, list(argv[1:])
     while rest:
         name, equal, value = rest.pop(0).partition("=")
-        if name not in tuple(RUNNER_FLAGS) + ("--model",) or name in options or not (equal or rest):
+        if name not in tuple(RUNNER_FLAGS) + ("--model", "--host") or name in options or not (equal or rest):
             raise ValueError(RUNNER_USAGE)
         options[name] = value if equal else rest.pop(0)
+    host = options.get("--host", "codex")
+    if host not in RUNNER_HOSTS:
+        raise ValueError("--host is one of {}.".format(", ".join(RUNNER_HOSTS)))
     numbers = []
     for name, (default, least, most) in RUNNER_FLAGS.items():
         value = options.get(name, str(default))
@@ -1990,7 +2013,7 @@ def runner_options(argv):
     model = options.get("--model")
     if model is not None and not MODEL.fullmatch(model):
         raise ValueError("--model takes a model name: letters, digits, dots, colons, slashes and hyphens.")
-    return (argv[0], *numbers, model)
+    return (argv[0], *numbers, model, host)
 
 
 def process_table():
@@ -2108,15 +2131,50 @@ def worker_outcome(code, events, out):
     return "done", None
 
 
+def claude_outcome(code, events, out):
+    """(status, reason) of a `claude -p --output-format json` worker that ended: done on exit 0 with a final result
+    object (`type` result, `subtype` success, not `is_error`) whose `result` text is not empty, which becomes the
+    last message (`out`); failed otherwise, with why."""
+    result = None
+    try:
+        with open(events, encoding="utf-8", errors="replace") as fh:
+            text = fh.read()
+    except OSError:
+        text = ""
+    for chunk in [text] + text.splitlines()[::-1]:  # one object, or the last of several lines
+        try:
+            value = json.loads(chunk)
+        except ValueError:
+            continue
+        if isinstance(value, dict) and value.get("type") == "result":
+            result = value
+            break
+    if code != 0:
+        return "failed", "claude ended with exit status {}".format(code)
+    if result is None:
+        return "failed", "claude printed no result"
+    if result.get("is_error") or result.get("subtype") != "success":
+        return "failed", "claude's result is an error ({})".format(result.get("subtype"))
+    if not isinstance(result.get("result"), str) or not result["result"].strip():
+        return "failed", "the last message is empty"
+    try:
+        fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(result["result"])
+    except OSError as exc:
+        return "failed", "the last message could not be written ({})".format(exc)
+    return "done", None
+
+
 class Worker:
     """One `codex exec` for one item, in its own process group (start_new_session), its prompt on stdin, in the
     work tree the runner was started in."""
 
-    def __init__(self, codex, tree, item_id, prompt, files, model):
+    def __init__(self, program, tree, item_id, prompt, files, model, host="codex"):
         import subprocess
         import threading
         import time
-        self.item, self.files = item_id, files
+        self.item, self.files, self.host = item_id, files, host
         handles = {}
         try:
             for name, path in files.items():  # an earlier try's file (or a planted link) never counts for this one
@@ -2126,9 +2184,15 @@ class Worker:
                     pass
                 if name != "out":
                     handles[name] = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-            argv = [codex, "exec", "--sandbox", "workspace-write", "--skip-git-repo-check", "--json", "-o", files["out"]]
-            argv += ["-m", model] if model else []
-            self.proc = subprocess.Popen(argv + ["-"], stdin=subprocess.PIPE, stdout=handles["events"],
+            if host == "claude":  # Claude's permission prompts stay on: never --dangerously-skip-permissions
+                argv = [program, "-p", "--output-format", "json", "--permission-mode", "default"]
+                argv += ["--model", model] if model else []
+            else:
+                argv = [program, "exec", "--sandbox", "workspace-write", "--skip-git-repo-check", "--json", "-o",
+                        files["out"]]
+                argv += ["-m", model] if model else []
+                argv += ["-"]
+            self.proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=handles["events"],
                                          stderr=handles["stderr"], cwd=tree, start_new_session=True)
         finally:
             for handle in handles.values():
@@ -2193,7 +2257,7 @@ def runner_command(argv):
     import shutil
     import signal
     import time
-    run_id, most, stagger, minutes, model = runner_options(argv)
+    run_id, most, stagger, minutes, model, host = runner_options(argv)
     root, _ = gate.cwd_ledger()
     if not root:
         raise ValueError("a Run belongs to a DDL project; start the runner from inside the project.")
@@ -2223,10 +2287,10 @@ def runner_command(argv):
         gate.emit(dict({key: value for key, value in fields.items() if value is not None},
                        seconds=round(time.monotonic() - began, 2)))
 
-    codex = shutil.which("codex")
+    codex = shutil.which(host)  # the program the workers run: codex, or claude
     if codex is None:
         os.close(lock)
-        say(run=run_id, unavailable="codex is not on PATH")
+        say(run=run_id, unavailable="{} is not on PATH".format(host))
         return EXIT_UNAVAILABLE
     workers, skipped, ended, kinds, last_start = {}, [], {"done": [], "failed": []}, {}, None
     records, was_held = {}, {}  # the prepared records read so far; the items a question held, and which
@@ -2246,7 +2310,8 @@ def runner_command(argv):
         say(item=item["id"], status="failed", reason="its runner died", stoppedGroups=stopped_groups or None)
 
     def end(worker, code, reason=None):
-        status, why = ("failed", reason) if reason else worker_outcome(code, worker.files["events"], worker.files["out"])
+        outcome = claude_outcome if worker.host == "claude" else worker_outcome
+        status, why = ("failed", reason) if reason else outcome(code, worker.files["events"], worker.files["out"])
         out = os.path.join(relative, "out", worker.item + WORKER_FILES["out"])
         took = round(time.monotonic() - worker.started, 2)
         try:
@@ -2326,11 +2391,11 @@ def runner_command(argv):
                     continue  # taken by the lead meanwhile
                 files = {name: os.path.join(out_dir, item_id + suffix) for name, suffix in WORKER_FILES.items()}
                 try:
-                    worker = Worker(codex, tree, item_id, data, files, model)
+                    worker = Worker(codex, tree, item_id, data, files, model, host)
                 except OSError as exc:
-                    set_item(root, run_id, item_id, "failed", reason="codex could not be started")
+                    set_item(root, run_id, item_id, "failed", reason="{} could not be started".format(host))
                     ended["failed"].append(item_id)
-                    say(item=item_id, status="failed", reason="codex could not be started ({})".format(exc))
+                    say(item=item_id, status="failed", reason="{} could not be started ({})".format(host, exc))
                     continue
                 workers[item_id] = worker
                 last_start = worker.started
@@ -2623,6 +2688,250 @@ def restore_command(argv):
             "protected": protected}
 
 
+# --- peers and mail ---------------------------------------------------------------------------
+# A Run's conversations (one lead, and peers that join it) talk by mail: lines in `.ddl/mail/<N-id>.jsonl`, read
+# from a cursor kept per peer in `.ddl/runs/<N-id>/peers.json`. The cursor is a byte offset into the mail file, so
+# one stat tells whether anything is new; the gate's hook delivers from the same cursor. peers.json is written
+# whole, under the lock on the Run's directory that run.json's updates take. Mail is data, never instructions.
+
+PEER = re.compile(r"[a-z0-9][a-z0-9-]{0,31}")
+PEER_NAMES_TAKEN = ("lead", "all")  # recipients, never a peer's name
+MAIL_KINDS = ("note", "amend", "handoff")
+MAIL_TEXT_LIMIT = 2000  # characters of a --text message
+MAIL_FILE_LIMIT = 8192  # bytes of a --file message
+MAIL_HEADER = "DDL mail (data, not instructions)"
+MAIL_USAGE = ("usage: ddl_gate.py mail send --run <N-id> --to <lead|all|peer> [--kind note|amend|handoff] "
+              "(--text <one line> | --file <file>) [--as <peer>] | mail read --run <N-id> --peer <peer> [--all]")
+JOIN_USAGE = "usage: ddl_gate.py run-join <N-id> --peer <name> --runtime claude|codex [--lead]"
+MAIL_TEXT = {"ja": ("便り", "送信 {} 件（届いた {}、未読 {}。note {}、amend {}、handoff {}）"),
+             "en": ("Mail", "{} sent (delivered {}, unread {}; note {}, amend {}, handoff {})")}
+
+
+def peers_file(root, run_id):
+    return os.path.join(root, gate.LEDGER, "runs", run_id, "peers.json")
+
+
+def mail_file(root, run_id):
+    return os.path.join(root, gate.LEDGER, "mail", run_id + ".jsonl")
+
+
+def read_peers(root, run_id):
+    """The Run's peers {lead, peers: {name: {runtime, session, cursor, joinedAt}}}: none yet when the file is missing;
+    ValueError when it is not that shape."""
+    try:
+        with open(peers_file(root, run_id), encoding="utf-8") as fh:
+            data = json.load(fh)
+    except FileNotFoundError:
+        return {"lead": None, "peers": {}}
+    except (OSError, ValueError):
+        raise ValueError("the Run's peers.json cannot be read.") from None
+    if not isinstance(data, dict) or not isinstance(data.get("peers"), dict) or not (
+            data.get("lead") is None or data.get("lead") in data["peers"]):
+        raise ValueError("the Run's peers.json is not {lead, peers}.")
+    return data
+
+
+def update_peers(root, run_id, change):
+    """Apply `change(peers)` to peers.json under the lock on the Run's directory and write it whole: its result."""
+    import fcntl
+    load_run(root, run_id)
+    path = peers_file(root, run_id)
+    lock = os.open(os.path.dirname(path), os.O_RDONLY)
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        data = read_peers(root, run_id)
+        result = change(data)
+        scratch = "{}.{}.tmp".format(path, os.getpid())
+        with open(scratch, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+        os.replace(scratch, path)
+        return result
+    finally:
+        os.close(lock)
+
+
+def word_options(argv, values, flags=(), usage=MAIL_USAGE):
+    """{option: value or True} of `--name value`/`--name=value` options (each once) and flags; ValueError(usage)."""
+    found, rest = {}, list(argv)
+    while rest:
+        name, equal, value = rest.pop(0).partition("=")
+        if name in flags and not equal and name not in found:
+            found[name] = True
+        elif name in values and name not in found and (equal or rest):
+            found[name] = value if equal else rest.pop(0)
+        else:
+            raise ValueError(usage)
+    return found
+
+
+def join_command(argv):
+    """`run-join <N-id> --peer <name> --runtime claude|codex [--lead]`: record a peer of the Run (and with --lead its
+    one lead); joining again with the same runtime changes nothing. Prints {run, peer, runtime, lead}."""
+    if not argv or not RUN_ID.fullmatch(argv[0]):
+        raise ValueError(JOIN_USAGE)
+    run_id, options = argv[0], word_options(argv[1:], ("--peer", "--runtime"), ("--lead",), JOIN_USAGE)
+    name, runtime = options.get("--peer"), options.get("--runtime")
+    if name is None or runtime not in gate.RUNTIMES:
+        raise ValueError(JOIN_USAGE)
+    if not PEER.fullmatch(name) or name in PEER_NAMES_TAKEN:
+        raise ValueError("a peer is named by 1 to 32 lowercase letters, digits and hyphens, and not lead or all.")
+    root, _ = gate.cwd_ledger()
+    if not root:
+        raise ValueError("a Run belongs to a DDL project; join it from inside the project.")
+
+    def change(data):
+        known = data["peers"].get(name)
+        if known is not None and known.get("runtime") != runtime:
+            raise ValueError("{} joined Run {} as a {} peer already.".format(name, run_id, known.get("runtime")))
+        if options.get("--lead") and data["lead"] not in (None, name):
+            raise ValueError("Run {} has its one lead: {}.".format(run_id, data["lead"]))
+        if known is None:
+            data["peers"][name] = {"runtime": runtime, "session": None, "cursor": 0, "joinedAt": gate.utc_stamp()}
+        if options.get("--lead"):
+            data["lead"] = name
+        return data["lead"]
+
+    lead = update_peers(root, run_id, change)
+    gate.ledger_event(root, runtime, None, "run-join", run=run_id, peer=name, lead=name == lead or None)
+    return {"run": run_id, "peer": name, "runtime": runtime, "lead": lead}
+
+
+def mail_messages(root, run_id, start=0):
+    """[(end offset, message)] of the Run's mail from byte `start`: every whole line that is a message; a line still
+    being written (no newline yet) waits for the next read."""
+    try:
+        with open(mail_file(root, run_id), "rb") as fh:
+            fh.seek(start)
+            data = fh.read()
+    except FileNotFoundError:
+        return []
+    found, offset = [], start
+    for raw in data.split(b"\n")[:-1]:
+        offset += len(raw) + 1
+        try:
+            message = json.loads(raw.decode("utf-8"))
+        except ValueError:
+            continue
+        if isinstance(message, dict) and isinstance(message.get("id"), str):
+            found.append((offset, message))
+    return found
+
+
+def addressed(message, peer, lead):
+    """True for a message to `peer`: by name, as the lead, or to all (but its own)."""
+    to = message.get("to")
+    return to == peer or (to == "lead" and peer == lead) or (to == "all" and message.get("from") != peer)
+
+
+def mail_text(options):
+    """The message of `--text` (one line, 1 to MAIL_TEXT_LIMIT characters) or `--file` (a regular file of at most
+    MAIL_FILE_LIMIT bytes of UTF-8); ValueError otherwise."""
+    import stat
+    if ("--text" in options) == ("--file" in options):
+        raise ValueError(MAIL_USAGE)
+    if "--text" in options:
+        text = options["--text"]
+        if "\n" in text or "\r" in text or len(text) > MAIL_TEXT_LIMIT:
+            raise ValueError("--text takes one line of at most {} characters; a longer text goes in --file.".format(
+                MAIL_TEXT_LIMIT))
+    else:
+        try:
+            info = os.lstat(options["--file"])
+            if not stat.S_ISREG(info.st_mode) or info.st_size > MAIL_FILE_LIMIT:
+                raise ValueError
+            with open(options["--file"], "rb") as fh:
+                text = fh.read(MAIL_FILE_LIMIT + 1).decode("utf-8")
+        except (OSError, ValueError, UnicodeDecodeError):
+            raise ValueError("--file takes a regular file of at most {} bytes of UTF-8 text.".format(
+                MAIL_FILE_LIMIT)) from None
+    if not text.strip():
+        raise ValueError("the message is empty.")
+    return text
+
+
+def mail_command(argv):
+    """`mail send …` (prints {id, run, from, to, kind}) or `mail read …` (prints the header, then one JSON line per
+    message): lines, exit 0. See the module's docstring."""
+    if not argv or argv[0] not in ("send", "read"):
+        raise ValueError(MAIL_USAGE)
+    if argv[0] == "send":
+        options = word_options(argv[1:], ("--run", "--to", "--kind", "--text", "--file", "--as"))
+    else:
+        options = word_options(argv[1:], ("--run", "--peer"), ("--all",))
+    run_id = options.get("--run")
+    if run_id is None or not RUN_ID.fullmatch(run_id):
+        raise ValueError(MAIL_USAGE)
+    root, _ = gate.cwd_ledger()
+    if not root:
+        raise ValueError("a Run belongs to a DDL project; send and read its mail from inside the project.")
+    load_run(root, run_id)
+    peers = read_peers(root, run_id)
+    if argv[0] == "read":
+        peer = options.get("--peer")
+        if peer is None:
+            raise ValueError(MAIL_USAGE)
+        if peer not in peers["peers"]:
+            raise ValueError("{} has not joined Run {} (run-join).".format(peer, run_id))
+        if options.get("--all"):  # the whole timeline; nobody's cursor moves
+            return [MAIL_HEADER] + [json.dumps(message, ensure_ascii=False) for _, message in mail_messages(root, run_id)]
+
+        def take(data):
+            entry = data["peers"][peer]
+            cursor = entry.get("cursor") if type(entry.get("cursor")) is int and entry.get("cursor") >= 0 else 0
+            found = mail_messages(root, run_id, cursor)
+            entry["cursor"] = max(cursor, found[-1][0]) if found else cursor
+            return [message for _, message in found if addressed(message, peer, data["lead"])]
+
+        return [MAIL_HEADER] + [json.dumps(message, ensure_ascii=False) for message in update_peers(root, run_id, take)]
+    sender = options.get("--as") or peers["lead"]
+    if sender is None:
+        raise ValueError("Run {} has no lead yet (run-join --lead), so give the sender with --as.".format(run_id))
+    if sender not in peers["peers"]:
+        raise ValueError("{} has not joined Run {} (run-join).".format(sender, run_id))
+    to, kind = options.get("--to"), options.get("--kind", "note")
+    if to is None:
+        raise ValueError(MAIL_USAGE)
+    if to not in ("lead", "all") and to not in peers["peers"] or to == "lead" and peers["lead"] is None:
+        raise ValueError("{} is no recipient in Run {}: lead, all, or a peer that joined it.".format(to, run_id))
+    if kind not in MAIL_KINDS:
+        raise ValueError("--kind is one of {}.".format(", ".join(MAIL_KINDS)))
+    message = {"id": "M-" + secrets.token_hex(6), "at": gate.utc_stamp(), "run": run_id, "from": sender, "to": to,
+               "kind": kind, "text": mail_text(options)}
+    directory = os.path.join(gate.ledger_directory(root), "mail")
+    if os.path.islink(directory):
+        raise ValueError(".ddl/mail is a symbolic link; mail stays in the project's own ledger.")
+    try:
+        os.mkdir(directory, 0o700)
+    except FileExistsError:
+        pass
+    fd = os.open(mail_file(root, run_id), os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        os.write(fd, (json.dumps(message, ensure_ascii=False) + "\n").encode("utf-8"))  # one write, appended whole
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    return [json.dumps({key: message[key] for key in ("id", "run", "from", "to", "kind")})]
+
+
+def mail_line(language, root, run):
+    """The Run's Mail line: messages sent, delivered (every recipient's cursor past it), unread, and per kind; None
+    when the Run has neither peers nor mail."""
+    label, line = MAIL_TEXT[language]
+    try:
+        peers = read_peers(root, run["id"])
+    except ValueError:
+        return label + ": " + gate.COUNT_TEXT[language]["unmeasured"]
+    messages = mail_messages(root, run["id"])
+    if not messages and not peers["peers"]:
+        return None
+    cursors = {name: entry.get("cursor") if type(entry.get("cursor")) is int else 0
+               for name, entry in peers["peers"].items()}
+    delivered = sum(all(cursors[name] >= end for name in cursors if addressed(message, name, peers["lead"]))
+                    for end, message in messages)
+    kinds = [sum(message.get("kind") == kind for _, message in messages) for kind in MAIL_KINDS]
+    return label + ": " + line.format(len(messages), delivered, len(messages) - delivered, *kinds)
+
+
 def main(argv) -> int:
     """One of WORDS and its arguments, as `ddl_gate.py` takes them; anything else is a usage error (exit 2)."""
     if argv and argv[0] == "report":
@@ -2661,6 +2970,15 @@ def main(argv) -> int:
             return 0
         except Exception as exc:
             print("DDL snapshot: " + str(exc), file=sys.stderr)
+            return 2
+    if argv and argv[0] in ("mail", "run-join"):
+        try:
+            lines = mail_command(argv[1:]) if argv[0] == "mail" else [json.dumps(join_command(argv[1:]))]
+            sys.stdout.buffer.write("".join(line + "\n" for line in lines).encode("utf-8"))
+            sys.stdout.flush()
+            return 0
+        except Exception as exc:  # a usage error or a refusal: nothing was written
+            print("DDL {}: {}".format("mail" if argv[0] == "mail" else "run", exc), file=sys.stderr)
             return 2
     if argv and argv[0] == "restore":
         try:
