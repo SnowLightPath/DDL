@@ -114,7 +114,7 @@ Enter this phase only when the approved plan includes the Close stage (approved 
 2. Docs: audit and fix the documentation the change set touches
 3. Resonate: align every changed document with its language counterpart, including dated Changelog rows where the project keeps them
 4. Validate: run all validation commands in `design.md` and the mechanical gates in Acceptance Gates again; D7 stops as in Phase 3
-5. Read the Git review operation and its implementation for the current host, stage the whole change set (implementation, design.md and its history, documents), then prepare the Git review for the commit and for the push when the plan names `remote`; a commit precedes its push in the review
+5. Read the Git review operation and its implementation for the current host, stage the whole change set (implementation, design.md and its history, documents), then, when the grant names `commit`, record the commit inside the grant (Run) and prepare the Git review for the push alone, which lists every commit it sends, when the plan names `remote`, or else ask nothing and enter Phase 7; without `commit` in the grant, prepare it for the commit and for the push when the plan names `remote`; a commit precedes its push in the review
 
 Apply steps 1–3 with a SWARM shaped like Phase 2's, team `realize-close`, when 2+ scopes change; the lead performs the comparison, the validation, and the review preparation.
 
@@ -123,9 +123,9 @@ Apply steps 1–3 with a SWARM shaped like Phase 2's, team `realize-close`, when
 +++STOP: always
 
 +++Report:
-Decision: record the closed work as the prepared Git review, revise it, or hold.
+Decision: record (or, after a commit inside the grant, send) the closed work as the prepared Git review, revise it, or hold.
 Recommendation: the purpose of the change set and why its implementation, design.md, and documentation changes belong in one commit; keep material detections visible.
-Consequence: commit exactly the staged set with the exact message; the push, when the plan named `remote`, is part of the same selected action. A hold or revision records nothing and leaves the Close edits in the working tree for revision.
+Consequence: commit exactly the staged set with the exact message (after a commit inside the grant, send exactly the listed commits); the push, when the plan named `remote`, is part of the same selected action. A hold or revision records or sends nothing more and leaves the Close edits for revision (a commit made inside the grant stays local).
 Review detail: the prepared review's report file with the diff, named with its ID in the question; the complete file list and scopes; the exact message; a summary of the design.md changes (Experience added, stages and gates retired, Validation updated) and of the documentation changes; every material detection.
 Choices: use the prepared native question and its exact action labels for one whole-set approval (Git review). Approval of a different file set, message, or push target is not approval of this proposal.
 
@@ -144,7 +144,7 @@ Choices: use the prepared native question and its exact action labels for one wh
 +++STOP: on D8
 +++STOP: on D9
 
-4. Create the reviewed commit with the approved verbatim message in the supported ordinary form (Git review Operands), then push only the reviewed operation when the plan named `remote`
+4. Create the reviewed commit with the approved verbatim message in the supported ordinary form (Git review Operands), unless Phase 4 recorded it inside the grant, then push only the reviewed operation when the plan named `remote`
 5. Report the commit hash and the push result as progress
 
 ### Phase 7: REPORT
@@ -152,7 +152,7 @@ Choices: use the prepared native question and its exact action labels for one wh
 +++STOP: always
 
 +++Report:
-Outcome: the commit (and push) that closed the work, what now works, and either that nothing remains or what was left with its reason (for example a Binding Drift awaiting the user's choice).
+Outcome: the commit (and push) that closed the work (after commits inside the grant with no push: each commit's message and file count, and the commit to undo them to), what now works, and either that nothing remains or what was left with its reason (for example a Binding Drift awaiting the user's choice).
 Recommendation: none after a Close; name a next command only when work this command cannot do itself remains, with the reason (Approval).
 Consequence: this report asks for no approval; a named leftover starts its own workflow only when the user chooses it.
 Review detail: implemented files/scopes and key decisions; Binding Decisions honored or explicitly changed; Direction stages and deviations; mechanical results and actual human gates passed; advance-approved gates and what each would have shown; the Close changes recorded; detections and their resolution; the Run's count and flow lines (Run Formats). Distinguish native checks from simulated checks and unverified behavior.

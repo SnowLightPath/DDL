@@ -47,6 +47,8 @@ REPORT_TEXT = "+++DDL_REPORT\n\n## Realize report\n\nAwaiting approval."
 # The flow line that ends `report --run` for a Run whose slots cannot be measured and that has no ready item.
 NO_FLOW = {"ja": "稼働: 考える枠 未計測、回す枠 未計測。用意できた項目 0",
            "en": "Flow: thinking slots not measured, run slots not measured; ready items 0"}
+# The Records line that follows the Questions line of a Run with no commit inside the grant and no push review.
+NO_RECORDS = {"ja": "記録: コミット 0 件（許諾の内 0）、送信の確認 0 回", "en": "Records: commits 0 (inside the grant 0), push reviews 0"}
 SEGMENT_SUFFIX = " Shell segment is not read-only: `{}`."
 MARKER_LINE = "→ DDL-PROTOCOL"
 
@@ -1271,7 +1273,8 @@ class GitReviewTest(GateTest):
         if runtime == "codex":
             return self.assert_allowed(proc)
         out = json.loads(proc.stdout)["hookSpecificOutput"]
-        self.assertEqual((out["hookEventName"], out["permissionDecision"]), ("PreToolUse", "allow"))
+        self.assertEqual((out["hookEventName"], out["permissionDecision"]), ("PreToolUse", "allow"),
+                         out.get("permissionDecisionReason"))
         if review:
             self.assertEqual(out["permissionDecisionReason"], "DDL: matches Git review " + review["reviewId"])
         else:
@@ -1481,7 +1484,9 @@ class GitReviewTest(GateTest):
         self.assertEqual(review["nativeRequest"]["questions"][0]["header"], "Git")
         both = self.prepare("codex", [self.command, "git push origin main"])
         lines = both["question"]["title"].split("\n")
-        self.assertEqual(lines[0], "決めること: コミット「Record reviewed contents」（1 ファイル）を main に記録し、origin/main に送るか")
+        # The base commit was never pushed: the push sends it as well, and the question says so.
+        self.assertEqual(lines[0], "決めること: コミット「Record reviewed contents」（1 ファイル）を main に記録し、先の 1 件と合わせて "
+                                   "origin/main に送るか")
         self.assertEqual(lines[2], "影響: origin/main が新しいコミットに進む。取り消すには revert が要る")
         self.assertEqual(both["nativeRequest"], {"questions": [both["question"]]})
         push = self.prepare("codex", ["git push origin main"])
@@ -1869,9 +1874,22 @@ class GitReviewTest(GateTest):
         self.assert_allowed(self.check("codex", "git push origin first"))
 
     def test_remote_credentials_are_not_written_in_review_detail(self):
-        self.git("remote", "set-url", "origin", "https://fixture:PRIVATE_CREDENTIAL@example.invalid/repo.git")
-        review = self.prepare("codex", ["git push origin main"])
+        url = "https://fixture:PRIVATE_CREDENTIAL@example.invalid/repo.git"
+        self.git("remote", "set-url", "--push", "origin", url)
+        data = {"language": "en", "operations": [{"cwd": str(self.repo), "command": "git push origin main"}]}
+        # The push target cannot be read: the refusal names the remote, never its credential.
+        proc = self.subcommand(["prepare-git-review", "--runtime", "codex"], data)
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("the remote origin cannot be read now", proc.stderr)
+        self.assertNotIn("PRIVATE_CREDENTIAL", proc.stdout + proc.stderr)
+        # Read as if it answered: no file of the review carries the credential.
+        isolated = {"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull, "DDL_GATE_STATE_DIR": self.state,
+                    "DDL_GATE_GRANT_DIR": self.grants}
+        with mock.patch.dict(os.environ, isolated), mock.patch.object(ddl_gate, "remote_refs", return_value=(None, [])), \
+                mock.patch.object(ddl_gate, "cwd_ledger", return_value=(None, None)):
+            review = ddl_gate.prepare_git_review("codex", data)
         directory = pathlib.Path(review["report"]).parent
+        self.assertIn("example.invalid/repo.git", pathlib.Path(review["report"]).read_text())
         for path in directory.iterdir():
             self.assertNotIn("PRIVATE_CREDENTIAL", path.read_text())
         self.assertEqual(directory.stat().st_mode & 0o777, 0o700)
@@ -2999,7 +3017,8 @@ class GrantRecordTest(GrantFlowTest):
                                             ("granted", plan["reportId"], None, None)])
         report = self.subcommand(["report", "--run", run["id"]], cwd=self.cwd)
         self.assertEqual(report.stdout.splitlines(), [
-            "問い: 2 件（承認 1、見直し 1、時間切れ 0）", "待ち: 人間 0 分（答えまで中央値 0 分、最長 0 分）", "拒否: 0 件",
+            "問い: 2 件（承認 1、見直し 1、時間切れ 0。計画 1、確認 0、Git 0、ほか 1）", NO_RECORDS["ja"],
+            "待ち: 人間 0 分（答えまで中央値 0 分、最長 0 分）", "拒否: 0 件",
             "許諾: {}（期限 {}、有効）".format(plan["reportId"], given["expires"][:10]), NO_FLOW["ja"]])
 
 
@@ -4752,6 +4771,816 @@ class QueuedTraceTest(QueueBase):
             self.assert_allowed(self.stop(runtime, fixture(runtime + "_open.jsonl"), session + "-later"))
 
 
+class CommitGrantTest(GrantAnswers):
+    """A plain commit inside an active grant that names `commit` needs no question and is logged; every other commit
+    keeps today's Git review."""
+
+    def setUp(self):
+        super().setUp()
+        self.git_env = dict(os.environ, GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
+        shutil.rmtree(str(self.root / ".git"))
+        shutil.rmtree(str(self.root / ".notebook.git"))
+        (self.root / "design.md").write_text("# design\n")
+        self.git("init", "-q", "-b", "main")
+        self.git("add", "tools", ".claude")
+        self.git("commit", "-q", "-m", "base")
+        for args in (["init", "-q", "-b", "main"], ["config", "core.worktree", str(self.root)], ["add", "design.md"],
+                     ["commit", "-q", "-m", "notebook"]):
+            self.git(*args, git_dir=".notebook.git")
+        (self.root / ".gitignore").write_text(".notebook.git\n")  # the main repository ignores the second one
+        (self.root / "msg.txt").write_text("From a file\n\nBody.\n")
+        self.ident = self.granted(paths=["tools/**", "design.md"], commands=["commit", "test"])
+
+    def git(self, *args, git_dir=None):
+        pair = ["--git-dir=" + git_dir, "--work-tree=."] if git_dir else []
+        env = dict(self.git_env, GIT_AUTHOR_NAME="f", GIT_AUTHOR_EMAIL="f@example.invalid", GIT_COMMITTER_NAME="f",
+                   GIT_COMMITTER_EMAIL="f@example.invalid")
+        proc = subprocess.run(["git", "-C", str(self.root), *pair, *args], capture_output=True, text=True, env=env)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return proc.stdout.strip()
+
+    def stage(self, path, text="x\n", git_dir=None):
+        (self.root / path).parent.mkdir(parents=True, exist_ok=True)
+        (self.root / path).write_text(text)
+        self.git("add", path, git_dir=git_dir)
+
+    def verdict(self, runtime, command):
+        got = self.outcome(runtime, self.shell(runtime, command))
+        return got if got is None or got[0] == "allow" else (got[0], got[1].split(":")[0])
+
+    def test_a_plain_commit_inside_the_grant_needs_no_question_and_is_logged(self):
+        for runtime in ("claude", "codex"):
+            for n, command in enumerate(("git commit -m 'Add a'", "git commit -F msg.txt",
+                                         "git commit --cleanup=verbatim -m 'Add a' -m Body", "git -C tools commit -m 'Add a'")):
+                with self.subTest(runtime=runtime, command=command):
+                    self.stage("tools/{}-{}.py".format(runtime, n))
+                    self.assertEqual(self.outcome(runtime, self.shell(runtime, command)),
+                                     ("allow", None) if runtime == "codex" else self.allow(self.ident, "commit"))
+                    self.git("commit", "-q", "-m", "done")
+            line = [row for row in events(self.root, kind="commit") if row.get("host") == runtime][-1]
+            self.assertEqual({key: line[key] for key in ("repo", "branch", "files", "subject", "id")},
+                             {"repo": ".git", "branch": "main", "files": 1, "subject": "Add a", "id": self.ident})
+
+    def test_every_other_commit_keeps_its_review(self):
+        review = ("deny", "DDL Git review")
+        for runtime in ("claude", "codex"):
+            self.stage("tools/b.py", runtime + "\n")
+            for command in ("git commit --amend -m x", "git commit -a -m x", "git commit --all -m x", "git commit --no-verify -m x",
+                            "git commit -m x tools/b.py", "git commit -C HEAD", "git commit -c HEAD", "git commit --allow-empty -m x",
+                            "git commit -o -m x", "git commit -i -m x", "git commit --fixup=HEAD", "git commit --squash=HEAD -m x",
+                            "git commit -m x -F msg.txt", "git commit -F -", "git commit", "git commit -mx", "git commit --message=x",
+                            "git commit -F msg.txt -F msg.txt", "git commit -m x --cleanup=strip"):
+                with self.subTest(runtime=runtime, command=command):
+                    self.assertEqual(self.verdict(runtime, command), review)
+            self.assertNotEqual((self.verdict(runtime, "git -c core.x=y commit -m x") or ("",))[0], "allow")  # as before
+            self.stage("docs/x.md")  # outside the grant's paths
+            self.assertEqual(self.verdict(runtime, "git commit -m x"), review)
+            self.git("reset", "-q", "docs/x.md")
+            self.git("commit", "-q", "-m", "done")
+        # An empty index, a detached HEAD, a protected file through a wildcard, a grant without `commit`.
+        for runtime in ("claude", "codex"):
+            self.assertEqual(self.verdict(runtime, "git commit -m x"), review)
+        self.git("checkout", "-q", "--detach")
+        self.stage("tools/c.py")
+        for runtime in ("claude", "codex"):
+            self.assertEqual(self.verdict(runtime, "git commit -m x"), review)
+        self.git("checkout", "-q", "main")
+        self.git("reset", "-q", "tools/c.py")
+        everything = self.granted("R-" + "b" * 16, paths=["**"], commands=["commit"], approved="2026-11-21T00:00:00.000Z")
+        self.stage(".claude/CLAUDE.md", "# Project\n\n" + MARKER_LINE + "\n\nChanged.\n")  # still a DDL project
+        for runtime in ("claude", "codex"):
+            self.assertEqual(self.verdict(runtime, "git commit -m x"), review)
+        self.granted("R-" + "c" * 16, paths=[".claude/CLAUDE.md"], commands=["commit"], approved="2026-11-22T00:00:00.000Z")
+        for runtime in ("claude", "codex"):
+            self.assertEqual(self.verdict(runtime, "git commit -m x"),
+                             ("allow", None) if runtime == "codex" else self.allow(self.ident, "commit"))
+        for path in self.store.iterdir():
+            path.unlink()
+        self.granted(paths=["**"], commands=["test", "check"])
+        for runtime in ("claude", "codex"):
+            self.assertEqual(self.verdict(runtime, "git commit -m x"), review)  # no `commit` in the grant
+        self.assertTrue(everything)
+
+    def test_a_message_file_is_a_small_regular_file_read_without_blocking(self):
+        self.stage("tools/m.py")
+        os.mkfifo(str(self.root / "msg.fifo"))
+        (self.root / "big.txt").write_text("x" * (64 * 1024 + 1))
+        (self.root / "msgdir").mkdir()
+        for runtime in ("claude", "codex"):
+            for name in ("msg.fifo", "big.txt", "msgdir"):
+                with self.subTest(runtime=runtime, name=name):
+                    data = payload(runtime, transcript=fixture(runtime + "_open.jsonl"), session=runtime, cwd=self.cwd,
+                                   tool_name=SHELL[runtime][0], tool_input={SHELL[runtime][1]: "git commit -F " + name})
+                    started = time.monotonic()
+                    proc = subprocess.run([sys.executable, "-I", GATE, "pre-tool-use", "--runtime", runtime],
+                                          input=json.dumps(data), capture_output=True, text=True, timeout=30,
+                                          env=self.gate_env(), cwd=str(PROJECT))
+                    self.assertLess(time.monotonic() - started, 10)  # never waits on the FIFO
+                    out = json.loads(proc.stdout)["hookSpecificOutput"]
+                    self.assertEqual(out["permissionDecision"], "deny")
+                    self.assertTrue(out["permissionDecisionReason"].startswith("DDL Git review"), out)
+        review = subprocess.run([sys.executable, "-I", GATE, "prepare-git-review", "--runtime", "claude"], timeout=30,
+                                input=json.dumps({"language": "en", "operations": [
+                                    {"cwd": str(self.root), "command": "git commit --cleanup=verbatim -F msg.fifo"}]}),
+                                capture_output=True, text=True, env=self.gate_env(), cwd=str(self.root))
+        self.assertEqual(review.returncode, 2)
+        self.assertIn("a commit message file is a regular file of at most 64 KiB", review.stderr)
+
+    def test_a_commit_hook_leaves_the_commit_to_its_review(self):
+        hooks = self.root / ".git" / "hooks"
+        hooks.mkdir(exist_ok=True)
+        self.stage("tools/h.py")
+        sample = hooks / "pre-commit.sample"
+        sample.write_text("#!/bin/sh\n")
+        sample.chmod(0o755)
+        for runtime in ("claude", "codex"):
+            self.assertEqual(self.outcome(runtime, self.shell(runtime, "git commit -m x")),
+                             ("allow", None) if runtime == "codex" else self.allow(self.ident, "commit"))  # a sample is no hook
+        for name in ("pre-commit", "prepare-commit-msg", "commit-msg"):
+            hook = hooks / name
+            hook.write_text("#!/bin/sh\n")
+            hook.chmod(0o755)
+            for runtime in ("claude", "codex"):
+                with self.subTest(hook=name, runtime=runtime):
+                    self.assertEqual(self.verdict(runtime, "git commit -m x"), ("deny", "DDL Git review"))
+            hook.chmod(0o644)  # not executable: no hook
+            self.assertEqual(self.outcome("claude", self.shell("claude", "git commit -m x")), self.allow(self.ident, "commit"))
+            hook.unlink()
+        # Any executable hook (a post-commit one can add commits), in the repository's or a configured directory.
+        hook = hooks / "post-commit"
+        hook.write_text("#!/bin/sh\n")
+        hook.chmod(0o755)
+        self.assertEqual(self.verdict("claude", "git commit -m x"), ("deny", "DDL Git review"))
+        hook.unlink()
+        elsewhere = pathlib.Path(self.tmp) / "hooks"
+        elsewhere.mkdir()
+        (elsewhere / "commit-msg").write_text("#!/bin/sh\n")
+        (elsewhere / "commit-msg").chmod(0o755)
+        self.git("config", "core.hooksPath", str(elsewhere))
+        for runtime in ("claude", "codex"):
+            self.assertEqual(self.verdict(runtime, "git commit -m x"), ("deny", "DDL Git review"))
+        self.git("config", "--unset", "core.hooksPath")
+        (self.root / "rel").mkdir()
+        (self.root / "rel" / "anything").write_text("#!/bin/sh\n")
+        (self.root / "rel" / "anything").chmod(0o755)
+        self.git("config", "core.hooksPath", "rel")  # relative to the work tree's top, also from a subdirectory
+        for command in ("git commit -m x", "git -C tools commit -m x"):
+            self.assertEqual(self.verdict("claude", command), ("deny", "DDL Git review"))
+        self.git("config", "--unset", "core.hooksPath")
+        # A hooks directory that cannot be listed, or looked in: as if it held a hook.
+        for mode in (0o311, 0o000):
+            hooks.chmod(mode)
+            try:
+                for runtime in ("claude", "codex"):
+                    with self.subTest(mode=oct(mode), runtime=runtime):
+                        self.assertEqual(self.verdict(runtime, "git commit -m x"), ("deny", "DDL Git review"))
+            finally:
+                hooks.chmod(0o755)
+        # A hook the config defines, in any scope.
+        global_config = pathlib.Path(self.tmp) / "global.gitconfig"
+        for key, scope in (("hook.sneak.command", "local"), ("hook.sneak.event", "local"), ("hook.other.command", "global")):
+            if scope == "local":
+                self.git("config", key, "git add docs/secret.md")
+            else:
+                global_config.write_text("[hook \"other\"]\n\tcommand = true\n")
+            scoped = {"GIT_CONFIG_GLOBAL": str(global_config)} if scope == "global" else {}
+            with mock.patch.dict(os.environ, scoped):  # the gate reads the global config the session has
+                for runtime in ("claude", "codex"):
+                    with self.subTest(key=key, runtime=runtime):
+                        self.assertEqual(self.verdict(runtime, "git commit -m x"), ("deny", "DDL Git review"))
+            if scope == "local":
+                self.git("config", "--unset", key)
+        self.assertEqual(self.outcome("claude", self.shell("claude", "git commit -m x")), self.allow(self.ident, "commit"))
+
+    def test_after_an_allowed_commit_its_paths_are_compared_with_the_grant(self):
+        (self.root / "docs").mkdir()
+        (self.root / "docs" / "outside.md").write_text("o\n")
+        for runtime in ("claude", "codex"):
+            self.stage("tools/p_{}.py".format(runtime))
+            command = "git commit -m 'Inside'"
+            call = self.shell(runtime, command)
+            self.assertEqual(self.outcome(runtime, call), ("allow", None) if runtime == "codex" else self.allow(self.ident, "commit"))
+            data = payload(runtime, transcript=fixture(runtime + "_open.jsonl"), session=runtime, cwd=self.cwd,
+                           tool_name=call[0], tool_input=call[1])
+            data["hook_event_name"] = "PostToolUse"
+            if runtime == "claude":  # a commit that did not happen: HEAD stays, nothing is compared
+                warned = len(events(self.root, kind="warn"))
+                self.run_gate("post-tool-use", runtime, data)
+                self.assertEqual(len(events(self.root, kind="warn")), warned)
+                self.assertEqual(self.outcome(runtime, call), self.allow(self.ident, "commit"))
+            # Something adds a path outside the grant before the commit is made.
+            self.git("add", "-f", "docs/outside.md")
+            self.git("commit", "-q", "-m", "Inside")
+            head = self.git("rev-parse", "HEAD")
+            self.assertEqual(self.run_gate("post-tool-use", runtime, data).stdout, "")  # it never decides
+            (line,) = [row for row in events(self.root, kind="warn") if row.get("commit") == head]
+            self.assertEqual((line["rule"], line["id"], line["files"]), ("commit-outside-grant", self.ident, 1))
+            self.assertTrue((pathlib.Path(self.grants) / project_key(self.root) / "outside" / head).is_file())
+            self.assertEqual(self.run_gate("post-tool-use", runtime, data).stdout, "")  # once: nothing more to look at
+            self.assertEqual(len([row for row in events(self.root, kind="warn") if row.get("commit") == head]), 1)
+            self.git("rm", "-q", "--cached", "docs/outside.md")
+            self.git("commit", "-q", "-m", "undo")
+        # Every commit since the look is compared: one rewritten after it (an amend), and a second one.
+        for runtime in ("claude", "codex"):
+            self.stage("tools/amend_{}.py".format(runtime))
+            call = self.shell(runtime, "git commit -m 'Twice'")
+            self.outcome(runtime, call)
+            data = payload(runtime, transcript=fixture(runtime + "_open.jsonl"), session=runtime, cwd=self.cwd,
+                           tool_name=call[0], tool_input=call[1])
+            self.git("commit", "-q", "-m", "Twice")
+            first = self.git("rev-parse", "HEAD")
+            self.git("add", "-f", "docs/outside.md")
+            self.git("commit", "-q", "--amend", "--no-edit")
+            amended = self.git("rev-parse", "HEAD")
+            self.stage("tools/follow_{}.py".format(runtime))
+            self.git("commit", "-q", "-m", "Follow")
+            follow = self.git("rev-parse", "HEAD")
+            self.run_gate("post-tool-use", runtime, data)
+            outside = [row["commit"] for row in events(self.root, kind="warn") if row.get("rule") == "commit-outside-grant"]
+            self.assertIn(amended, outside)
+            self.assertNotIn(first, outside)  # no longer on the branch
+            self.assertNotIn(follow, outside)  # it stays inside (its parent's file is no change of its own)
+            (count,) = [row for row in events(self.root, kind="warn") if row.get("rule") == "commits-after-grant"
+                        and row.get("commit") == follow]
+            self.assertEqual(count["count"], 2)
+            self.git("rm", "-q", "--cached", "docs/outside.md")
+            self.git("commit", "-q", "-m", "undo")
+        # A commit that stays inside writes nothing more.
+        self.stage("tools/clean.py")
+        call = self.shell("claude", "git commit -m 'Clean'")
+        self.outcome("claude", call)
+        self.git("commit", "-q", "-m", "Clean")
+        data = payload("claude", transcript=fixture("claude_open.jsonl"), session="claude", cwd=self.cwd,
+                       tool_name=call[0], tool_input=call[1])
+        before = len(events(self.root, kind="warn"))
+        self.run_gate("post-tool-use", "claude", data)
+        self.assertEqual(len(events(self.root, kind="warn")), before)
+        # The next push review marks the commits that went outside, and only those.
+        marked = {row["commit"] for row in events(self.root, kind="warn") if row.get("rule") == "commit-outside-grant"}
+        remote = pathlib.Path(self.tmp) / "remote.git"
+        subprocess.run(["git", "init", "--bare", "-q", str(remote)], check=True, env=self.git_env)
+        self.git("remote", "add", "origin", str(remote))
+        for language, mark in (("en", " (outside the grant at commit time)"), ("ja", " （コミットの時点で許諾の外）")):
+            proc = subprocess.run([sys.executable, "-I", GATE, "prepare-git-review", "--runtime", "claude"], timeout=60,
+                                  input=json.dumps({"language": language, "operations": [
+                                      {"cwd": str(self.root), "command": "git push origin main"}]}),
+                                  capture_output=True, text=True, env=self.gate_env(), cwd=str(self.root))
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            report = pathlib.Path(json.loads(proc.stdout)["report"]).read_text(encoding="utf-8")
+            lines = [line for line in report.splitlines() if line.endswith(mark)]
+            self.assertEqual(len(lines), len(marked), report)
+            self.assertTrue(all(any(oid in line for oid in marked) for line in lines))
+
+    def test_a_pending_stop_keeps_every_commit_stopped(self):
+        self.stage("tools/d.py")
+        for runtime in ("claude", "codex"):
+            prepared = self.prepare_report(runtime, cwd=self.cwd)
+            got = self.outcome(runtime, self.shell(runtime, "git commit -m x"), self.flow(runtime, prepared, "asked"))
+            self.assertEqual(got[0], "deny")
+            self.assertTrue(got[1].startswith("DDL STOP"), got)
+
+    def test_the_second_git_directory_commits_the_notebook_named_literally(self):
+        second = "git --git-dir=.notebook.git --work-tree=. commit -m 'Note'"
+        for runtime in ("claude", "codex"):
+            self.stage("design.md", "# design " + runtime + "\n", git_dir=".notebook.git")
+            self.assertEqual(self.outcome(runtime, self.shell(runtime, second)),
+                             ("allow", None) if runtime == "codex" else self.allow(self.ident, "commit"))
+            self.assertEqual(self.verdict(runtime, "git --git-dir=.notebook.git --work-tree=tools commit -m x"),
+                             ("deny", "DDL Git review"))  # not the project root as its work tree
+            self.git("commit", "-q", "-m", "done", git_dir=".notebook.git")
+        line = events(self.root, kind="commit")[-1]
+        self.assertEqual((line["repo"], line["subject"]), (".notebook.git", "Note"))
+        # Another Git directory in the root is no second one: bare, its work tree elsewhere, or not ignored.
+        self.stage("design.md", "# changed\n", git_dir=".notebook.git")
+        for change, undo in ((["config", "core.bare", "true"], ["config", "core.bare", "false"]),
+                             (["config", "core.worktree", str(self.root / "tools")], ["config", "core.worktree", str(self.root)])):
+            self.git(*change, git_dir=".notebook.git")
+            for runtime in ("claude", "codex"):
+                with self.subTest(change=change, runtime=runtime):
+                    self.assertEqual(self.verdict(runtime, second), ("deny", "DDL Git review"))
+            self.git(*undo, git_dir=".notebook.git")
+        (self.root / ".gitignore").write_text("\n")
+        for runtime in ("claude", "codex"):
+            self.assertEqual(self.verdict(runtime, second), ("deny", "DDL Git review"))
+        (self.root / ".gitignore").write_text(".notebook.git\n")
+        self.git("commit", "-q", "-m", "done", git_dir=".notebook.git")
+        for path in self.store.iterdir():
+            path.unlink()
+        self.granted(paths=["**"], commands=["commit"])  # the notebook only through a wildcard
+        self.stage("design.md", "# again\n", git_dir=".notebook.git")
+        for runtime in ("claude", "codex"):
+            self.assertEqual(self.verdict(runtime, second), ("deny", "DDL Git review"))
+
+
+class PushReviewTest(GitReviewTest):
+    """A push's review lists every commit it sends; a pinned superproject commit follows its push; and no push is
+    prepared in the middle of a Run."""
+
+    def commit(self, text, message):
+        self.stage(text)
+        self.git("commit", "-q", "--cleanup=verbatim", "-m", message)
+        return self.git("rev-parse", "HEAD")
+
+    def test_a_push_review_lists_every_commit_it_sends(self):
+        shas = [self.git("rev-parse", "HEAD"), self.commit("two\n", "Second commit"), self.commit("three\n", "Third commit")]
+        for runtime in ("claude", "codex"):
+            review = self.prepare(runtime, ["git push origin main"])
+            first = review["question"]["title"].split("\n")[0]
+            self.assertEqual(first, "決めること: 3 件のコミット（{} まで）を origin/main に送るか".format(shas[-1][:7]))
+            text = pathlib.Path(review["report"]).read_text(encoding="utf-8")
+            self.assertIn("送るコミット（3 件）:", text)
+            for k, (sha, subject) in enumerate(zip(shas, ("base", "Second commit", "Third commit")), 1):
+                self.assertIn("{}. {} {}".format(k, sha, subject), text)
+                self.assertTrue((pathlib.Path(review["report"]).parent / "1.{}.patch".format(k)).is_file())
+            self.record(runtime, review)
+            self.pushed(runtime, self.check(runtime, "git push origin main"))
+            patch = pathlib.Path(review["report"]).parent / "1.2.patch"
+            patch.write_bytes(patch.read_bytes() + b"\n")  # a diff changed after the preparation
+            self.blocked(self.check(runtime, "git push origin main"))
+        review = self.prepare("claude", ["git push origin main"])
+        self.record("claude", review)
+        self.git("push", "-q", "origin", "main")
+        self.pushed("claude", self.check("claude", "git push origin main"))  # sends none of them now: still the review
+        self.commit("four\n", "Fourth commit")
+        self.blocked(self.check("claude", "git push origin main"))  # it would send one the review does not list
+
+    def superproject(self):
+        """A superproject with this repository as its submodule `ddl`, and a remote of its own."""
+        allow = dict(self.git_env, GIT_ALLOW_PROTOCOL="file")
+        self.git("push", "-q", "origin", "main")
+        top = pathlib.Path(self.tmp) / "super project"
+        top.mkdir()
+        bare = pathlib.Path(self.tmp) / "super.git"
+        for args in (["init", "-q", "-b", "main"], ["config", "user.email", "fixture@example.invalid"],
+                     ["config", "user.name", "DDL fixture"], ["config", "commit.gpgSign", "false"],
+                     ["-c", "protocol.file.allow=always", "submodule", "add", "-q", "-b", "main", str(self.remote), "ddl"],
+                     ["commit", "-q", "-m", "add ddl"], ["remote", "add", "origin", str(bare)]):
+            proc = subprocess.run(["git", "-C", str(top), *args], capture_output=True, text=True, env=allow)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+        subprocess.run(["git", "init", "--bare", "-q", str(bare)], check=True, capture_output=True, env=self.git_env)
+        mark_project(top)
+        return top, allow
+
+    def test_a_pinned_commit_follows_the_commit_its_push_sends(self):
+        top, allow = self.superproject()
+        message = pathlib.Path(self.tmp) / "pin.txt"
+        message.write_text("Pin ddl\n")
+        pin_commit = "git -C {} commit --cleanup=verbatim -F {}".format(shlex.quote(str(top)), shlex.quote(str(message)))
+        for runtime in ("claude", "codex"):
+            pushed = self.commit("pinned " + runtime + "\n", "To pin " + runtime)
+            ops = [{"cwd": str(self.repo), "command": "git push origin main"},
+                   {"cwd": str(top), "command": pin_commit, "pin": {"submodule": "ddl", "from": 1}},
+                   {"cwd": str(top), "command": "git push origin main"}]
+            review = self.run_gate("prepare-git-review", runtime, {"language": "en", "operations": ops})
+            review = json.loads(review.stdout)
+            self.assertIn('Submodule "ddl": the commit operation 1 pushes', pathlib.Path(review["report"]).read_text())
+            self.record(runtime, review)
+            self.blocked(self.check(runtime, pin_commit))  # before its push: no commit to pin yet
+            self.pushed(runtime, self.check(runtime, "git push origin main"))
+            self.git("push", "-q", "origin", "main")
+            sub = shlex.quote(str(top / "ddl"))
+            steps = ["git -C {} submodule update --remote ddl".format(shlex.quote(str(top))), "git -C {} fetch".format(sub),
+                     "git -C {} checkout {}".format(sub, pushed), "git -C {} add ddl".format(shlex.quote(str(top)))]
+            for step in steps:
+                self.passed_step(runtime, step)
+                proc = subprocess.run(shlex.split(step), capture_output=True, text=True, env=allow)
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+            self.passed(runtime, self.check(runtime, pin_commit))
+            # The same commit with another gitlink is not the pinned one.
+            subprocess.run(["git", "-C", str(top / "ddl"), "checkout", "-q", "HEAD~1"], check=True, env=allow)
+            subprocess.run(["git", "-C", str(top), "add", "ddl"], check=True, env=allow)
+            self.blocked(self.check(runtime, pin_commit))
+            subprocess.run(["git", "-C", str(top / "ddl"), "checkout", "-q", pushed], check=True, env=allow)
+            subprocess.run(["git", "-C", str(top), "add", "ddl"], check=True, env=allow)
+            subprocess.run(["git", "-C", str(top), "commit", "-q", "--cleanup=verbatim", "-F", str(message)], check=True, env=allow)
+            self.pushed(runtime, self.check(runtime, "git -C {} push origin main".format(shlex.quote(str(top)))))
+            subprocess.run(["git", "-C", str(top), "push", "-q", "origin", "main"], check=True, env=allow)
+            self.assertIsNone(self.step_answer(runtime, "git -C {} add tools".format(shlex.quote(str(top)))))
+
+    def passed_step(self, runtime, command):
+        out = self.step_answer(runtime, command)
+        if runtime == "claude":
+            self.assertEqual(out["hookSpecificOutput"]["permissionDecision"], "allow", out)
+            self.assertTrue(out["hookSpecificOutput"]["permissionDecisionReason"].startswith("DDL: a step of the pin"), out)
+        else:
+            self.assertIsNone(out)  # Codex: PreToolUse prints nothing; its PermissionRequest allows
+            self.assertEqual(self.permitted(runtime, command), {"hookSpecificOutput": {
+                "hookEventName": "PermissionRequest", "decision": {"behavior": "allow"}}})
+
+    def step_answer(self, runtime, command):
+        out = self.check(runtime, command).stdout
+        return json.loads(out) if out else None
+
+    def test_a_pin_is_judged_by_the_review_itself(self):
+        top, allow = self.superproject()
+        message = pathlib.Path(self.tmp) / "pin.txt"
+        message.write_text("Pin ddl\n")
+        pin_commit = "git -C {} commit --cleanup=verbatim -F {}".format(shlex.quote(str(top)), shlex.quote(str(message)))
+        self.stage("made here\n")
+        env = dict(allow, GIT_AUTHOR_NAME="f", GIT_AUTHOR_EMAIL="f@example.invalid", GIT_COMMITTER_NAME="f",
+                   GIT_COMMITTER_EMAIL="f@example.invalid")
+        for runtime in ("claude", "codex"):
+            # The push sends the commit this same review creates: the gitlink must be that commit.
+            ops = [{"cwd": str(self.repo), "command": self.command}, {"cwd": str(self.repo), "command": "git push origin main"},
+                   {"cwd": str(top), "command": pin_commit, "pin": {"submodule": "ddl", "from": 2}}]
+            review = json.loads(self.run_gate("prepare-git-review", runtime, {"language": "en", "operations": ops}).stdout)
+            self.record(runtime, review)
+            directory = pathlib.Path(review["report"]).parent
+            # A state file naming another commit changes nothing: the record decides.
+            sub = top / "ddl"
+            (sub / "evil.txt").write_text("evil")
+            subprocess.run(["git", "-C", str(sub), "add", "evil.txt"], check=True, env=env)
+            subprocess.run(["git", "-C", str(sub), "commit", "-q", "-m", "never reviewed"], check=True, env=env)
+            arbitrary = subprocess.run(["git", "-C", str(sub), "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+            (directory / "sent-2").write_text(arbitrary + "\n")
+            subprocess.run(["git", "-C", str(top), "add", "ddl"], check=True, env=env)
+            self.blocked(self.check(runtime, pin_commit))
+            self.assertIsNone(self.step_answer(runtime, "git -C {} checkout {}".format(shlex.quote(str(sub)), arbitrary)))
+            # The commit the review creates, then pinned: allowed.
+            self.passed(runtime, self.check(runtime))
+            self.git("commit", "-q", "--cleanup=verbatim", "-F", str(self.message))
+            created = self.git("rev-parse", "HEAD")
+            self.pushed(runtime, self.check(runtime, "git push origin main"))
+            self.git("push", "-q", "origin", "main")
+            subprocess.run(["git", "-C", str(sub), "fetch", "-q"], check=True, env=env)
+            self.passed_step(runtime, "git -C {} checkout {}".format(shlex.quote(str(sub)), created))
+            subprocess.run(["git", "-C", str(sub), "checkout", "-q", created], check=True, env=env)
+            subprocess.run(["git", "-C", str(top), "add", "ddl"], check=True, env=env)
+            self.passed(runtime, self.check(runtime, pin_commit))
+            subprocess.run(["git", "-C", str(top), "commit", "-q", "--cleanup=verbatim", "-F", str(message)], check=True, env=env)
+            self.stage("again " + runtime + "\n")
+
+    def test_a_pin_goes_with_a_push_to_the_submodules_own_url(self):
+        top, _ = self.superproject()
+        other, other_remote = pathlib.Path(self.tmp) / "unrelated", pathlib.Path(self.tmp) / "unrelated.git"
+        env = dict(self.git_env, GIT_AUTHOR_NAME="f", GIT_AUTHOR_EMAIL="f@x.invalid", GIT_COMMITTER_NAME="f",
+                   GIT_COMMITTER_EMAIL="f@x.invalid")
+        subprocess.run(["git", "init", "-q", "-b", "main", str(other)], check=True, env=env)
+        subprocess.run(["git", "init", "--bare", "-q", str(other_remote)], check=True, env=env)
+        (other / "u").write_text("u")
+        for args in (["add", "u"], ["commit", "-q", "-m", "unrelated"], ["remote", "add", "origin", str(other_remote)]):
+            subprocess.run(["git", "-C", str(other), *args], check=True, env=env)
+        message = pathlib.Path(self.tmp) / "pin.txt"
+        message.write_text("Pin ddl\n")
+        ops = [{"cwd": str(other), "command": "git push origin main"},
+               {"cwd": str(top), "command": "git -C {} commit --cleanup=verbatim -F {}".format(shlex.quote(str(top)),
+                                                                                         shlex.quote(str(message))),
+                "pin": {"submodule": "ddl", "from": 1}}]
+        for runtime in ("claude", "codex"):
+            proc = self.subcommand(["prepare-git-review", "--runtime", runtime], {"language": "en", "operations": ops})
+            self.assertEqual(proc.returncode, 2)
+            self.assertIn("not to the submodule's own URL in .gitmodules", proc.stderr)
+
+        def same(*urls):
+            found = {ddl_gate.comparable_url(url, "/") for url in urls}
+            self.assertEqual(len(found), 1, (urls, found))
+            return found.pop()
+
+        https = same("https://github.com/owner/repo", "https://github.com/owner/repo/", "https://GitHub.com:443/owner/repo.git",
+                     "https://user:token@github.com/owner/repo.git")  # the user part of https is credentials
+        ssh = same("ssh://git@github.com/owner/repo", "ssh://git@GITHUB.com:22/owner/repo.git", "git@github.com:/owner/repo",
+                   "git+ssh://git@github.com/owner/repo/")
+        relative = same("git@github.com:owner/repo.git", "git@github.com:owner/repo")
+        same("git@[::1]:/srv/repo", "ssh://git@[::1]/srv/repo", "ssh://git@[::1]:22/srv/repo.git")
+        self.assertNotEqual(ddl_gate.comparable_url("git@[::1]:srv/repo", "/"), ddl_gate.comparable_url("ssh://git@[::1]/srv/repo", "/"))
+        distinct = {https, ssh, relative}
+        for url in ("http://github.com/owner/repo", "https://github.com:8443/owner/repo", "ssh://git@github.com:2222/owner/repo",
+                    "ssh://alice@github.com/owner/repo", "ssh://github.com/owner/repo", "git://github.com/owner/repo",
+                    "https://github.com/Owner/repo", "https://github.com/owner/repo/../x", "https://github.com/owner/other"):
+            found = ddl_gate.comparable_url(url, "/")
+            self.assertNotIn(found, distinct, url)
+            distinct.add(found)
+        self.assertEqual(len({https, ssh, relative}), 3)
+        for url in ("https://evil.example?@github.com/owner/repo", "https://evil.example#@github.com/owner/repo",
+                    "https://evil.example\\@github.com/owner/repo", "https://github.com/owner/repo?x=1",
+                    "https://github.com/owner/repo#main", "https://github.com:x/owner/repo", "ftp://github.com/owner/repo",
+                    "https://git hub.com/owner/repo"):
+            with self.assertRaises(ValueError, msg=url) as caught:
+                ddl_gate.comparable_url(url, "/")
+            self.assertNotIn("evil", str(caught.exception))
+        # Nothing shows a URL's user part.
+        for url, shown in (("https://user:token@example.invalid/r.git", "https://example.invalid/r.git"),
+                           ("ssh://git@example.invalid/r", "ssh://example.invalid/r"), ("git@example.invalid:r", "example.invalid:r"),
+                           ("/srv/r.git", "/srv/r.git")):
+            self.assertEqual(ddl_gate.display_remote(url), shown)
+
+    def test_a_pin_reads_gitmodules_as_the_index_holds_it(self):
+        top, allow = self.superproject()
+        elsewhere = pathlib.Path(self.tmp) / "elsewhere.git"
+        subprocess.run(["git", "init", "--bare", "-q", str(elsewhere)], check=True, env=self.git_env)
+        for args in (["config", "-f", ".gitmodules", "submodule.ddl.url", str(elsewhere)], ["add", ".gitmodules"],
+                     ["commit", "-q", "-m", "point ddl elsewhere"],
+                     ["config", "-f", ".gitmodules", "submodule.ddl.url", str(self.remote)]):  # the work tree only
+            proc = subprocess.run(["git", "-C", str(top), *args], capture_output=True, text=True, env=allow)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.commit("to pin\n", "To pin")
+        message = pathlib.Path(self.tmp) / "pin.txt"
+        message.write_text("Pin ddl\n")
+        ops = [{"cwd": str(self.repo), "command": "git push origin main"},
+               {"cwd": str(top), "command": "git -C {} commit --cleanup=verbatim -F {}".format(shlex.quote(str(top)),
+                                                                                         shlex.quote(str(message))),
+                "pin": {"submodule": "ddl", "from": 1}}]
+        for runtime in ("claude", "codex"):
+            proc = self.subcommand(["prepare-git-review", "--runtime", runtime], {"language": "en", "operations": ops})
+            self.assertEqual(proc.returncode, 2)
+            self.assertIn("not to the submodule's own URL in .gitmodules", proc.stderr)
+        # Two entries for the one path: no preparation, whichever comes first.
+        text = "[submodule \"ddl\"]\n\tpath = ddl\n\turl = {}\n[submodule \"zzz\"]\n\tpath = ddl\n\turl = {}\n"
+        for first, second in ((self.remote, elsewhere), (elsewhere, self.remote)):
+            (top / ".gitmodules").write_text(text.format(first, second))
+            subprocess.run(["git", "-C", str(top), "add", ".gitmodules"], check=True, env=allow)
+            proc = self.subcommand(["prepare-git-review", "--runtime", "claude"], {"language": "en", "operations": ops})
+            self.assertEqual(proc.returncode, 2)
+            self.assertIn("two .gitmodules entries name the path ddl", proc.stderr)
+
+    def test_the_remote_is_read_where_the_push_goes(self):
+        self.git("commit", "-q", "--cleanup=verbatim", "-m", "c1")
+        self.git("push", "-q", "origin", "main")  # the push target: main at c1
+        hidden = self.commit("two\n", "c2 hidden")
+        mirror = pathlib.Path(self.tmp) / "mirror.git"
+        subprocess.run(["git", "init", "--bare", "-q", str(mirror)], check=True, env=self.git_env)
+        self.git("push", "-q", str(mirror), "main")  # the fetch side: main at c2
+        self.commit("three\n", "c3 shown")
+        listed = lambda review: [entry["subject"] for entry in json.loads(
+            (pathlib.Path(review["report"]).parent / "review.json").read_text())["operations"][0]["sends"]]
+        data = {"language": "en", "operations": [{"cwd": str(self.repo), "command": "git push origin main"}]}
+        for config in ((["remote.origin.url", str(mirror)], ["remote.origin.pushurl", str(self.remote)]),
+                       (["remote.origin.url", str(mirror)], ["url.{}.pushInsteadOf".format(self.remote), str(mirror)])):
+            for key, value in config:
+                self.git("config", key, value)
+            for runtime in ("claude", "codex"):
+                with self.subTest(config=config[1][0], runtime=runtime):
+                    review = self.prepare(runtime, ["git push origin main"])
+                    self.assertEqual(listed(review), ["c2 hidden", "c3 shown"])
+            for key, _ in config:
+                self.git("config", "--unset", key)
+            self.git("config", "remote.origin.url", str(self.remote))
+        # A read that could go elsewhere than the push: refused. (insteadOf alone rewrites the push as well.)
+        for config, reason in (([("remote.origin.uploadpack", "git-upload-pack " + str(mirror) + " #")],
+                                "remote.origin.uploadpack is set"),
+                               ([("remote.origin.receivepack", "git-receive-pack")], "remote.origin.receivepack is set"),
+                               ([("remote.origin.url", "alias:repo"), ("url.{}.pushInsteadOf".format(self.remote), "alias:repo"),
+                                 ("url.{}.insteadOf".format(mirror), str(self.remote))], "rewritten when it is read")):
+            for key, value in config:
+                self.git("config", key, value)
+            for runtime in ("claude", "codex"):
+                with self.subTest(reason=reason, runtime=runtime):
+                    proc = self.subcommand(["prepare-git-review", "--runtime", runtime], data)
+                    self.assertEqual(proc.returncode, 2)
+                    self.assertIn(reason, proc.stderr)
+            for key, _ in config:
+                self.git("config", "--unset", key)
+            self.git("config", "remote.origin.url", str(self.remote))
+        self.assertIn(hidden, pathlib.Path(self.prepare("claude", ["git push origin main"])["report"]).read_text())
+
+    def test_a_pinned_commit_is_read_on_its_push_target(self):
+        top, allow = self.superproject()
+        mirror = pathlib.Path(self.tmp) / "mirror.git"
+        subprocess.run(["git", "init", "--bare", "-q", str(mirror)], check=True, env=self.git_env)
+        self.git("push", "-q", str(mirror), "main")
+        self.git("config", "remote.origin.url", str(mirror))
+        self.git("config", "remote.origin.pushurl", str(self.remote))
+        message = pathlib.Path(self.tmp) / "pin.txt"
+        message.write_text("Pin ddl\n")
+        pin_commit = "git -C {} commit --cleanup=verbatim -F {}".format(shlex.quote(str(top)), shlex.quote(str(message)))
+        pushed = self.commit("to pin\n", "To pin")
+        ops = [{"cwd": str(self.repo), "command": "git push origin main"},
+               {"cwd": str(top), "command": pin_commit, "pin": {"submodule": "ddl", "from": 1}}]
+        sub = top / "ddl"
+        for runtime in ("claude", "codex"):
+            review = json.loads(self.run_gate("prepare-git-review", runtime, {"language": "en", "operations": ops}).stdout)
+            self.record(runtime, review)
+            # The commit reaches only the fetch side, never the push target the .gitmodules URL names.
+            self.git("push", "-q", str(mirror), "main")
+            for args in (["fetch", "-q", str(mirror), "main"], ["checkout", "-q", pushed]):
+                subprocess.run(["git", "-C", str(sub), *args], check=True, env=allow, capture_output=True)
+            subprocess.run(["git", "-C", str(top), "add", "ddl"], check=True, env=allow)
+            self.assertIn("the pinned commit is not on origin's main", self.blocked(self.check(runtime, pin_commit)))
+            self.git("config", "remote.origin.uploadpack", "git-upload-pack")
+            self.assertIn("remote.origin.uploadpack is set", self.blocked(self.check(runtime, pin_commit)))
+            self.git("config", "--unset", "remote.origin.uploadpack")
+            self.git("push", "-q", "origin", "main")
+            self.passed(runtime, self.check(runtime, pin_commit))
+            subprocess.run(["git", "-C", str(top), "commit", "-q", "--cleanup=verbatim", "-F", str(message)], check=True,
+                           env=dict(allow, GIT_AUTHOR_NAME="f", GIT_AUTHOR_EMAIL="f@x.invalid", GIT_COMMITTER_NAME="f",
+                                    GIT_COMMITTER_EMAIL="f@x.invalid"))
+            pushed = self.commit("to pin after " + runtime + "\n", "To pin again")
+
+    def test_a_pinned_commit_waits_for_its_push_on_the_remote(self):
+        top, allow = self.superproject()
+        message = pathlib.Path(self.tmp) / "pin.txt"
+        message.write_text("Pin ddl\n")
+        pin_commit = "git -C {} commit --cleanup=verbatim -F {}".format(shlex.quote(str(top)), shlex.quote(str(message)))
+        env = dict(allow, GIT_AUTHOR_NAME="f", GIT_AUTHOR_EMAIL="f@example.invalid", GIT_COMMITTER_NAME="f",
+                   GIT_COMMITTER_EMAIL="f@example.invalid")
+        sub = top / "ddl"
+
+        def gitlink(oid):
+            subprocess.run(["git", "-C", str(top), "update-index", "--cacheinfo", "160000,{},ddl".format(oid)], check=True)
+
+        for runtime in ("claude", "codex"):
+            self.stage("made here " + runtime + "\n")
+            head = self.git("rev-parse", "HEAD")
+            ops = [{"cwd": str(self.repo), "command": self.command}, {"cwd": str(self.repo), "command": "git push origin main"},
+                   {"cwd": str(top), "command": pin_commit, "pin": {"submodule": "ddl", "from": 2}},
+                   {"cwd": str(top), "command": "git push origin main"}]
+            review = json.loads(self.run_gate("prepare-git-review", runtime, {"language": "en", "operations": ops}).stdout)
+            self.record(runtime, review)
+            # A twin of the commit the review creates (its tree, parent and message, another date), never pushed.
+            tree = self.git("write-tree")
+            twin = subprocess.run(["git", "-C", str(self.repo), "commit-tree", tree, "-p", head, "-F", str(self.message)],
+                                  capture_output=True, text=True, check=True,
+                                  env=dict(env, GIT_COMMITTER_DATE="2001-01-01T00:00:00Z")).stdout.strip()
+            self.git("update-ref", "refs/heads/twin", twin)
+            subprocess.run(["git", "-C", str(sub), "fetch", "-q", str(self.repo), "+refs/heads/twin:refs/heads/twin"],
+                           check=True, env=env, capture_output=True)
+            gitlink(twin)
+            self.assertIn("the pinned commit is not on origin's main", self.blocked(self.check(runtime, pin_commit)))
+            # The remote cannot be read: deny with the reason.
+            self.git("remote", "set-url", "origin", str(pathlib.Path(self.tmp) / "gone.git"))
+            self.assertIn("the remote origin cannot be read now", self.blocked(self.check(runtime, pin_commit)))
+            self.git("remote", "set-url", "origin", str(self.remote))
+            # The commit the review creates, pushed: then its pin runs.
+            self.git("commit", "-q", "--cleanup=verbatim", "-F", str(self.message))
+            created = self.git("rev-parse", "HEAD")
+            subprocess.run(["git", "-C", str(sub), "fetch", "-q", str(self.repo), "+HEAD:refs/heads/made"], check=True,
+                           env=env, capture_output=True)
+            gitlink(created)
+            self.assertIn("the pinned commit is not on origin's main", self.blocked(self.check(runtime, pin_commit)))
+            if runtime == "claude":  # a pinned commit made past the gate: its superproject's push waits as well
+                saved = self.git("-C", str(top), "rev-parse", "HEAD")
+                subprocess.run(["git", "-C", str(top), "commit", "-q", "--cleanup=verbatim", "-F", str(message)],
+                               check=True, env=env)
+                push = "git -C {} push origin main".format(shlex.quote(str(top)))
+                self.assertIn("the pinned commit is not on origin's main", self.blocked(self.check(runtime, push)))
+                subprocess.run(["git", "-C", str(top), "reset", "-q", "--soft", saved], check=True, env=env)
+            self.pushed(runtime, self.check(runtime, "git push origin main"))
+            self.git("push", "-q", "origin", "main")
+            self.passed(runtime, self.check(runtime, pin_commit))
+            # An ancestor of the remote branch: the remote moved on past it, the pin still names what was pushed.
+            self.commit("later " + runtime + "\n", "Later")
+            self.git("push", "-q", "origin", "main")
+            self.passed(runtime, self.check(runtime, pin_commit))
+            subprocess.run(["git", "-C", str(top), "commit", "-q", "--cleanup=verbatim", "-F", str(message)], check=True,
+                           env=env)
+            self.git("update-ref", "-d", "refs/heads/twin")
+
+    def test_the_commits_sent_come_from_the_remote_itself(self):
+        self.git("commit", "-q", "--cleanup=verbatim", "-m", "c1")
+        self.git("push", "-q", "origin", "main")
+        hidden = self.commit("two\n", "c2 hidden")
+        shown = self.commit("three\n", "c3 shown")
+        self.git("update-ref", "refs/remotes/origin/main", hidden)  # a stale or rewritten tracking ref
+        for runtime in ("claude", "codex"):
+            review = self.prepare(runtime, ["git push origin main"])
+            self.assertEqual(review["question"]["title"].split("\n")[0],
+                             "決めること: 2 件のコミット（{} まで）を origin/main に送るか".format(shown[:7]))
+            self.assertIn(hidden, pathlib.Path(review["report"]).read_text(encoding="utf-8"))
+        # A new branch: the commits are those no branch or tag of the remote names, whatever the tracking refs say.
+        self.git("update-ref", "refs/remotes/origin/stale", shown)  # a stale tracking ref (deleted on the remote)
+        for runtime in ("claude", "codex"):
+            review = self.prepare(runtime, ["git push origin main:refs/heads/topic"])
+            self.assertEqual(review["question"]["title"].split("\n")[0],
+                             "決めること: 2 件のコミット（{} まで）を origin/topic に送るか".format(shown[:7]))
+            self.assertIn(hidden, pathlib.Path(review["report"]).read_text(encoding="utf-8"))
+            self.record(runtime, review)
+            self.pushed(runtime, self.check(runtime, "git push origin main:refs/heads/topic"))
+        self.git("update-ref", "-d", "refs/remotes/origin/stale")
+        # The remote's branch moved past what is pushed, or cannot be read: no review.
+        other = pathlib.Path(self.tmp) / "other clone"
+        subprocess.run(["git", "clone", "-q", str(self.remote), str(other)], check=True, env=self.git_env, capture_output=True)
+        (other / "x").write_text("x")
+        env = dict(self.git_env, GIT_AUTHOR_NAME="f", GIT_AUTHOR_EMAIL="f@x.invalid", GIT_COMMITTER_NAME="f",
+                   GIT_COMMITTER_EMAIL="f@x.invalid")
+        for args in (["checkout", "-q", "-B", "main", "origin/main"], ["add", "x"], ["commit", "-q", "-m", "elsewhere"],
+                     ["push", "-q", "origin", "HEAD:refs/heads/main"]):
+            proc = subprocess.run(["git", "-C", str(other), *args], env=env, capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.git("fetch", "-q", "origin")
+        for runtime in ("claude", "codex"):
+            proc = self.subcommand(["prepare-git-review", "--runtime", runtime],
+                                   {"language": "en", "operations": [{"cwd": str(self.repo), "command": "git push origin main"}]})
+            self.assertEqual(proc.returncode, 2)
+            self.assertIn("is not an ancestor of what is pushed", proc.stderr)
+        self.git("remote", "set-url", "origin", str(pathlib.Path(self.tmp) / "gone.git"))
+        proc = self.subcommand(["prepare-git-review", "--runtime", "claude"],
+                               {"language": "en", "operations": [{"cwd": str(self.repo), "command": "git push origin main"}]})
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("cannot be read now", proc.stderr)
+
+    def test_a_pin_names_an_earlier_push_of_its_review(self):
+        top, _ = self.superproject()
+        message = pathlib.Path(self.tmp) / "pin.txt"
+        message.write_text("Pin ddl\n")
+        pin_commit = "git -C {} commit --cleanup=verbatim -F {}".format(shlex.quote(str(top)), shlex.quote(str(message)))
+        push = {"cwd": str(self.repo), "command": "git push origin main"}
+        for pin, ops, reason in (
+                ({"submodule": "ddl", "from": 2}, None, "pin.from names an earlier push"),
+                ({"submodule": "ddl", "from": 0}, None, "pin.from names an earlier push"),
+                ({"submodule": "ddl", "from": "1"}, None, "pin is {submodule, from}"),
+                ({"submodule": "ddl"}, None, "pin is {submodule, from}"),
+                ({"submodule": "tools", "from": 1}, None, "pin.submodule names a submodule"),
+                ({"submodule": "ddl", "from": 1}, [push, {"cwd": str(top), "command": "git push origin main"}], "pin goes with a commit")):
+            for runtime in ("claude", "codex"):
+                with self.subTest(pin=pin, runtime=runtime):
+                    entries = ops or [push, {"cwd": str(top), "command": pin_commit}]
+                    entries = [dict(entries[0])] + [dict(entries[-1], pin=pin)]
+                    proc = self.subcommand(["prepare-git-review", "--runtime", runtime], {"language": "en", "operations": entries})
+                    self.assertEqual(proc.returncode, 2, proc.stdout)
+                    self.assertIn(reason, proc.stderr)
+        self.stage("x\n")
+        commit_first = [{"cwd": str(self.repo), "command": self.command},
+                        {"cwd": str(top), "command": pin_commit, "pin": {"submodule": "ddl", "from": 1}}]
+        proc = self.subcommand(["prepare-git-review", "--runtime", "claude"], {"language": "en", "operations": commit_first})
+        self.assertIn("pin.from names an earlier push", proc.stderr)  # a commit, not a push
+
+    def test_no_push_is_prepared_in_the_middle_of_a_run(self):
+        runs = self.repo / ".ddl" / "runs"
+
+        def run(items, name="N-00000000000a", started="2026-11-24T00:00:00.000Z"):
+            (runs / name).mkdir(parents=True, exist_ok=True)
+            (runs / name / "run.json").write_text(json.dumps({"id": name, "startedAt": started, "items": items}))
+
+        def prepared(runtime, commands):
+            data = {"language": "en", "operations": [{"cwd": str(self.repo), "command": c} for c in commands]}
+            return self.subcommand(["prepare-git-review", "--runtime", runtime], data, cwd=self.repo)
+
+        open_items = [{"id": "I1", "kind": "write", "after": [], "status": "ready"},
+                      {"id": "I2", "kind": "verify", "after": ["I1"], "status": "running"}]
+        for runtime in ("claude", "codex"):
+            run(open_items)
+            proc = prepared(runtime, ["git push origin main"])
+            self.assertEqual(proc.returncode, 2)
+            self.assertIn("Run N-00000000000a has open items and no `close` item whose dependencies are done", proc.stderr)
+            self.assertEqual(prepared(runtime, [self.command]).returncode, 0)  # a commit is unaffected
+            run(open_items + [{"id": "C", "kind": "close", "after": ["I1", "I2"], "status": "ready"}])
+            self.assertEqual(prepared(runtime, ["git push origin main"]).returncode, 2)  # its dependencies are open
+            run([{"id": "I1", "kind": "write", "after": [], "status": "done"},
+                 {"id": "I3", "kind": "explore", "after": [], "status": "ready"},
+                 {"id": "C", "kind": "close", "after": ["I1"], "status": "ready"}])
+            self.assertEqual(prepared(runtime, ["git push origin main"]).returncode, 0)  # the close item is ready
+            run(open_items, name="N-00000000000b", started="2026-11-23T00:00:00.000Z")  # an older open Run counts too
+            proc = prepared(runtime, ["git push origin main"])
+            self.assertEqual(proc.returncode, 2)
+            self.assertIn("Run N-00000000000b", proc.stderr)
+            run(open_items + [{"id": "C", "kind": "close", "after": [], "status": "dropped"}], name="N-00000000000b",
+                started="2026-11-23T00:00:00.000Z")  # its own close item, dropped: it opens nothing
+            self.assertEqual(prepared(runtime, ["git push origin main"]).returncode, 2)
+            run([{"id": "I1", "kind": "write", "after": [], "status": "done"},
+                 {"id": "C", "kind": "close", "after": ["I1"], "status": "dropped"}], name="N-00000000000b",
+                started="2026-11-23T00:00:00.000Z")  # nothing open there
+            self.assertEqual(prepared(runtime, ["git push origin main"]).returncode, 0)
+            run([{"id": "I1", "kind": "write", "after": [], "status": "done"},
+                 {"id": "I3", "kind": "write", "after": [], "status": "ready"},
+                 {"id": "C", "kind": "close", "after": ["I1"], "status": "dropped"}])
+            self.assertEqual(prepared(runtime, ["git push origin main"]).returncode, 2)  # a dropped close item
+            run([{"id": "C", "kind": "close", "after": [], "status": "ready"}], name="N-00000000000c",
+                started="2026-11-25T00:00:00.000Z")  # a newer Run of only a close item closes no other Run
+            proc = prepared(runtime, ["git push origin main"])
+            self.assertEqual(proc.returncode, 2)
+            self.assertIn("Run N-00000000000a", proc.stderr)
+            shutil.rmtree(str(runs / "N-00000000000b"))
+            shutil.rmtree(str(runs / "N-00000000000c"))
+            run([{"id": "I1", "kind": "write", "after": [], "status": "done"}])
+            self.assertEqual(prepared(runtime, ["git push origin main"]).returncode, 0)  # nothing open
+            # A close item without `after` waits for every other item; a dropped one is settled.
+            run([{"id": "I1", "kind": "write", "after": [], "status": "ready"},
+                 {"id": "C", "kind": "close", "after": [], "status": "ready"}])
+            self.assertEqual(prepared(runtime, ["git push origin main"]).returncode, 2)
+            run([{"id": "I1", "kind": "write", "after": [], "status": "dropped"},
+                 {"id": "I2", "kind": "write", "after": [], "status": "done"},
+                 {"id": "C", "kind": "close", "after": ["I1", "I2"], "status": "ready"}])
+            self.assertEqual(prepared(runtime, ["git push origin main"]).returncode, 0)
+            # A run.json that cannot be read refuses, naming its directory; a directory without one is no Run.
+            (runs / "N-00000000000d").mkdir()
+            self.assertEqual(prepared(runtime, ["git push origin main"]).returncode, 0)
+            broken = runs / "N-00000000000d" / "run.json"
+            for raw in (b'{"id": "N-1", "items": [{"id": "I1", "status": "ready"}', json.dumps({"items": {}}).encode(),
+                        json.dumps([{"id": "I1", "status": "ready"}]).encode(),
+                        b"\xef\xbb\xbf" + json.dumps({"items": []}).encode(), b'{"x": "\xff", "items": []}',
+                        json.dumps({"items": ["junk"]}).encode(),
+                        json.dumps({"items": [{"id": "I1", "status": "Ready"}]}).encode(),
+                        json.dumps({"items": [{"id": "I1", "status": "done", "after": "I0"}]}).encode(),
+                        json.dumps({"items": [{"id": "I1", "status": "done"}, {"id": "I1", "status": "done"}]}).encode()):
+                with self.subTest(runtime=runtime, raw=raw):
+                    broken.write_bytes(raw)
+                    proc = prepared(runtime, ["git push origin main"])
+                    self.assertEqual(proc.returncode, 2)
+                    self.assertRegex(proc.stderr, r"the Run in /.*/\.ddl/runs/N-00000000000d cannot be read")
+            broken.write_text(json.dumps({"items": [{"id": "I1", "status": "done"}]}))
+            broken.chmod(0)
+            self.assertEqual(prepared(runtime, ["git push origin main"]).returncode, 2)
+            broken.chmod(0o644)
+            shutil.rmtree(str(runs / "N-00000000000d"))
+            # The Run of the repository's own project counts, whatever the working directory.
+            run(open_items)
+            data = {"language": "en", "operations": [{"cwd": str(self.repo), "command": "git push origin main"}]}
+            away = self.subcommand(["prepare-git-review", "--runtime", runtime], data, cwd=self.tmp)
+            self.assertEqual(away.returncode, 2)
+            self.assertIn("Run N-00000000000a", away.stderr)
+            shutil.rmtree(str(runs))
+
+
 class GrantMatchTest(unittest.TestCase):
     """The pieces of the grant's answers, in process."""
 
@@ -5586,8 +6415,9 @@ class LedgerTest(ReportFlowTest):
         self.assertEqual(list(outside.iterdir()), [])
 
 
-COUNT_SAMPLE = {"ja": ["問い: 3 件（承認 2、見直し 1、時間切れ 0）", "待ち: 人間 12 分（答えまで中央値 4 分、最長 7 分）", "拒否: 2 件"],
-                "en": ["Questions: 3 (approved 2, revised 1, timed out 0)",
+COUNT_SAMPLE = {"ja": ["問い: 3 件（承認 2、見直し 1、時間切れ 0。計画 0、確認 0、Git 1、ほか 0、不明 2）",
+                       "待ち: 人間 12 分（答えまで中央値 4 分、最長 7 分）", "拒否: 2 件"],
+                "en": ["Questions: 3 (approved 2, revised 1, timed out 0; plan 0, confirm 0, Git 1, other 0, unknown 2)",
                        "Waiting: human 12 min (median to answer 4 min, longest 7 min)", "Denials: 2"]}
 
 
@@ -5643,18 +6473,18 @@ class CountReportTest(ReportFlowTest):
 
     def test_claude_and_codex_transcripts_with_a_timeout_counted_apart(self):
         claude = ["--transcript", fixture("report_count_claude.jsonl"), "--runtime", "claude"]
-        self.assertEqual(self.lines(*claude), ["問い: 5 件（承認 2、見直し 1、時間切れ 1、未回答 1）",
+        self.assertEqual(self.lines(*claude), ["問い: 5 件（承認 2、見直し 1、時間切れ 1、未回答 1。計画 0、確認 0、Git 1、ほか 0、不明 4）",
                                                "待ち: 人間 12 分（答えまで中央値 4 分、最長 7 分）", "拒否: 未計測", "許諾: なし"])
         self.assertEqual(self.lines(*claude, "--language", "ja"), self.lines(*claude))
         self.assertEqual(self.lines("--language=en", "--runtime=claude", "--transcript=" + fixture("report_count_claude.jsonl")),
-                         ["Questions: 5 (approved 2, revised 1, timed out 1, open 1)",
+                         ["Questions: 5 (approved 2, revised 1, timed out 1, open 1; plan 0, confirm 0, Git 1, other 0, unknown 4)",
                           "Waiting: human 12 min (median to answer 4 min, longest 7 min)", "Denials: not measured",
                           "Grant: none"])
         codex = ["--transcript", fixture("report_count_codex.jsonl"), "--runtime", "codex"]
-        self.assertEqual(self.lines(*codex), ["問い: 3 件（承認 1、見直し 1、時間切れ 0、未回答 1）",
+        self.assertEqual(self.lines(*codex), ["問い: 3 件（承認 1、見直し 1、時間切れ 0、未回答 1。計画 0、確認 0、Git 0、ほか 0、不明 3）",
                                               "待ち: 人間 7 分（答えまで中央値 4 分、最長 5 分）", "拒否: 未計測", "許諾: なし"])
         self.assertEqual(self.lines(*codex, "--language", "en"), [
-            "Questions: 3 (approved 1, revised 1, timed out 0, open 1)",
+            "Questions: 3 (approved 1, revised 1, timed out 0, open 1; plan 0, confirm 0, Git 0, other 0, unknown 3)",
             "Waiting: human 7 min (median to answer 4 min, longest 5 min)",
             "Denials: not measured", "Grant: none"])
         self.assertFalse(os.path.exists(self.grants))  # reading creates no store
@@ -5674,10 +6504,11 @@ class CountReportTest(ReportFlowTest):
                 prepared = self.prepare_report(runtime)
                 # These records carry no timestamps: the answer is counted, its time is not estimated.
                 answered = self.lines("--transcript", self.flow(runtime, prepared, "answered"), "--runtime", runtime)
-                self.assertEqual(answered, ["問い: 1 件（承認 1、見直し 0、時間切れ 0）", "待ち: 未計測", "拒否: 未計測", "許諾: なし"])
+                self.assertEqual(answered, ["問い: 1 件（承認 1、見直し 0、時間切れ 0。計画 0、確認 0、Git 0、ほか 1）", "待ち: 未計測",
+                                            "拒否: 未計測", "許諾: なし"])
                 # An unanswered question waited for nobody's answer yet.
                 asked = self.lines("--transcript", self.flow(runtime, prepared, "asked"), "--runtime", runtime, "--language", "en")
-                self.assertEqual(asked, ["Questions: 1 (approved 0, revised 0, timed out 0, open 1)",
+                self.assertEqual(asked, ["Questions: 1 (approved 0, revised 0, timed out 0, open 1; plan 0, confirm 0, Git 0, other 1)",
                                          "Waiting: human 0 min (median to answer not measured, longest not measured)",
                                          "Denials: not measured", "Grant: none"])
                 missing = os.path.join(self.tmp, "no-such-record.jsonl")
@@ -5696,9 +6527,11 @@ class CountReportTest(ReportFlowTest):
         root, cwd = self.project(design=False, git=True)
         self.ledger(root, self.sample())
         self.assertEqual(self.lines("--session", "S", cwd=cwd), [
-            "問い: 4 件（承認 2、見直し 1、時間切れ 1）", COUNT_SAMPLE["ja"][1], "拒否: 2 件", "許諾: なし"])
+            "問い: 4 件（承認 2、見直し 1、時間切れ 1。計画 0、確認 0、Git 1、ほか 0、不明 3）", COUNT_SAMPLE["ja"][1], "拒否: 2 件",
+            "許諾: なし"])
         self.assertEqual(self.lines("--session=S", "--language=en", "--runtime", "claude", cwd=os.path.join(cwd, ".claude")), [
-            "Questions: 4 (approved 2, revised 1, timed out 1)", COUNT_SAMPLE["en"][1], "Denials: 2", "Grant: none"])
+            "Questions: 4 (approved 2, revised 1, timed out 1; plan 0, confirm 0, Git 1, other 0, unknown 3)", COUNT_SAMPLE["en"][1],
+            "Denials: 2", "Grant: none"])
         self.assertEqual(self.lines("--session", "OTHER", cwd=cwd), [
             "問い: 0 件（承認 0、見直し 0、時間切れ 0）", "待ち: 人間 0 分（答えまで中央値 未計測、最長 未計測）", "拒否: 1 件", "許諾: なし"])
         # The grant line: the session's own record in this project's store, the latest when it has several.
@@ -5726,14 +6559,16 @@ class CountReportTest(ReportFlowTest):
         # The first Run: every session's lines from its start to the second Run's start, and the question of its
         # own plan, which was asked at 10:00 and answered at 10:04, before the Run started.
         self.assertEqual(self.lines("--run", "N-000000000001", cwd=cwd), [
-            "問い: 3 件（承認 1、見直し 1、時間切れ 1）", "待ち: 人間 5 分（答えまで中央値 3 分、最長 4 分）", "拒否: 3 件",
+            "問い: 3 件（承認 1、見直し 1、時間切れ 1。計画 0、確認 0、Git 1、ほか 0、不明 2）", NO_RECORDS["ja"],
+            "待ち: 人間 5 分（答えまで中央値 3 分、最長 4 分）", "拒否: 3 件",
             "許諾: R-{}（期限 {}、有効）".format("a" * 16, day), NO_FLOW["ja"]])
         self.assertEqual(self.lines("--run=N-000000000002", "--language", "en", cwd=cwd), [
-            "Questions: 1 (approved 1, revised 0, timed out 0)", "Waiting: human 7 min (median to answer 7 min, longest 7 min)",
-            "Denials: 0", "Grant: none", NO_FLOW["en"]])
+            "Questions: 1 (approved 1, revised 0, timed out 0; plan 0, confirm 0, Git 0, other 0, unknown 1)", NO_RECORDS["en"],
+            "Waiting: human 7 min (median to answer 7 min, longest 7 min)", "Denials: 0", "Grant: none", NO_FLOW["en"]])
         os.unlink(root / ".ddl" / "events.jsonl")  # the Run is known, its events are not
         self.assertEqual(self.lines("--run", "N-000000000001", cwd=cwd), [
-            "問い: 未計測", "待ち: 未計測", "拒否: 未計測", "許諾: R-{}（期限 {}、有効）".format("a" * 16, day), NO_FLOW["ja"]])
+            "問い: 未計測", "記録: 未計測", "待ち: 未計測", "拒否: 未計測", "許諾: R-{}（期限 {}、有効）".format("a" * 16, day),
+            NO_FLOW["ja"]])
 
     def test_a_run_counts_the_question_of_its_own_plan(self):
         """A plan is asked, answered and granted before `run-start`: its lines carry the report's ID, not the
@@ -5764,20 +6599,20 @@ class CountReportTest(ReportFlowTest):
         day = self.write_grant(plan, key=project_key(root))
         # Both questions, each once; the waiting covers both: 6 minutes for the plan and 2 for the review.
         self.assertEqual(self.lines("--run", run, cwd=cwd), [
-            "問い: 2 件（承認 2、見直し 0、時間切れ 0）", "待ち: 人間 8 分（答えまで中央値 4 分、最長 6 分）", "拒否: 1 件",
-            "許諾: {}（期限 {}、有効）".format(plan, day), NO_FLOW["ja"]])
+            "問い: 2 件（承認 2、見直し 0、時間切れ 0。計画 0、確認 0、Git 1、ほか 0、不明 1）", NO_RECORDS["ja"],
+            "待ち: 人間 8 分（答えまで中央値 4 分、最長 6 分）", "拒否: 1 件", "許諾: {}（期限 {}、有効）".format(plan, day), NO_FLOW["ja"]])
         # The Run after it counts neither that plan's question nor anything dated before its own start.
         self.assertEqual(self.lines("--run", following, cwd=cwd), [
-            "問い: 0 件（承認 0、見直し 0、時間切れ 0）", "待ち: 人間 0 分（答えまで中央値 未計測、最長 未計測）", "拒否: 1 件",
-            "許諾: なし", NO_FLOW["ja"]])
+            "問い: 0 件（承認 0、見直し 0、時間切れ 0）", NO_RECORDS["ja"], "待ち: 人間 0 分（答えまで中央値 未計測、最長 未計測）",
+            "拒否: 1 件", "許諾: なし", NO_FLOW["ja"]])
 
     def test_a_run_reports_in_the_language_of_its_plan(self):
         root, cwd = self.project(design=False, git=True)
-        english = ["Questions: 0 (approved 0, revised 0, timed out 0)",
+        english = ["Questions: 0 (approved 0, revised 0, timed out 0)", NO_RECORDS["en"],
                    "Waiting: human 0 min (median to answer not measured, longest not measured)", "Denials: 0", "Grant: none",
                    NO_FLOW["en"]]
-        japanese = ["問い: 0 件（承認 0、見直し 0、時間切れ 0）", "待ち: 人間 0 分（答えまで中央値 未計測、最長 未計測）", "拒否: 0 件",
-                    "許諾: なし", NO_FLOW["ja"]]
+        japanese = ["問い: 0 件（承認 0、見直し 0、時間切れ 0）", NO_RECORDS["ja"], "待ち: 人間 0 分（答えまで中央値 未計測、最長 未計測）",
+                    "拒否: 0 件", "許諾: なし", NO_FLOW["ja"]]
 
         def started(language):
             prepared = self.prepare_report("claude", cwd=cwd, language=language)
@@ -5894,7 +6729,7 @@ class RunTest(GateTest):
                 run = json.loads(pathlib.Path(json.loads(proc.stdout)["path"]).read_text(encoding="utf-8"))
                 self.assertIsNone(run["grant"])
                 report = self.subcommand(["report", "--run", run["id"]], cwd=self.cwd)
-                self.assertEqual(report.stdout.splitlines()[3], "許諾: なし")
+                self.assertEqual(report.stdout.splitlines()[4], "許諾: なし")  # after the Records line
 
     def test_run_start_input_errors_exit_2_and_write_nothing(self):
         prepared = self.prepare_report("claude", cwd=self.cwd)
@@ -5966,7 +6801,7 @@ class RunTest(GateTest):
                 self.assertIn("DDL Git review", out_commit["permissionDecisionReason"])
         # The counts of the Run read the same ledger.
         proc = self.subcommand(["report", "--run", out["run"], "--language", "en"], cwd=self.cwd)
-        self.assertEqual(proc.stdout.splitlines(), ["Questions: 0 (approved 0, revised 0, timed out 0)",
+        self.assertEqual(proc.stdout.splitlines(), ["Questions: 0 (approved 0, revised 0, timed out 0)", NO_RECORDS["en"],
                                                     "Waiting: human 0 min (median to answer not measured, longest not measured)",
                                                     "Denials: 4", "Grant: none",
                                                     NO_FLOW["en"]])  # items marked done without a start

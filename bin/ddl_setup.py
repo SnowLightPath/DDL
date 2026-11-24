@@ -1728,14 +1728,68 @@ def doctor_grant_store(report):
         report.good(f"{name} (only its owner can enter)")
 
 
+# One shard of the gate's suite: load tools/test_ddl_gate.py from its installed path, run every N-th test of the
+# sorted test IDs (round robin, so the shards are even), and print one tally line: the tests run and any that failed.
+SHARD_TALLY = "DDL-GATE-SHARD"
+GATE_SHARD = r"""
+import importlib.util, os, sys, unittest
+path, index, count = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+sys.path.insert(0, os.path.dirname(path))
+spec = importlib.util.spec_from_file_location("test_ddl_gate", path)
+module = importlib.util.module_from_spec(spec)
+sys.modules["test_ddl_gate"] = module
+spec.loader.exec_module(module)
+
+
+def flat(suite):
+    for test in suite:
+        if isinstance(test, unittest.TestSuite):
+            yield from flat(test)
+        else:
+            yield test
+
+
+tests = sorted(flat(unittest.defaultTestLoader.loadTestsFromModule(module)), key=lambda test: test.id())
+mine = unittest.TestSuite(test for number, test in enumerate(tests) if number % count == index)
+with open(os.devnull, "w") as quiet:
+    result = unittest.TextTestRunner(stream=quiet, verbosity=0).run(mine)
+bad = [test.id() for test, _ in result.failures + result.errors] + [test.id() for test in result.unexpectedSuccesses]
+print(" ".join([TALLY, "ran", str(result.testsRun)] + bad), flush=True)
+sys.exit(0 if result.wasSuccessful() else 1)
+""".replace("TALLY", repr(SHARD_TALLY))
+
+
 def gate_suite():
-    """Run the gate's own tests: (passed, last line of the run). The suite's gate calls get a disposable
-    grant store, so no test of the gate can write into the durable one."""
+    """Run the gate's own tests: (passed, the text doctor prints after the file name: `OK`, or `FAILED:` and the
+    failing test IDs). The suite runs in min(CPU count, 8) processes, each loading the installed
+    tools/test_ddl_gate.py and running every N-th of its sorted test IDs, each with a disposable grant store of its
+    own, so no test of the gate can write into the durable one. A shard that crashes or prints no tally is not OK."""
+    count = min(os.cpu_count() or 2, 8)
+    path = str(ROOT / "tools/test_ddl_gate.py")
+    failing, crashed = [], 0
     with tempfile.TemporaryDirectory(prefix="ddl-doctor-grants-") as tmp:
-        out = subprocess.run([sys.executable, "-I", str(ROOT / "tools/test_ddl_gate.py")], capture_output=True,
-                             text=True, cwd=ROOT, env=dict(os.environ, DDL_GATE_GRANT_DIR=tmp))
-    last = (out.stderr.strip().splitlines() or ["(no output)"])[-1]
-    return out.returncode == 0 and last == "OK", last
+        shards = []
+        for index in range(count):
+            store = os.path.join(tmp, f"grants-{index}")
+            os.mkdir(store)
+            out = open(os.path.join(tmp, f"shard-{index}.out"), "w+", encoding="utf-8")  # a file: no pipe fills up
+            shards.append((out, subprocess.Popen([sys.executable, "-I", "-c", GATE_SHARD, path, str(index), str(count)],
+                                                 stdout=out, stderr=subprocess.STDOUT, text=True, cwd=ROOT,
+                                                 env=dict(os.environ, DDL_GATE_GRANT_DIR=store))))
+        for out, proc in shards:
+            code = proc.wait()
+            out.seek(0)
+            tallies = [line.split() for line in out.read().splitlines() if line.startswith(SHARD_TALLY + " ran ")]
+            out.close()
+            if not tallies:
+                crashed += 1
+                continue
+            failing += tallies[-1][3:]
+            crashed += code != 0 and not tallies[-1][3:]
+    if not failing and not crashed:
+        return True, "OK"
+    parts = failing + ([f"{crashed} shard(s) crashed"] if crashed else [])
+    return False, "FAILED: " + ", ".join(parts)
 
 
 def cmd_doctor(args, report):

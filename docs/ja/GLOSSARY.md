@@ -165,7 +165,7 @@
 | typed message | 入力されたメッセージ |  | 質問への回答ではなく、人間が書いて送った発言 |
 | thinking block / signed thinking block | 思考ブロック |  | Claude の記録の thinking。signed は訳さない（帰属表記の行で使わない訳に当たるため）。ゲートは読まない |
 | reasoning item（Codex の記録） | 推論の項目 |  | Codex の記録の reasoning。ゲートは読まない |
-| count lines（ゲートの `report` が出力する 4 行と、Run の `Flow` の行。`Questions` line、`Waiting` line など） | 数の行（`問い` の行、`待ち` の行など） |  | ラベルは英語で `Questions`、`Waiting`、`Denials`、`Grant`、`Flow`、日本語で `問い`、`待ち`、`拒否`、`許諾`、`稼働`。`Questions` の行の `open` は `未回答`（まだ回答のない質問）。ラベルはゲートが出力するとおりに書き、本文の question は「質問」のままにする。サブコマンドの `report` は英字のままコード体で書き、「報告」とは訳さない |
+| count lines（ゲートの `report` が出力する 4 行と、Run の `Flow` の行。`Questions` line、`Waiting` line など） | 数の行（`問い` の行、`待ち` の行など） |  | ラベルは英語で `Questions`、`Records`、`Waiting`、`Denials`、`Grant`、`Flow`、日本語で `問い`、`記録`、`待ち`、`拒否`、`許諾`、`稼働`。`Questions` の行の `open` は `未回答`（まだ回答のない質問）。ラベルはゲートが出力するとおりに書き、本文の question は「質問」のままにする。サブコマンドの `report` は英字のままコード体で書き、「報告」とは訳さない |
 | not measured | `未計測` |  | 数の行のうち導き出せない値。推定した値では置き換えない。コード体で書く |
 | snapshot（ゲートの `snapshot` が作る途中の版） | 保存点 |  | 枝、index、作業ツリーを動かさずに作業ツリーを記録するコミット（`refs/ddl/snapshots/…`）。サブコマンドの `snapshot` は英字のままコード体で書く |
 | grant（計画が名指しする範囲、予算、期限） | 許諾 |  | `/realize` の計画の質問で人間が承認の選択肢を送信したときに、ゲートの `hook` が記録する。期限でだけ終わる。数の行のラベル `許諾` と同じ語。hook の allow（許可）と人間の approval（承認）とは区別する。許諾の scope は「範囲」と訳し、design.md の Scopes や作業単位の scope は「スコープ」の行に従う |
@@ -200,6 +200,16 @@
 | stale（質問が） | 古くなった |  | `replaces` を付けて変えずに尋ね直す |
 | connector / MCP tool | コネクタ / MCP のツール |  |  |
 | Questions waiting（`report` の行） | `待っていた問い` の行 |  | Run がまだ待っている質問を 1 件ずつ並べる。印は `[見込み]`、`[待ち]`、`[出口]` |
+| commit（許諾のコマンドの種類） | `commit` |  | 許諾が名指しすると、ステージしたファイルがすべて許諾の内にある通常の手元のコミットを尋ねずに通す。ゲートは台帳に記録して数える。保護されたファイルはそのパスをそのまま名指ししたときだけ含められる |
+| fine-grained（コミットが） | 細かく残す |  | コミットを細かく残したまま、承認は送信のときの 1 回にまとまる |
+| push review | 送信の確認 |  | push の Git の確認。送るすべてのコミットをメッセージと差分つきで示す。`記録` の行の語と同じ |
+| Records（`report` の行） | `記録` の行 |  | Run のコミットの数、そのうち許諾の内で通った数、送信の確認の数 |
+| question kinds（plan、confirm、Git、other） | 質問の種類（計画、確認、Git、ほか） |  | `問い` の行が種類ごとに数える。記録の無い報告は「不明」 |
+| pin（`pin`） | `pin` |  | 英字のままコード体で書く。親リポジトリのサブモジュールを、同じ確認案の先の push が送ったコミットに結ぶ操作 |
+| superproject / submodule / gitlink | 親リポジトリ / サブモジュール / サブモジュールの参照 |  |  |
+| `close` item | `close` の項目 |  | Run の項目の種類。リードのコミットと push を表す。依存が済むまで、Run の途中の push は断られる |
+| the commit to undo them to | 戻す先のコミット |  | push しない Close の報告がコミットの一覧とともに示す |
+| end / lift（STOP を） | 終わらせる |  | 許諾は STOP を終わらせない。待機中の質問が止める項目を名指ししているあいだだけ、許諾の内のほかの作業が進む |
 | stagger（ワーカーの開始を） | 間を空けて始める |  | 一斉に始めないこと。`runner` の `--stagger`（既定は 5 秒） |
 | promised behavior | 保証した振る舞い |  | contract の行の「使わない訳」に当たる語を避ける |
 | check（照らし合わせる） | 照らす / 確かめる |  | 名詞の checks は「検査」 |

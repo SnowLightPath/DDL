@@ -45,7 +45,7 @@ Run the Close scan, then the verification checks:
 After those checks pass, prepare the final candidate set for review:
 
 6. Read the Git review operation and its implementation for the current host, then stage only the proposed files. Preserve unrelated existing staged changes: include them in the complete review when justified, or leave them intact and resolve the scope before proceeding. Staging is reversible review preparation; it does not authorize a commit. State the staged set in the review detail.
-7. Run the Git review helper (Git review Syntax; its path is in the implementation for the current host) to freeze the staged contents, exact message, and any explicitly requested push. The ordinary message form preserves the reviewed text verbatim. Group all compatible ready operations into one review; put a repository's planned commit before its push. A plan approved before the final diff existed supplies no Git approval.
+7. Run the Git review helper (Git review Syntax; its path is in the implementation for the current host) to freeze the staged contents, exact message, and any explicitly requested push. The ordinary message form preserves the reviewed text verbatim. Group all compatible ready operations into one review; put a repository's planned commit before its push. A plan approved before the final diff existed supplies no Git approval. When an active grant names `commit`, record the commit inside the grant first (Run): with a requested push, review the push alone, which lists every commit it sends; without one, ask nothing and end with an informational report of the commits (messages, file counts) and the commit to undo them to.
 8. If there are no commit candidates and no requested push, issue an informational report; do not invent an approval or empty commit.
 
 +++DETECT:
@@ -69,7 +69,7 @@ After those checks pass, prepare the final candidate set for review:
 +++Report:
 Decision: create the proposed commit, revise it, or leave it uncommitted.
 Recommendation: the commit's purpose and why the proposed files belong together; keep material detections visible.
-Consequence: commit exactly `Files` with the exact `Message`; state whether `Push` is no or names the remote and branch, and include any requested push in the selected action explicitly.
+Consequence: commit exactly `Files` with the exact `Message` (after a commit inside the grant, send exactly the listed commits); state whether `Push` is no or names the remote and branch, and include any requested push in the selected action explicitly.
 Review detail: the complete `Files` list and diff, affected `Scope`, exact `Message`, every material `Detection`, `Push`, and a summary of the design.md and documentation changes the Close scan applied. The prepared question carries the review ID and the report file, which holds all of it before approval.
 Choices: use the prepared native question and its exact action labels for one whole-set approval (Git review). Do not replace it with an arbitrary question or ask again per file. Approval of a different file set, message, or push target is not approval of this proposal.
 
@@ -84,7 +84,7 @@ Choices: use the prepared native question and its exact action labels for one wh
 +++STOP: on D2
 +++STOP: on D6
 
-4. Create the reviewed commit with the approved verbatim message using the supported ordinary form (Git review Operands)
+4. Create the reviewed commit with the approved verbatim message using the supported ordinary form (Git review Operands), unless step 7 recorded it inside the grant
 5. Report the commit hash as progress. Do not emit a new STOP report between an approved commit and its approved push; finish the reviewed set before the final informational report, which states that nothing remains or names what was left with its reason, and suggests no next command
 
 ### Phase 4: PUSH

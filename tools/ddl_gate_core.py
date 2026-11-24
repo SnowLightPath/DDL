@@ -114,7 +114,16 @@ Decisions (JSON on stdout; the exit status is always 0):
                       gate by its real path, any Git alias) and every MCP tool without a read verb is
                       denied; an edit of a file an unanswered queued question holds is denied;
                       ordinary commit/push also needs a matching native content review while OPEN,
-                      and the matched one is allowed ("allow": the review was its one confirmation);
+                      and the matched one is allowed ("allow": the review was its one confirmation); a
+                      plain commit (`-m` or `-F`, optional `--cleanup=verbatim`, nothing else) inside an
+                      active grant that names `commit` needs none: in this project's repository or its
+                      second Git directory (work tree: the root), on a branch, its staged paths inside the
+                      grant's paths (a protected file only named literally); it writes a `commit` line;
+                      a push review lists every commit the push sends, and a pinned superproject commit
+                      (`pin` {submodule, from}) matches when its gitlink is the commit that push sent
+                      (the steps between them, submodule update, fetch, checkout, add, are allowed);
+                      prepare-git-review refuses a push while the newest Run has open items and no
+                      `close` item whose dependencies are done;
                       codex also denies unsupported push forms in confirmation-enabled modes;
                       a write of `.ddl/events.jsonl` or `.ddl/runs/*/run.json` -> "deny";
                       OPEN with an active grant (recorded, before its expiry): a read; from a working
@@ -211,7 +220,7 @@ datetime, hashlib, ipaddress, pathlib, re, secrets, shlex, shutil, subprocess, t
                              "subprocess", "time"))
 urlparse = _Lazy("urllib.parse", "urlparse")
 
-EVENTS = ("pre-tool-use", "permission-request", "session-start", "stop", "user-prompt-submit")
+EVENTS = ("pre-tool-use", "permission-request", "session-start", "stop", "user-prompt-submit", "post-tool-use")
 RUNTIMES = ("claude", "codex")
 REPORT = _Pattern("REPORT", r"(?m)^\s*\+\+\+DDL_REPORT\b")
 
@@ -254,6 +263,15 @@ REVIEW_ALLOW_REASON = "DDL: matches Git review {}"
 GIT_PROTECTED = {"commit", "push", "commit-tree", "send-pack"}
 # Leave headroom beneath the adapters' ten-second hook timeout. A timed-out runtime hook may fail open.
 GIT_REVIEW_BUDGET_SECONDS = 4
+SENT_LIMIT = 300  # commits one push review lists, at most
+MESSAGE_BYTES = 64 * 1024  # the largest commit message file read
+LS_REMOTE_SECONDS = 20  # the remote's branch is read at a push review's preparation, within this
+LS_REMOTE_PIN_SECONDS = 6  # and the submodule's remote branch when a pinned commit runs, within this
+RUN_STATUSES = ("ready", "running", "done", "failed", "dropped")  # an item's status in run.json (ddl_run's)
+DEFAULT_PORTS = {"ssh": 22, "git+ssh": 22, "ssh+git": 22, "https": 443, "http": 80, "git": 9418, "ftp": 21, "ftps": 990}
+COMMIT_HOOKS = ("pre-commit", "prepare-commit-msg", "commit-msg", "post-commit", "reference-transaction",
+                "post-index-change", "pre-auto-gc", "post-rewrite")  # hooks a commit may run
+PIN_STEP_ALLOW = "DDL: a step of the pin in Git review {}"
 _git_review_deadline = None
 
 # --- the prepared question --------------------------------------------------------------------
@@ -357,7 +375,7 @@ PREPARE_HEAD = _Pattern("PREPARE_HEAD", r"python3(?:[ \t]+-I)?[ \t]+(.+?)[ \t]+(
 # handed-over data it may use, its budget and its expiry. Recorded, it answers for the calls it
 # classifies (the grant's answers, below) until it expires; no decision reads a ledger line or a Run.
 GRANT_KEYS = ("paths", "commands", "machines", "handover", "budget", "expires")
-GRANT_COMMANDS = ("build", "test", "check", "snapshot", "remote-run")
+GRANT_COMMANDS = ("build", "test", "check", "snapshot", "remote-run", "commit")
 GRANT_LISTS = {"paths": (1, 32), "commands": (0, 8), "machines": (0, 8), "handover": (0, 8)}  # entries per list
 GRANT_BUDGET = {"minutes": (1, 10080), "fixAttempts": (0, 10)}
 GRANT_NAME_LIMIT = 80  # characters of one machine or handed-over entry
@@ -616,7 +634,9 @@ def visible_git_write(command, depth=0):
     return False
 
 
-def git_tree_fingerprint(cwd, commit=None, ctx=None):
+def git_tree_fingerprint(cwd, commit=None, ctx=None, pin=None):
+    """The hash of a commit's tree or of the index. `pin` (path, marker, accept): that gitlink reads as the marker
+    when `accept` is None (a preparation, before the pushed commit exists) or when accept(its commit) is true."""
     cwd = git_repo(cwd, ctx)
     args = ("ls-tree", "--full-tree", "-r", "-z", commit) if commit else ("ls-files", "--full-name", "--stage", "-z")
     rows = []
@@ -628,7 +648,10 @@ def git_tree_fingerprint(cwd, commit=None, ctx=None):
         oid = third if commit else second
         if not commit and third != b"0":
             raise ValueError("resolve the unmerged index before reviewing a commit.")
-        rows.append([mode.decode(), oid.decode(), path.decode("utf-8", "surrogateescape")])
+        name, oid = path.decode("utf-8", "surrogateescape"), oid.decode()
+        if pin and name == pin[0] and mode == b"160000" and (pin[2] is None or pin[2](oid)):
+            oid = pin[1]
+        rows.append([mode.decode(), oid, name])
     return review_hash(sorted(rows))
 
 
@@ -645,8 +668,10 @@ def git_message(args, cwd):
             if arg in ("-F", "--file"):
                 if message or args[i] == "-":
                     raise ValueError("use one literal message file, without stdin or mixed message forms.")
-                with (pathlib.Path(cwd) / args[i]).open(encoding="utf-8", newline="") as stream:
-                    message = [stream.read()]
+                try:  # a regular file of at most MESSAGE_BYTES, looked at before any open
+                    message = [small_file(str(pathlib.Path(cwd) / args[i]), MESSAGE_BYTES).decode("utf-8")]
+                except ValueError:
+                    raise ValueError("a commit message file is a regular file of at most 64 KiB.") from None
                 file_message = True
             else:
                 if file_message:
@@ -676,9 +701,13 @@ def repo_name(op):
     return os.path.basename(op["repo"])
 
 
-def commit_snapshot(cwd, args, ctx=None):
+def commit_snapshot(cwd, args, ctx=None, pin=None, accept=None):
     """The reviewed commit. In a second Git directory (`ctx`) every read uses that pair, and the repository is
-    the Git directory's real path: one review may hold a commit there and one in the work tree's own `.git`."""
+    the Git directory's real path: one review may hold a commit there and one in the work tree's own `.git`.
+
+    `pin` {submodule, from}: a superproject commit whose submodule gitlink is the commit push operation `from`
+    sends; its staged changes are shown without that gitlink, which reads as "pinned:<from>" (at a preparation,
+    and at the commit when `accept`, the review's own account of what that push sends, accepts it)."""
     top = git_repo(cwd, ctx)
     git_dir = pathlib.Path(git_text(cwd, "rev-parse", "--absolute-git-dir", ctx=ctx))
     if any((git_dir / name).exists() for name in ("MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply")):
@@ -693,30 +722,43 @@ def commit_snapshot(cwd, args, ctx=None):
     if git_read(top, *raw_args, "--ita-visible-in-index", ctx=ctx) != \
             git_read(top, *raw_args, "--ita-invisible-in-index", ctx=ctx):
         raise ValueError("fully stage or remove intent-to-add entries before reviewing the index.")
+    scope = ("--", ".", ":(exclude){}".format(pin["submodule"])) if pin else ()
+    if pin and git_read(top, "ls-files", "--stage", "--", pin["submodule"], ctx=ctx)[:6] != b"160000":
+        raise ValueError("pin.submodule names a submodule (a gitlink) of the superproject.")
     patch = git_read(top, "diff", "--cached", "--no-relative", "--binary", "--no-ext-diff", "--no-textconv",
-                     "--no-renames", ctx=ctx)
-    if not patch:
+                     "--no-renames", *scope, ctx=ctx)
+    if not patch and not pin:
         raise ValueError("stage the proposed files before preparing the review; the index is empty.")
-    names = git_read(top, "diff", "--cached", "--no-relative", "--name-status", "-z", "--no-renames", ctx=ctx).split(b"\0")
+    names = git_read(top, "diff", "--cached", "--no-relative", "--name-status", "-z", "--no-renames", *scope,
+                     ctx=ctx).split(b"\0")
     files = [[names[i].decode(), names[i + 1].decode("utf-8", "surrogateescape")]
-             for i in range(0, len(names) - 1, 2)]
+             for i in range(0, len(names) - 1, 2)] + ([["pin", pin["submodule"]]] if pin else [])
+    marker = (pin["submodule"], "pinned:{}".format(pin["from"]), accept) if pin else None
     op = {"kind": "commit", "repo": top, "branch": branch,
           "head": git_text(cwd, "rev-parse", "--verify", "HEAD", optional=True, ctx=ctx),
-          "tree": git_tree_fingerprint(cwd, ctx=ctx), "message": git_message(args, cwd),
+          "tree": git_tree_fingerprint(cwd, ctx=ctx, pin=marker), "message": git_message(args, cwd),
           "files": files, "patchHash": hashlib.sha256(patch).hexdigest()}
+    if pin:
+        op["pin"] = {"submodule": pin["submodule"], "from": pin["from"]}
     if ctx:
         op.update(repo=str(git_dir.resolve()), gitDir=str(git_dir.resolve()), workTree=top)
     return op, patch
 
 
 def display_remote(url):
-    parsed = urlparse.urlsplit(url)
-    if parsed.scheme and parsed.netloc and "@" in parsed.netloc:
-        return urlparse.urlunsplit(parsed._replace(netloc=parsed.netloc.rsplit("@", 1)[1]))
+    """A remote URL as reports and messages show it: never its user part (credentials, or an ssh login)."""
+    if "://" in url:
+        parsed = urlparse.urlsplit(url)
+        if parsed.netloc and "@" in parsed.netloc:
+            return urlparse.urlunsplit(parsed._replace(netloc=parsed.netloc.rsplit("@", 1)[1]))
+        return url
+    head = url.split(":", 1)[0]
+    if ":" in url and "@" in head and "/" not in head:  # user@host:path
+        return url[head.rindex("@") + 1:]
     return url
 
 
-def push_snapshot(cwd, args, commits=()):
+def push_snapshot(cwd, args, commits=(), record=None):
     flags = []
     while args and args[0] in ("--no-follow-tags", "--recurse-submodules=no"):
         flags.append(args[0]);args = args[1:]
@@ -749,17 +791,181 @@ def push_snapshot(cwd, args, commits=()):
     dependent = next((c for c in commits if c["repo"] == repo and source in
                       ("HEAD", c["branch"], c["branch"].removeprefix("refs/heads/"))), None)
     oid = None if dependent else git_text(cwd, "rev-parse", "--verify", source + "^{commit}")
+    tip = git_text(cwd, "rev-parse", "--verify", "--quiet", source + "^{commit}", optional=True) if dependent else oid
+    if record is None:  # a preparation: what the remote has now, read from the remote itself
+        head, known = remote_refs(cwd, remote, destination)
+        base = None
+    else:  # the push: what the review recorded of it
+        reviewed = next((op for op in record["operations"] if op["kind"] == "push" and op["repo"] == repo
+                         and op["remote"] == remote and op["destination"] == destination), None)
+        if reviewed is None or reviewed.get("remoteHead") is None and reviewed.get("remoteBase") is None:
+            raise ValueError("this push is not one of the approved set.")
+        head, base, known = reviewed["remoteHead"], reviewed["remoteBase"], None
+    if record is None and head and tip and git_read(cwd, "merge-base", "--is-ancestor", head, tip, optional=True) is None:
+        raise ValueError("the remote's {} is not an ancestor of what is pushed (fetch and integrate it first).".format(
+            destination[len("refs/heads/"):]))
+    sends, parents = sent_commits(cwd, tip, head, known if base is None else base) if tip else ([], set())
+    if record is None and not head:  # a new branch: the commits just outside what it sends bound it at the push
+        base = sorted(parents - {entry["commit"] for entry in sends}) if sends else ([tip] if tip else [])
+    placeholder = {"commit": None, "subject": None}  # the commit this review creates
+    if dependent and record is None:
+        sends.append(placeholder)  # a preparation: it comes last
+    elif dependent and sends and matches_created_commit(dependent, cwd, sends[-1]["commit"],
+                                                        pin_accept(record, dependent.get("pin"))):
+        sends[-1] = placeholder
     return {"kind": "push", "repo": repo, "cwd": str(cwd), "remote": remote,
             "urlHash": review_hash(urls), "displayUrl": display_remote(urls[0]),
             "source": source, "destination": destination, "commit": oid,
-            "fromCommit": review_hash(dependent) if dependent else None}, b""
+            "fromCommit": review_hash(dependent) if dependent else None, "sends": sends, "remoteHead": head,
+            "remoteBase": None if head else base}, b""
 
 
-def snapshot_operation(request, commits=()):
+def push_target(cwd, remote):
+    """The one URL a push to `remote` goes to, as `git push` resolves it (pushurl, pushInsteadOf). ValueError when
+    reading that URL could reach another repository than the push: remote.<name>.uploadpack or .receivepack set, no
+    single push URL, or a URL that reading rewrites (url.<base>.insteadOf)."""
+    for key in ("uploadpack", "receivepack"):
+        if git_read(cwd, "config", "--get-all", "remote.{}.{}".format(remote, key), optional=True) is not None:
+            raise ValueError("remote.{}.{} is set; a review reads a remote only where its push goes.".format(remote, key))
+    urls = (git_text(cwd, "remote", "get-url", "--push", "--all", remote, optional=True) or "").splitlines()
+    if len(urls) != 1 or not urls[0]:
+        raise ValueError("the push URL of the remote {} cannot be resolved to one URL.".format(remote))
+    if git_text(cwd, "ls-remote", "--get-url", urls[0], optional=True) != urls[0]:
+        raise ValueError("the push URL of the remote {} is rewritten when it is read (url.*.insteadOf); a review "
+                         "reads a remote only where its push goes.".format(remote))
+    return urls[0]
+
+
+def ls_remote(cwd, remote, flags, patterns, seconds):
+    """[(oid, ref)] `git ls-remote <flags> <push URL> <patterns>` reports, read where a push to `remote` goes
+    (push_target; no prompt, no stdin, within `seconds`); ValueError with the reason when it cannot be read."""
+    env = dict(os.environ, GIT_TERMINAL_PROMPT="0", GIT_OPTIONAL_LOCKS="0")
+    target = push_target(cwd, remote)
+    try:
+        proc = subprocess.run(["git", "--no-pager", "-C", str(cwd), "ls-remote", *flags, target, *patterns],
+                              capture_output=True,
+                              stdin=subprocess.DEVNULL, env=env, timeout=seconds)
+    except subprocess.TimeoutExpired:
+        raise ValueError("the remote {} did not answer within {} seconds; its branches cannot be read.".format(
+            remote, seconds)) from None
+    if proc.returncode:
+        raise ValueError("the remote {} cannot be read now, so what it holds is not known.".format(remote))
+    found = []
+    for line in proc.stdout.decode("utf-8", "replace").splitlines():
+        oid, _, ref = line.partition("\t")
+        if re.fullmatch(r"[0-9a-f]{40,64}", oid):
+            found.append((oid, ref))
+    return found
+
+
+def remote_refs(cwd, remote, destination, seconds=LS_REMOTE_SECONDS):
+    """(head, known) from the remote itself: the commit its branch `destination` names (None when it has no such
+    branch), and the commits its branches and tags name that this repository has (never a local tracking ref)."""
+    found = ls_remote(cwd, remote, ["--heads", "--tags"], [], seconds)
+    head = next((oid for oid, ref in found if ref == destination), None)
+    oids = sorted({oid for oid, _ in found})
+    types = git_read(cwd, "cat-file", "--batch-check=%(objectname) %(objecttype)",
+                     input_data="".join(oid + "\n" for oid in oids).encode()).decode("utf-8", "replace").split("\n") \
+        if oids else []
+    known = {line.split(" ")[0] for line in types if line.endswith(" commit")}
+    if head and head not in known:
+        raise ValueError("the remote's {} is a commit this repository does not have; fetch it first.".format(
+            destination[len("refs/heads/"):]))
+    return head, sorted(known)
+
+
+def sent_commits(cwd, tip, head, known=()):
+    """([{commit, subject}], parents) a push of `tip` sends, oldest first: the commits after `head`, the remote
+    branch's commit, or when the branch is new there, those that none of `known` (the commits the remote's branches
+    and tags name) reaches; and every parent of those commits."""
+    revs = [tip] + ["^" + oid for oid in ([head] if head else known)]
+    lines = git_read(cwd, "rev-list", "--reverse", "--parents", "--format=%s", "--stdin",
+                     input_data="".join(rev + "\n" for rev in revs).encode()).decode("utf-8", "replace").split("\n")
+    sends, parents, i = [], set(), 0
+    while i < len(lines):
+        if re.fullmatch(r"commit [0-9a-f]{40,64}( [0-9a-f]{40,64})*", lines[i]):
+            oids = lines[i].split(" ")[1:]
+            sends.append({"commit": oids[0], "subject": lines[i + 1] if i + 1 < len(lines) else ""})
+            parents.update(oids[1:])
+            i += 2
+        else:
+            i += 1
+    if len(sends) > SENT_LIMIT:
+        raise ValueError("this push sends {} commits; a review lists at most {}.".format(len(sends), SENT_LIMIT))
+    return sends, parents
+
+
+def commit_patch(cwd, oid):
+    """(message, patch bytes) of one commit against its first parent (the empty tree for a root commit)."""
+    message = git_read(cwd, "log", "-1", "--format=%B", oid).decode("utf-8", "replace")
+    parent = git_text(cwd, "rev-parse", "--verify", "--quiet", oid + "^1", optional=True)
+    base = parent or git_text(cwd, "hash-object", "-t", "tree", os.devnull)
+    patch = git_read(cwd, "diff", "--binary", "--no-ext-diff", "--no-textconv", "--no-renames", base, oid)
+    return message, patch
+
+
+def snapshot_operation(request, commits=(), record=None, pin=None, live=False):
+    """(operation, patch) of one review request: at a preparation (`record` None), or at the commit or push the review
+    `record` approved. `pin` reads a commit as the pinned one (commit_snapshot), its gitlink judged by the record."""
     if not isinstance(request, dict) or not isinstance(request.get("command"), str):
         raise ValueError("each review operation needs a literal command and working directory.")
     cwd, kind, args, ctx = git_review_command(request["command"], request.get("cwd") or os.getcwd())
-    return commit_snapshot(cwd, args, ctx) if kind == "commit" else push_snapshot(cwd, args, commits)
+    if pin and kind != "commit":
+        raise ValueError("pin goes with a commit of the superproject.")
+    if kind == "commit":  # at a preparation a pinned gitlink is unknown yet; at a commit the record judges it
+        return commit_snapshot(cwd, args, ctx, pin, None if record is None else pin_accept(record, pin, live))
+    return push_snapshot(cwd, args, commits, record)
+
+
+def pin_accept(record, pin, live=False):
+    """For a pin of the approved review `record`, the test a gitlink's commit must pass, from the hash-protected record
+    alone: the commit a commit operation of the review creates (its prepared parent, message and tree) when the push
+    `pin.from` sends that one, else exactly the source commit the review recorded. `live` (the pinned commit runs):
+    that commit must also be what the push's remote branch names now, or an ancestor of it, read with `git ls-remote`
+    (ValueError with the reason otherwise, and when the remote cannot be read). None without a pin."""
+    if not pin:
+        return None
+    push = record["operations"][pin["from"] - 1] if 1 <= pin["from"] <= len(record["operations"]) else {}
+    if push.get("kind") != "push":
+        return lambda oid: False
+    accept = recorded_pin(record, push)
+    if not live:
+        return accept
+
+    def pushed(oid):
+        global _git_review_deadline
+        if not accept(oid):
+            return False
+        started = time.monotonic()
+        found = ls_remote(push["cwd"], push["remote"], [], [push["destination"]], LS_REMOTE_PIN_SECONDS)
+        if _git_review_deadline:  # the network read does not count against the hook's own Git budget
+            _git_review_deadline += time.monotonic() - started
+        head = next((found_oid for found_oid, ref in found if ref == push["destination"]), None)
+        branch = push["destination"][len("refs/heads/"):]
+        if head == oid:
+            return True
+        if head and git_read(push["cwd"], "merge-base", "--is-ancestor", oid, head, optional=True) is not None:
+            return True
+        raise ValueError("the pinned commit is not on {}'s {} (run its reviewed push first, or fetch).".format(
+            push["remote"], branch))
+    return pushed
+
+
+def recorded_pin(record, push):
+    """The record's own test for the commit a pin's push sends (pin_accept)."""
+    if push.get("fromCommit"):
+        created = next((op for op in record["operations"] if op["kind"] == "commit"
+                        and review_hash(op) == push["fromCommit"]), None)
+        if created is None or created.get("pin"):
+            return lambda oid: False
+
+        def made(oid):
+            try:
+                return matches_created_commit(created, created["repo"], oid)
+            except (OSError, ValueError, TypeError):
+                return False
+        return made
+    return lambda oid: bool(push.get("commit")) and oid == push["commit"]
 
 
 def is_japanese(language):
@@ -884,21 +1090,32 @@ def git_question_values(record):
 
     targets = unique(where(op, op["remote"] + "/" + op["destination"].removeprefix("refs/heads/")) for op in pushes)
     target_text = sep.join(targets)
+
+    def sent(op):  # the commits a push sends (one for an operation that does not list them)
+        return len(op.get("sends") or [None])
+
     if len(commits) == 1 and len(pushes) <= 1 and all(op["fromCommit"] for op in pushes):
         op, n = commits[0], len(commits[0]["files"])
         subject = (op["message"].splitlines() or [""])[0].strip()
+        earlier = sent(pushes[0]) - 1 if pushes else 0
         if ja:
-            tail = "に記録し、{} に送るか".format(target_text) if pushes else "に記録するか"
+            tail = ("に記録し、先の {} 件と合わせて {} に送るか".format(earlier, target_text) if earlier else
+                    "に記録し、{} に送るか".format(target_text)) if pushes else "に記録するか"
             decision = fit_subject(lambda s: "コミット「{}」（{} ファイル）を {} {}".format(s, n, branch(op), tail), subject)
         else:
-            tail = " and push it to {}?".format(target_text) if pushes else "?"
+            tail = (" and push it with {} to {}?".format(counted(earlier, "earlier commit"), target_text) if earlier else
+                    " and push it to {}?".format(target_text)) if pushes else "?"
             decision = fit_subject(lambda s: 'Record commit "{}" ({}) on {}{}'.format(s, counted(n, "file"), branch(op), tail),
                                    subject)
     elif not commits and len(pushes) == 1:
-        sha = (pushes[0]["commit"] or "")[:SHORT_SHA_LENGTH]
-        decision = "{} を {} に送るか".format(sha, target_text) if ja else "Push {} to {}?".format(sha, target_text)
+        sha, n = (pushes[0]["commit"] or "")[:SHORT_SHA_LENGTH], sent(pushes[0])
+        if n > 1:
+            decision = ("{} 件のコミット（{} まで）を {} に送るか".format(n, sha, target_text) if ja else
+                        "Push {} (up to {}) to {}?".format(counted(n, "commit"), sha, target_text))
+        else:
+            decision = "{} を {} に送るか".format(sha, target_text) if ja else "Push {} to {}?".format(sha, target_text)
     else:
-        k, m = len(commits), len(pushes)
+        k, m = len(commits), sum(sent(op) for op in pushes)
         repos = sep.join(unique(repo_name(op) for op in commits))
         if commits and pushes:
             decision = ("{} 件のコミット（{}）を記録し、{} 件を送るか".format(k, repos, m) if ja else
@@ -959,11 +1176,13 @@ def review_report(record, directory):
     labels = ({"heading": "Gitの確認案", "commit": "記録", "push": "送信", "branch": "ブランチ", "base": "基準",
                "initial": "最初のコミット", "message": "コミットメッセージ", "files": "変更するファイル", "diff": "差分を確認する",
                "remote": "送信先", "destination": "送信先ブランチ", "source": "送信するコミット",
-               "dependent": "この確認案の変更内容とメッセージで作成するコミット"} if ja else
+               "dependent": "この確認案の変更内容とメッセージで作成するコミット",
+               "sends": "送るコミット（{} 件）:", "pin": "サブモジュール {}: 操作 {} が送るコミット"} if ja else
               {"heading": "Git review", "commit": "Commit", "push": "Push", "branch": "Branch", "base": "Base",
                "initial": "initial commit", "message": "Message", "files": "Files", "diff": "Full diff",
                "remote": "Remote", "destination": "Destination", "source": "Commit",
-               "dependent": "the commit created from this same reviewed set"})
+               "dependent": "the commit created from this same reviewed set",
+               "sends": "Commits sent ({}):", "pin": "Submodule {}: the commit operation {} pushes"})
     lines = ["# " + labels["heading"] + " G-" + record["id"], "", question["title"], ""]
     for i, op in enumerate(record["operations"], 1):
         where = "{} ({})".format(op["workTree"], op["gitDir"]) if op.get("gitDir") else op["repo"]
@@ -972,11 +1191,25 @@ def review_report(record, directory):
             lines += [labels["branch"] + ": " + op["branch"], labels["base"] + ": " + (op["head"] or labels["initial"]),
                       "", labels["message"] + ":", "", *["> " + line for line in op["message"].splitlines()], "", labels["files"] + ":", ""]
             lines += ["- {} {}".format(status, json.dumps(path, ensure_ascii=False)) for status, path in op["files"]]
+            if op.get("pin"):
+                lines += ["", labels["pin"].format(json.dumps(op["pin"]["submodule"], ensure_ascii=False), op["pin"]["from"])]
             lines += ["", "[" + labels["diff"] + "](<" + str(directory / (str(i) + ".patch")) + ">)", ""]
         else:
             lines += [labels["remote"] + ": {} ({})".format(op["remote"], op["displayUrl"]),
                       labels["destination"] + ": " + op["destination"],
                       labels["source"] + ": " + (op["commit"] or labels["dependent"]), ""]
+            sends = op.get("sends") or []
+            if sends:
+                lines += [labels["sends"].format(len(sends)), ""]
+            for k, entry in enumerate(sends, 1):
+                if not entry["commit"]:
+                    lines += ["{}. {}".format(k, labels["dependent"]), ""]
+                    continue
+                detail = (record.get("sent") or {}).get("{}.{}".format(i, k), {})
+                outside = (" （コミットの時点で許諾の外）" if ja else " (outside the grant at commit time)") if detail.get("outside") else ""
+                lines += ["{}. {} {}{}".format(k, entry["commit"], entry["subject"], outside), "",
+                          *["> " + line for line in detail.get("message", "").splitlines()], "",
+                          "[" + labels["diff"] + "](<" + str(directory / "{}.{}.patch".format(i, k)) + ">)", ""]
     lines += (["承認するのは、この確認案に示した一式です。内容・メッセージ・送信先が変わった場合は、改めて確認します。",
                "保留・見直し・取消・時間切れでは実行しません。", ""] if ja else
               ["Approval covers this set only. Changed contents, message, source, or destination require a new review.",
@@ -991,27 +1224,169 @@ def prepare_git_review(runtime, data):
     requests = data.get("operations")
     if not isinstance(requests, list) or not requests or len(requests) > 20:
         raise ValueError("prepare between one and twenty ready operations in one review.")
+
     operations, patches, commits = [], [], []
     for request in requests:
-        op, patch = snapshot_operation(request, commits)
+        pin = request.get("pin") if isinstance(request, dict) else None
+        if pin is not None:
+            if not isinstance(pin, dict) or set(pin) != {"submodule", "from"} or not one_line(pin["submodule"]) \
+                    or type(pin["from"]) is not int:
+                raise ValueError("pin is {submodule, from}: the submodule's path in the superproject and the number of "
+                                 "an earlier push operation of this review (1 for the first operation).")
+            if not 1 <= pin["from"] <= len(operations) or operations[pin["from"] - 1]["kind"] != "push":
+                raise ValueError("pin.from names an earlier push operation of this review by its number.")
+        op, patch = snapshot_operation(request, commits, None, pin)
+        if pin:
+            push = operations[pin["from"] - 1]
+            url = submodule_url(op["repo"], pin["submodule"])
+            if comparable_url(url, op["repo"]) != comparable_url(push_target(push["cwd"], push["remote"]), push["repo"]):
+                raise ValueError("pin.from names a push to {}, not to the submodule's own URL in .gitmodules.".format(
+                    push["displayUrl"]))
         if op in operations or op["kind"] == "commit" and any(c["repo"] == op["repo"] for c in commits):
             raise ValueError("review one commit per repository, and no duplicate operations.")
         if op["kind"] == "commit":
             commits.append(op)
         operations.append(op)
         patches.append(patch)
+    if any(op["kind"] == "push" for op in operations):
+        roots = {cwd_ledger()[0]} | {ledger_root(project_decision(op.get("workTree") or op["repo"])) for op in operations}
+        open_run = next((run for run in (unclosed_run(root) for root in sorted(filter(None, roots))) if run), None)
+        if open_run:
+            raise ValueError("Run {} has open items and no `close` item whose dependencies are done; a push in the "
+                             "middle of a Run needs a `close` item in the plan.".format(open_run))
     record = {"version": 1, "runtime": runtime, "language": data.get("language", "en"),
               "nonce": secrets.token_hex(NONCE_BYTES), "createdAt": time.time(), "operations": operations}
+    sent = {}  # every commit a push sends: its message and diff, in the report
+    for i, op in enumerate(operations, 1):
+        marks = os.path.join(grant_store(), str(project_key(ledger_root(project_decision(op["repo"])))), "outside") \
+            if op["kind"] == "push" else None
+        for k, entry in enumerate(op.get("sends") or [], 1):
+            if entry["commit"]:
+                message, patch = commit_patch(op["cwd"], entry["commit"])
+                detail = {"message": message, "patchHash": hashlib.sha256(patch).hexdigest()}
+                if marks and os.path.exists(os.path.join(marks, entry["commit"])):
+                    detail["outside"] = True  # a commit allowed inside a grant held paths outside it, after the look
+                sent["{}.{}".format(i, k)] = (detail, patch)
+    if sent:
+        record["sent"] = {key: detail for key, (detail, _) in sent.items()}
     record["id"] = review_hash(record)[:ID_HEX_LENGTH]
     directory = review_directory() / record["id"]
     directory.mkdir(parents=True, mode=0o700, exist_ok=False)
     for i, patch in enumerate(patches, 1):
         if patch:
             (directory / (str(i) + ".patch")).write_bytes(patch)
+    for key, (_, patch) in sent.items():
+        (directory / (key + ".patch")).write_bytes(patch)
     (directory / "report.md").write_text(review_report(record, directory), encoding="utf-8")
     (directory / "review.json").write_text(review_json(record) + "\n", encoding="utf-8")
     return {"reviewId": "G-" + record["id"], "report": str(directory / "report.md"),
             "question": review_question(record), "nativeRequest": native_git_request(record)}
+
+
+def submodule_url(top, path):
+    """The URL the staged `.gitmodules` of the superproject at `top` gives the submodule at `path`; ValueError
+    without one."""
+    found = git_read(top, "config", "--blob", ":.gitmodules", "--get-regexp", r"^submodule\..*\.path$",
+                     optional=True) or b""  # as the index holds it: what the commit records, not the work tree
+    entries = [line.partition(" ") for line in found.decode("utf-8", "replace").splitlines()]
+    if sum(1 for _, _, value in entries if value == path) > 1:
+        raise ValueError("two .gitmodules entries name the path {}; give it one.".format(path))
+    for key, _, value in entries:
+        if value == path:
+            url = git_text(top, "config", "--blob", ":.gitmodules", "--get", key[:-len(".path")] + ".url", optional=True)
+            if url:
+                return url
+    raise ValueError("pin.submodule names a submodule that .gitmodules gives a URL.")
+
+
+def comparable_url(url, base):
+    """A Git URL as two spellings of one repository compare, a tuple, within one transport only: https/http (the
+    user part ignored: credentials, not the repository), ssh (ssh:// and user@host:path, the user compared, a relative
+    user@host:path no absolute ssh:// path) and git://. The host without case and with IPv6 brackets read, the port
+    with its scheme's default filled in, the path without a trailing `/` or `.git`; a local path or file:// resolved
+    from `base`. ValueError for a URL with a query, a fragment, a backslash or a space, or an unknown scheme: one that
+    tools may read as another host. No error message carries the URL."""
+    url = url.strip()
+    scheme = re.match(r"([A-Za-z][A-Za-z0-9+.-]*)://", url)
+    scp = None if scheme or url.startswith(("./", "../", "/")) else \
+        re.match(r"(?:([^@/:\[\]]*)@)?(\[[^\]/]*\]|[^/:\[\]]+):(.*)\Z", url)
+    if scheme and scheme[1].lower() != "file" or scp:
+        if "\\" in url or "?" in url or "#" in url or any(ord(c) < 33 for c in url):
+            raise ValueError("a URL with a query, a fragment, a backslash or a space is not compared.")
+    if scp:  # user@host:path is ssh; its path is relative to the login unless it starts with /
+        host = scp[2][1:-1] if scp[2].startswith("[") else scp[2]
+        transport, user, port, path = "ssh", scp[1], DEFAULT_PORTS["ssh"], scp[3]
+    elif scheme and scheme[1].lower() != "file":
+        name = scheme[1].lower()
+        transport = {"https": "http", "http": "http", "ssh": "ssh", "git+ssh": "ssh", "ssh+git": "ssh",
+                     "git": "git"}.get(name)
+        if transport is None:
+            raise ValueError("a {} URL is not compared.".format(name))
+        parsed = urlparse.urlsplit(url)
+        try:
+            port = parsed.port or DEFAULT_PORTS[name]
+        except ValueError:
+            raise ValueError("a URL with an unreadable port is not compared.") from None
+        host, path = parsed.hostname, parsed.path or "/"
+        user = parsed.username if transport == "ssh" else None
+    else:  # a local path, or file://
+        if url.startswith(("./", "../")):
+            raise ValueError("a relative submodule URL is not compared; give .gitmodules the remote's own URL.")
+        local = os.path.realpath(os.path.join(base, url[len("file://"):] if scheme else url)).rstrip("/")
+        return "file", local[:-4] if local.endswith(".git") else local
+    if not host:
+        raise ValueError("a URL without a host is not compared.")
+    path = path.rstrip("/")
+    path = (path[:-4] if path.endswith(".git") else path).rstrip("/")
+    return transport, user, host.lower(), port, path
+
+
+def unclosed_run(root):
+    """The ID of a Run of the project (the newest such) that has an open item (ready or running) and no `close` item
+    of its own that is ready, running or done and whose dependencies are all settled (done or dropped): its `after`,
+    or every other item when that is empty. None when every Run is closed so, and without a ledger or a Run.
+    ValueError naming the Run's directory when its run.json is unreadable or malformed (fail closed)."""
+    if not root:
+        return None
+    runs = os.path.join(root, LEDGER, "runs")
+    try:
+        names = os.listdir(runs)
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise ValueError("{} cannot be read ({}); a push waits until its Runs can be read.".format(
+            runs, exc.strerror or type(exc).__name__)) from None
+    unclosed = []
+    for name in names:
+        directory = os.path.join(runs, name)
+        if name.startswith(".") or not os.path.isdir(directory):
+            continue
+        if not os.path.lexists(os.path.join(directory, "run.json")):
+            continue  # no Run (yet): run-start writes run.json whole
+        try:
+            with open(os.path.join(directory, "run.json"), encoding="utf-8") as fh:
+                run = json.load(fh)
+            items = run["items"] if isinstance(run, dict) else None
+            if not isinstance(items, list) or not all(
+                    isinstance(item, dict) and isinstance(item.get("id"), str) and item.get("status") in RUN_STATUSES
+                    and isinstance(item.get("after", []), list)
+                    and all(isinstance(after, str) for after in item.get("after", [])) for item in items) \
+                    or len({item["id"] for item in items}) != len(items):
+                raise ValueError("not a Run's items")
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            raise ValueError("the Run in {} cannot be read ({}); a push waits until its run.json is whole.".format(
+                directory, getattr(exc, "strerror", None) or str(exc).split(":")[0] or type(exc).__name__)) from None
+        if not any(item["status"] in ("ready", "running") for item in items):
+            continue
+        settled = {item["id"] for item in items if item["status"] in ("done", "dropped")}
+        closed = False
+        for item in items:
+            if item.get("kind") == "close" and item["status"] in ("ready", "running", "done"):
+                after = set(item.get("after") or []) or {other["id"] for other in items if other is not item}
+                closed = closed or after <= settled
+        if not closed:
+            unclosed.append((iso_seconds(run.get("startedAt")) or 0, str(run.get("id") or name)))
+    return max(unclosed)[1] if unclosed else None
 
 
 def load_git_review(review_id, runtime):
@@ -2105,8 +2480,14 @@ def approved_git_review(runtime, payload):
     for i, op in enumerate(record["operations"], 1):
         if _git_review_deadline and time.monotonic() >= _git_review_deadline:
             raise TimeoutError("the prepared review exceeded the hook time budget.")
-        if op["kind"] == "commit" and hashlib.sha256((directory / (str(i) + ".patch")).read_bytes()).hexdigest() != op["patchHash"]:
-            raise ValueError("the reviewed diff was changed after preparation.")
+        if op["kind"] == "commit":
+            path = directory / (str(i) + ".patch")  # a pin that changes only its gitlink has no patch file
+            data = b"" if op.get("pin") and not path.exists() else path.read_bytes()
+            if hashlib.sha256(data).hexdigest() != op["patchHash"]:
+                raise ValueError("the reviewed diff was changed after preparation.")
+    for key, detail in (record.get("sent") or {}).items():
+        if hashlib.sha256((directory / (key + ".patch")).read_bytes()).hexdigest() != detail["patchHash"]:
+            raise ValueError("the diff of a commit the push sends was changed after preparation.")
     return record
 
 
@@ -2185,12 +2566,69 @@ def native_batch_choice(path, ident):
     return None
 
 
-def matches_created_commit(op, cwd, oid):
+def matches_created_commit(op, cwd, oid, accept=None):
+    """True when commit `oid` is the one the reviewed commit `op` creates: its parent, message and tree (a pinned
+    gitlink one that `accept`, the review's account of what its push sends, accepts)."""
     data = git_read(cwd, "cat-file", "commit", oid)
     header, message = data.split(b"\n\n", 1)
     parents = [line.split(b" ", 1)[1].decode() for line in header.splitlines() if line.startswith(b"parent ")]
+    pin = op.get("pin")
+    marker = (pin["submodule"], "pinned:{}".format(pin["from"]), accept or (lambda found: False)) if pin else None
     return parents == ([op["head"]] if op["head"] else []) and message.decode("utf-8") == op["message"] \
-        and git_tree_fingerprint(cwd, oid) == op["tree"]
+        and git_tree_fingerprint(cwd, oid, pin=marker) == op["tree"]
+
+
+def same_push(current, op):
+    """True when the push `current` is the reviewed push `op`, sending the end of the commits it lists (all of them,
+    or fewer when the destination has some already)."""
+    if op.get("kind") != "push" or {k: v for k, v in current.items() if k != "sends"} != {k: v for k, v in op.items()
+                                                                                       if k != "sends"}:
+        return False
+    sends, listed = current.get("sends") or [], op.get("sends") or []
+    return len(sends) <= len(listed) and listed[len(listed) - len(sends):] == sends
+
+
+def pin_step(runtime, payload, project, note):
+    """The allow for a step between a reviewed push and the pinned commit that follows it, in an approved Git review:
+    `git -C <superproject> submodule update --remote <path>`, `git -C <superproject>/<path> fetch [<remote>]`,
+    `git -C <superproject>/<path> checkout <commit>` (the commit the push sends, as the review records it) and
+    `git -C <superproject> add <path>`. None otherwise, and on any error."""
+    try:
+        if payload.get("tool_name") not in SHELL_TOOLS.get(runtime, set()) or escalated(payload) \
+                or not ordinary_shell(payload):
+            return None
+        command = shell_command(payload.get("tool_input"))
+        if not isinstance(command, str) or not command.startswith("git -C ") or not literal_shell(command):
+            return None
+        parts = split_segments(command)
+        if not parts or len([raw for raw in parts[0] if raw.strip()]) != 1:
+            return None
+        tokens = shlex.split(command)
+        if len(tokens) < 4 or tokens[:2] != ["git", "-C"]:
+            return None
+        target, rest = os.path.realpath(os.path.join(call_cwd(payload), tokens[2])), tokens[3:]
+        record = approved_git_review(runtime, payload)
+        for op in record["operations"]:
+            pin = op.get("pin")
+            if not pin:
+                continue
+            submodule = os.path.realpath(os.path.join(op["repo"], pin["submodule"]))
+
+            def pushed(name):  # the commit the checkout names is the one the push sends, by the record
+                found = git_text(submodule, "rev-parse", "--verify", "--quiet", name + "^{commit}", optional=True)
+                return bool(found) and re.fullmatch(r"[0-9a-f]{7,64}", name) is not None and pin_accept(record, pin)(found)
+
+            step = target == op["repo"] and rest in (["submodule", "update", "--remote", pin["submodule"]],
+                                                     ["add", pin["submodule"]]) or \
+                target == submodule and (rest == ["fetch"] or len(rest) == 2 and rest[0] == "fetch"
+                                         and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", rest[1])
+                                         or len(rest) == 2 and rest[0] == "checkout" and pushed(rest[1]))
+            if step:
+                note["allowed"] = {"kind": "pin-step", "id": "G-" + record["id"]}
+                return permission("allow", PIN_STEP_ALLOW.format("G-" + record["id"]))
+    except Exception:
+        return None
+    return None
 
 
 def git_review_guard(runtime, payload, note=None):
@@ -2210,13 +2648,25 @@ def git_review_guard(runtime, payload, note=None):
         cwd = inputs.get("workdir") or inputs.get("cwd") or payload.get("cwd")
         record = approved_git_review(runtime, payload)
         commits = [op for op in record["operations"] if op["kind"] == "commit"]
-        current, _ = snapshot_operation({"command": command, "cwd": cwd}, commits)
+        request = {"command": command, "cwd": cwd}
+        current, _ = snapshot_operation(request, commits, record)
+        if current not in record["operations"] and current["kind"] == "commit":
+            # A pinned commit: its gitlink must be what its push sends, as the review itself records it.
+            for op in record["operations"]:
+                if op.get("pin") and op["repo"] == current["repo"]:
+                    pinned, _ = snapshot_operation(request, commits, record, op["pin"], live=True)
+                    if pinned == op:
+                        current = pinned
+                        break
+        if current["kind"] == "push":  # it may send fewer of the listed commits (some arrived already), never others
+            current = next((op for op in record["operations"] if same_push(current, op)), current)
         if current not in record["operations"]:
             raise ValueError("the Git contents, message, branch, or destination differ from the approved set.")
         if current["kind"] == "push" and current["fromCommit"]:
             source = git_text(current["cwd"], "rev-parse", "--verify", current["source"] + "^{commit}")
             commit = next(op for op in commits if review_hash(op) == current["fromCommit"])
-            if not matches_created_commit(commit, current["cwd"], source):
+            if not matches_created_commit(commit, current["cwd"], source,  # a pinned one: its push reached the remote
+                                          pin_accept(record, commit.get("pin"), live=True)):
                 raise ValueError("the push source is not the commit created from the approved snapshot and message.")
         if time.monotonic() >= _git_review_deadline:
             raise TimeoutError("the Git state could not be verified within the hook time budget.")
@@ -5069,6 +5519,9 @@ def tool_note(runtime, payload, project, decision, note):
                      rule=note.get("rule"), **call)
     elif decided == "allow":
         allowed_event(root, runtime, session, note, call)
+        if note.get("commit"):
+            ledger_event(root, runtime, session, "commit", **note["commit"], **call)
+            remember_commit(payload, note)
     elif asked:
         entries = asked if isinstance(asked, list) else [asked]  # a batch asks several at once
         for entry in entries:
@@ -5112,6 +5565,143 @@ def tool_decision(runtime, payload, project, note):
         note.pop("allowed", None)
         return None
     return decision
+
+
+def plain_commit(args, cwd):
+    """The message of a plain `git commit`: one or more `-m <message>`, or one `-F <file>` (not stdin), and at most
+    one `--cleanup=verbatim`; None for any other form (`--amend`, `-a`, a pathspec, `--no-verify`, …)."""
+    paragraphs, files, verbatim, i = [], [], False, 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "--cleanup=verbatim" and not verbatim:
+            verbatim, i = True, i + 1
+            continue
+        if arg in ("-m", "-F") and i + 1 < len(args):
+            (paragraphs if arg == "-m" else files).append(args[i + 1])
+            i += 2
+            continue
+        return None
+    if bool(paragraphs) == bool(files) or len(files) > 1 or files and files[0] in ("-", ""):
+        return None
+    if files:  # a regular file of at most MESSAGE_BYTES, looked at before any open: a FIFO never blocks the hook
+        try:
+            return small_file(os.path.join(cwd, files[0]), MESSAGE_BYTES).decode("utf-8")
+        except (OSError, ValueError):
+            return None
+    return "\n".join(part if part.endswith("\n") else part + "\n" for part in paragraphs)
+
+
+def commit_hooks(here, top, ctx=None):
+    """True when a commit at `here` may run a hook, or that cannot be known: an executable file other than a
+    `.sample` in the effective hooks directory (core.hooksPath from any scope, relative to the work tree's top, or the
+    repository's own), each hook a commit runs looked up by name as Git does (X_OK on its path), any `hook.<name>.command`
+    or `hook.<name>.event` entry in the config (any scope), and any error other than "does not exist" on the way."""
+    if git_read(here, "config", "--get-regexp", r"^hook\..*\.(command|event)$", optional=True, ctx=ctx):
+        return True
+    places = {os.path.join(here, git_text(here, "rev-parse", "--git-path", "hooks", ctx=ctx))}
+    configured = git_text(here, "config", "--get", "core.hooksPath", optional=True, ctx=ctx)
+    if configured:
+        configured = os.path.expanduser(configured)
+        places |= {os.path.join(top, configured), os.path.join(here, configured)}
+    for place in places:
+        try:
+            names = set(os.listdir(place))
+        except FileNotFoundError:
+            names = set()
+        except OSError:
+            return True  # unreadable: it may hold a hook
+        for name in names | set(COMMIT_HOOKS):
+            if name.endswith(".sample"):
+                continue
+            path = os.path.join(place, name)
+            try:
+                mode = os.stat(path).st_mode
+            except FileNotFoundError:
+                continue
+            except OSError:
+                return True
+            if not (mode & 0o170000) == 0o040000 and os.access(path, os.X_OK):  # not a directory (S_ISDIR)
+                return True
+    return False
+
+
+def grant_commit(runtime, payload, project, note):
+    """The allow for a plain commit inside an active grant that names `commit`, or None: then the Git review decides
+    as it always did. Any failure is None."""
+    try:
+        return commit_allow(runtime, payload, project, note)
+    except Exception:
+        return None
+
+
+def commit_allow(runtime, payload, project, note):
+    """A plain commit (plain_commit) in this project's repository (its main or a linked work tree) or in its second
+    Git directory whose work tree is the project root, on a branch, with a staged index whose every path a grant's
+    path glob matches; a protected file only where a grant names it literally, in the second Git directory or this
+    tree. `note` gets the allow and the `commit` line's fields."""
+    if payload.get("tool_name") not in SHELL_TOOLS.get(runtime, set()) or escalated(payload) or not ordinary_shell(payload):
+        return None
+    grants = active_grants(project)
+    hit = granting(grants, "commit")
+    if not hit:
+        return None
+    command, cwd = shell_command(payload.get("tool_input")), call_cwd(payload)
+    here, kind, args, ctx = git_review_command(command, cwd)
+    if kind != "commit":
+        return None
+    message = plain_commit(args, str(here))
+    if message is None or not message.strip() or "\0" in message:
+        return None
+    root, main = os.path.realpath(project_root(project)), ledger_root(project)
+    if ctx:  # the project's second Git directory: inside the root, not bare, its work tree the root, ignored by the main one
+        top, git_dir = os.path.realpath(ctx["workTree"]), os.path.realpath(ctx["gitDir"])
+        if top != root or os.path.dirname(git_dir) != root or git_dir == os.path.join(root, ".git"):
+            return None
+        bare = git_text(root, "--git-dir=" + git_dir, "config", "--bool", "core.bare", optional=True)
+        tree = git_text(root, "--git-dir=" + git_dir, "config", "core.worktree", optional=True)
+        if bare == "true" or not tree or os.path.realpath(os.path.join(git_dir, tree)) != root \
+                or git_read(root, "check-ignore", "-q", os.path.relpath(git_dir, root), optional=True) is None:
+            return None
+        second = True
+    else:
+        top = os.path.realpath(git_repo(str(here)))
+        common = git_common_directory(top)
+        if not common or os.path.basename(common) != ".git" or os.path.realpath(os.path.dirname(common)) != main:
+            return None
+        git_dir, second = common, False
+    git_meta = pathlib.Path(git_text(str(here), "rev-parse", "--absolute-git-dir", ctx=ctx))
+    if any((git_meta / name).exists() for name in ("MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge",
+                                                   "rebase-apply")):
+        return None
+    branch = git_text(str(here), "symbolic-ref", "--quiet", "HEAD", optional=True, ctx=ctx)
+    if not branch:
+        return None
+    if commit_hooks(str(here), top, ctx):
+        return None  # a hook could stage, change or add to what the commit holds after this look
+    staged = [name.decode("utf-8", "surrogateescape") for name in git_read(
+        top, "diff", "--cached", "--no-relative", "--name-only", "-z", "--no-renames", ctx=ctx).split(b"\0") if name]
+    if not staged:
+        return None
+    place = Place(project, top)
+    globs = [glob for record in grants for glob in record["grant"]["paths"]]
+    for name in staged:
+        parts = name.split("/")
+        compared = place.locate(os.path.normpath(os.path.join(top, name)))[1]
+        if compared is None:
+            return None
+        if place.protected(compared):  # the notebook, its history, an instruction or settings file: named literally
+            if not (second or top == root) or name not in globs:
+                return None
+        elif not any(glob_matches(glob, parts) for glob in globs):
+            return None
+    note["allowed"] = {"kind": "commit", "id": hit, "grants": None}
+    note["committed"] = {"top": top, "gitDir": git_dir if second else None, "second": second, "own": top == root,
+                         "globs": globs, "id": hit,
+                         "head": git_text(str(here), "rev-parse", "--verify", "--quiet", "HEAD", optional=True, ctx=ctx)}
+    note["commit"] = {"repo": os.path.relpath(git_dir, main) if git_dir.startswith(main) else os.path.basename(git_dir),
+                      "branch": branch.removeprefix("refs/heads/"), "files": len(staged),
+                      "subject": (message.splitlines() or [""])[0], "id": hit}
+    return permission("allow", GRANT_ALLOW.format(hit, "commit"))
 
 
 def leaves_machine(command, cwd=None):
@@ -5395,6 +5985,9 @@ def decide_call(runtime, payload, project, note):
             return deny(reason + (" Shell segment is not read-only: `{}`.".format(segment) if segment else ""))
     if git_review is not None:
         if verdict(git_review) != "allow":
+            granted = grant_commit(runtime, payload, project, note) if state is False else None
+            if granted is not None:
+                return granted
             note["rule"] = "git-review"
         return git_review
     outward = push_guard(runtime, payload)
@@ -5410,6 +6003,10 @@ def decide_call(runtime, payload, project, note):
     queued = queued_guard(runtime, payload, project, note)
     if queued is not None:
         return queued
+    if state is False:
+        step = pin_step(runtime, payload, project, note)
+        if step is not None:
+            return step
     if state is None:
         warned = session_file(payload.get("session_id"), ".warned")
         if warned.exists():
@@ -5419,6 +6016,77 @@ def decide_call(runtime, payload, project, note):
         return {"systemMessage": UNREADABLE}
     # An OPEN record: the active grants answer for what they classify; everything else is the host's.
     return grant_decision(runtime, payload, project, note)
+
+
+def commit_key(payload):
+    """What names one commit call across its PreToolUse (or PermissionRequest) and its PostToolUse."""
+    return review_hash([shell_command(payload.get("tool_input")), call_cwd(payload)])[:ID_HEX_LENGTH]
+
+
+def remember_commit(payload, note):
+    """Keep what an allowed commit inside a grant was checked against, for the look after it ran (handle_post_tool_use)."""
+    path = session_file(payload.get("session_id"), ".commits")
+    try:
+        kept = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    except (OSError, ValueError):
+        kept = {}
+    kept = kept if isinstance(kept, dict) else {}
+    kept[commit_key(payload)] = note["committed"]
+    write_whole(str(path), json.dumps(dict(list(kept.items())[-ARMED_LIMIT:])))
+
+
+def handle_post_tool_use(runtime, payload):
+    """After a commit the gate allowed inside a grant: compare the paths of every commit made since the look (from the
+    HEAD then to the HEAD now) with the grant, since a hook or anything else may have changed them. Each commit that
+    leaves it writes a `warn` line (rule `commit-outside-grant`) and a mark the next push review shows on it; more
+    than one commit writes a `warn` line (rule `commits-after-grant`). It never decides anything."""
+    try:
+        # A look creates nothing and, outside a DDL project, imports nothing more.
+        path = os.path.join(state_base(), state_name(payload.get("session_id")) + ".commits")
+        if payload.get("tool_name") not in SHELL_TOOLS.get(runtime, set()) or not os.path.exists(path):
+            return None
+        project = session_project(payload)
+        if not project["ddl"]:
+            return None
+        with open(path, encoding="utf-8") as fh:
+            kept = json.load(fh)
+        checked = kept.pop(commit_key(payload), None) if isinstance(kept, dict) else None
+        if checked is None:
+            return None
+        write_whole(str(path), json.dumps(kept))
+        ctx = {"gitDir": checked["gitDir"], "workTree": checked["top"]} if checked.get("gitDir") else None
+        top = checked["top"]
+        head = git_text(top, "rev-parse", "--verify", "HEAD", ctx=ctx)
+        if head == checked.get("head"):
+            return None  # no commit was made
+        made = git_text(top, "rev-list", "--reverse", "HEAD", *(["--not", checked["head"]] if checked.get("head") else []),
+                        ctx=ctx).split()  # every commit since the look (an amend, a hook's commit) is compared
+        root = ledger_root(project)
+        session = payload.get("session_id")
+        if len(made) > 1:
+            ledger_event(root, runtime, session, "warn", rule="commits-after-grant", id=checked["id"], commit=head,
+                         count=len(made))
+        place = Place(project, top)
+        for commit in made[-SENT_LIMIT:]:
+            names = [name.decode("utf-8", "surrogateescape") for name in git_read(
+                top, "diff-tree", "--no-commit-id", "--name-only", "-r", "-m", "--root", "-z", commit,
+                ctx=ctx).split(b"\0") if name]
+            outside = set()
+            for name in names:
+                compared = place.locate(os.path.normpath(os.path.join(top, name)))[1]
+                literal = name in checked["globs"] and (checked.get("second") or checked.get("own"))
+                if compared is None or (place.protected(compared) and not literal) or not place.protected(compared) \
+                        and not any(glob_matches(glob, name.split("/")) for glob in checked["globs"]):
+                    outside.add(name)
+            if outside:
+                ledger_event(root, runtime, session, "warn", rule="commit-outside-grant", id=checked["id"],
+                             commit=commit, files=len(outside))
+                store = os.path.join(grant_store(), project_key(root), "outside")
+                private_directory(store)
+                write_whole(os.path.join(store, commit), json.dumps({"id": checked["id"], "files": len(outside)}))
+    except Exception:
+        pass
+    return None
 
 
 def handle_pre_tool_use(runtime, payload):
@@ -5456,6 +6124,9 @@ def handle_permission_request(runtime, payload):
         call = {"tool": payload.get("tool_name") if isinstance(payload.get("tool_name"), str) else None,
                 "toolUseId": payload.get("tool_use_id") if isinstance(payload.get("tool_use_id"), str) else None}
         allowed_event(ledger_root(project), runtime, payload.get("session_id"), note, call)
+        if note.get("commit"):
+            ledger_event(ledger_root(project), runtime, payload.get("session_id"), "commit", **note["commit"], **call)
+            remember_commit(payload, note)
     except Exception:
         pass
     return {"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": {"behavior": "allow"}}}
@@ -5611,6 +6282,7 @@ def handle_session_start(runtime, payload):
 
 
 HANDLERS = {"pre-tool-use": handle_pre_tool_use, "permission-request": handle_permission_request,
+            "post-tool-use": handle_post_tool_use,
             "session-start": handle_session_start, "stop": handle_stop, "user-prompt-submit": handle_user_prompt_submit}
 
 

@@ -15,7 +15,7 @@ Read before a STOP or design.md human gate, with Approval; names the choice tool
 | Mutating tools | `apply_patch`, writing shell commands, starting, messaging or resuming an agent (MCP: entry's Pending STOP). |
 | Human input boundary | The `UserMessage` reply is the boundary recognized by `UserPromptSubmit`. |
 | Prepare | `python3 "$HOME/.codex/hooks/ddl_gate.py" prepare-report --runtime codex <<'EOF'`, input JSON (Formats), `EOF`; or project copy (start: Adapter paths). |
-| Hook | `.codex/hooks/ddl_gate.py` in `.codex/hooks.json` (`--runtime codex`; also PermissionRequest); while pending permits `view_image`, `list_agents`, both choice tools above, input-free polling (`wait`, `wait_agent`, `write_stdin` with empty `chars`, no `terminate`), and `shell`, `exec_command`, `local_shell`, `shell_command` or `Bash` for preparation and literal reads (Approval Implementation). |
+| Hook | `.codex/hooks/ddl_gate.py` in `.codex/hooks.json` (`--runtime codex`; also PermissionRequest and PostToolUse); while pending permits `view_image`, `list_agents`, both choice tools above, input-free polling (`wait`, `wait_agent`, `write_stdin` with empty `chars`, no `terminate`), and `shell`, `exec_command`, `local_shell`, `shell_command` or `Bash` for preparation and literal reads (Approval Implementation). |
 
 ## Observed
 

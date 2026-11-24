@@ -26,13 +26,17 @@ Usage (from inside the project; the project and its `.ddl/` ledger come from the
   python3 tools/ddl_run.py restore <refs/ddl/snapshots/…> --run <N-id> --items <id>…
 
 `run-start` writes `.ddl/runs/<N-id>/run.json` from {report, items, slots?} and prints {run, path}; `slots`
-{think, run} are the Run's thinking and run slots (default 5 and 0). An item's `files` are owner globs below the
+{think, run} are the Run's thinking and run slots (default 5 and 0). An item's kind is write, verify, explore,
+compute, or close: the lead's records and push, which takes no slot and which the runner never starts. An item's `files` are owner globs below the
 project root: a leading `./` is dropped, and an empty glob or segment, an absolute path, `..`, a trailing slash or
 a bare existing directory (write `<dir>/**`) is refused, naming the entry. `run-item` sets one item's status (under a
 lock on the Run's directory) and prints {run, item, status}, and writes an `item` event (run, item, status, itemKind).
 `report` prints four lines: questions (with `open <n>` for those asked and never answered, counted in no other
-bucket; for one ID only its latest ask, open until an answer to that ID), waiting, denials, grant; for a Run a
-fifth, the flow line: the summed running time of its thinking items (write, verify, explore) and of its compute
+bucket; for one ID only its latest ask, open until an answer to that ID; then by kind: plan (a report with a
+grant), confirm (a report with `confirm`), Git (a review), other, and unknown when a report's record is gone),
+waiting, denials, grant. For a Run a Records line follows the questions: the commits (the hook's `commit` events,
+allowed inside a grant, and those a Git review allowed), how many of them inside the grant, and the push reviews
+that allowed a push; and after the four, the flow line: the summed running time of its thinking items (write, verify, explore) and of its compute
 items over capacity × the Run's wall time, as used/capacity (percent), from its `item` events, and its ready items
 (ready, with every dependency done); a slot kind with an item that ended without a start, or with a capacity that
 is no whole number from 0 to 64, is not measured. When the Run still waits on questions (prepared and queued, or
@@ -174,12 +178,18 @@ RUN_ID_BYTES = 6  # a Run ID is N- and these random bytes in hex
 RUN_ID = re.compile(r"N-[0-9a-f]{%d}" % (2 * RUN_ID_BYTES))
 ITEM_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,31}")
 ITEM_KEYS = {"id", "kind", "files", "after"}
-ITEM_KINDS = ("write", "verify", "explore", "compute")
+ITEM_KINDS = ("write", "verify", "explore", "compute", "close")  # close: the lead's records and push, never a worker
 ITEM_STATUSES = ("ready", "running", "done", "failed", "dropped")
 THINKING_KINDS = ("write", "verify", "explore")  # the kinds that take a thinking slot; compute takes a run slot
 SLOTS = {"think": 5, "run": 0}  # a Run's slots when run-start names none
 SLOT_LIMIT = 64
 OPEN_TEXT = {"ja": "、未回答 {}", "en": ", open {}"}  # inside the Questions line's bracket, when nonzero
+# The questions by kind, after the outcomes: a report with a grant (plan), one with `confirm`, a Git review, others;
+# a report whose record is not here is of no known kind.
+KIND_TEXT = {"ja": ("。計画 {}、確認 {}、Git {}、ほか {}", "、不明 {}"),
+             "en": ("; plan {}, confirm {}, Git {}, other {}", ", unknown {}")}
+RECORDS_TEXT = {"ja": ("記録", "コミット {} 件（許諾の内 {}）、送信の確認 {} 回"),
+                "en": ("Records", "commits {} (inside the grant {}), push reviews {}")}
 FLOW_TEXT = {
     "ja": {"label": "稼働", "line": "考える枠 {}、回す枠 {}。用意できた項目 {}", "slot": "{}/{}（{}%）", "none": "なし"},
     "en": {"label": "Flow", "line": "thinking slots {}, run slots {}; ready items {}", "slot": "{}/{} ({}%)",
@@ -349,6 +359,46 @@ def open_questions(questions):
     return still
 
 
+def question_kinds(questions):
+    """[plan, confirm, Git, other, unknown] counts of the questions, by their IDs and prepared records: a Git review
+    (G-) is Git; a report is a plan when it carries a grant, a confirmation when it carries `confirm`, other else;
+    a report whose record is not in this state directory is unknown."""
+    counts = [0, 0, 0, 0, 0]
+    for question in questions:
+        ident = question.get("id")
+        if not isinstance(ident, str) or not gate.PREPARED_ID.fullmatch(ident):
+            counts[4] += 1
+            continue
+        record, kind = prepared_record(ident)
+        if kind == "G":
+            counts[2] += 1
+        elif not isinstance(record, dict):
+            counts[4] += 1
+        else:
+            counts[0 if record.get("grant") else 1 if record.get("confirm") else 3] += 1
+    return counts
+
+
+def records_line(language, events):
+    """The Run's records: commits (the hook's `commit` lines, one per commit allowed inside a grant, whose `allowed`
+    line beside it is not counted again; and the `allowed` commit lines of a Git review, G-), how many of them inside
+    the grant, and the push reviews (the Git reviews, G-, with an `allowed` push line; one per review). Not measured
+    without a ledger."""
+    label, line = RECORDS_TEXT[language]
+    if events is None:
+        return label + ": " + gate.COUNT_TEXT[language]["unmeasured"]
+
+    def reviewed(event, allow):
+        ident = event.get("id")
+        return event.get("kind") == "allowed" and event.get("allow") == allow and isinstance(ident, str) \
+            and ident.startswith("G-")
+
+    granted = sum(event.get("kind") == "commit" for event in events)
+    commits = granted + sum(reviewed(event, "commit") for event in events)
+    pushes = {event["id"] for event in events if reviewed(event, "push")}
+    return label + ": " + line.format(commits, granted, len(pushes))
+
+
 def count_lines(language, questions, denials, grant):
     """The four count lines. `questions` (each with outcome, asked, answered) and `denials` are None when the
     source cannot tell them; `grant` is a grant record, False for none, or None when it cannot be looked up.
@@ -366,9 +416,13 @@ def count_lines(language, questions, denials, grant):
         tally = [sum(q["outcome"] == key for q in questions) for key in ("approved", "revised", "timeout")]
         asked = text["asked"].format(len(questions), *tally)
         still = len(open_questions(questions))  # asked, never answered: in no other bucket
-        if still:
-            close = asked[-1]  # the bracket that ends the tally
-            asked = asked[:-1] + OPEN_TEXT[language].format(still) + close
+        close = asked[-1]  # the bracket that ends the tally
+        inside = OPEN_TEXT[language].format(still) if still else ""
+        if questions:
+            kinds = question_kinds(questions)
+            inside += KIND_TEXT[language][0].format(*kinds[:4]) + (KIND_TEXT[language][1].format(kinds[4])
+                                                                  if kinds[4] else "")
+        asked = asked[:-1] + inside + close
         waits = [q["answered"] - q["asked"] if q.get("answered") is not None and q["asked"] is not None else None
                  for q in questions if q["outcome"] in ("approved", "revised")]
         if all(wait is not None and wait >= 0 for wait in waits):
@@ -477,9 +531,13 @@ def report_command(argv):
         flow = [flow_line(language, run, events or [])]  # after the four count lines
         flow += waiting_lines(language, [event for event in events or [] if of_run(event)]) or []
     if chosen is None:
-        return count_lines(language, None, None, grants[-1] if grants else False) + flow
-    return count_lines(language, event_questions(chosen), sum(event.get("kind") == "denied" for event in chosen),
-                       grants[-1] if grants else False) + flow
+        lines = count_lines(language, None, None, grants[-1] if grants else False)
+    else:
+        lines = count_lines(language, event_questions(chosen), sum(event.get("kind") == "denied" for event in chosen),
+                            grants[-1] if grants else False)
+    if mode == "--run":
+        lines.insert(1, records_line(language, chosen))  # a Run's records, after its questions
+    return lines + flow
 
 
 def run_items(items):
@@ -692,13 +750,14 @@ def flow_line(language, run, events, now=None):
     start = gate.iso_seconds(run.get("startedAt"))
     kinds = {item.get("id"): item.get("kind") for item in run["items"] if isinstance(item, dict)}
 
-    def slot(name):
-        return "run" if kinds.get(name) == "compute" else "think"
+    def slot(name):  # a close item is the lead's: it takes no slot
+        return None if kinds.get(name) == "close" else "run" if kinds.get(name) == "compute" else "think"
 
     mine = sorted(((moment, event) for moment, event in ((gate.iso_seconds(event.get("ts")), event) for event in events)
                    if moment is not None and event.get("kind") == "item" and event.get("run") == run["id"]),
                   key=lambda pair: pair[0])  # the ledger's order among events of the same moment
     running, busy, end, started, untimed = {}, {"think": 0.0, "run": 0.0}, None, set(), set()
+    mine = [(moment, event) for moment, event in mine if slot(event.get("item"))]
     for moment, event in mine:
         name = event.get("item")
         if name in running:
@@ -710,7 +769,8 @@ def flow_line(language, run, events, now=None):
             started.add(name)
         end = moment
     for item in run["items"]:
-        if isinstance(item, dict) and item.get("status") in ("done", "failed") and item.get("id") not in started:
+        if isinstance(item, dict) and item.get("status") in ("done", "failed") and item.get("id") not in started \
+                and slot(item.get("id")):
             untimed.add(slot(item.get("id")))
     for name, since in running.items():  # still running: up to now
         busy[slot(name)] += max(0.0, now - since)
@@ -2231,7 +2291,8 @@ def runner_command(argv):
             except ValueError:
                 raise RunnerStopped("the Run's record cannot be read") from None
             kinds.update((item.get("id"), item.get("kind")) for item in run["items"] if isinstance(item, dict))
-            waiting = [item["id"] for item in ready_items(run) if item["id"] not in workers and item["id"] not in skipped]
+            waiting = [item["id"] for item in ready_items(run) if item["id"] not in workers and item["id"] not in skipped
+                       and item.get("kind") != "close"]  # a close item is the lead's: records and the push
             held = held_items(run, ledger_lines(root) or [], records) if waiting else {}
             waiting = [item_id for item_id in waiting if item_id not in held]  # a question still decides them
             for item_id in held:
@@ -2393,7 +2454,10 @@ def waiting_lines(language, events):
         if record is None:
             tag, decision = "exit" if kind == "G" else "waiting", text["unknown"].format(ident)
         elif kind == "G":
-            tag, decision = "exit", gate.git_question_values(record)[0]
+            try:
+                tag, decision = "exit", gate.git_question_values(record)[0]
+            except (KeyError, TypeError, AttributeError, IndexError):  # a record without its operations' fields
+                tag, decision = "exit", ident
         else:
             tag = "provisional" if record.get("provisional") else "exit" if record.get("confirm") else "waiting"
             decision = record.get("decision") if isinstance(record.get("decision"), str) else ident

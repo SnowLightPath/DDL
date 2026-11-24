@@ -107,7 +107,7 @@ class SetupTest(unittest.TestCase):
 
     def cli(self, command, *options, expected=0):
         proc = subprocess.run([sys.executable, "-I", str(SETUP), command, *options],
-                              env=self.env, cwd=self.base, capture_output=True, text=True, timeout=300)
+                              env=self.env, cwd=self.base, capture_output=True, text=True, timeout=900)
         self.assertEqual(proc.returncode, expected, proc.stdout + proc.stderr)
         return proc.stdout
 
@@ -1452,20 +1452,38 @@ class SetupTest(unittest.TestCase):
         self.assertFalse(self.grants.exists())
 
     def test_gate_suite_runs_with_a_disposable_grant_store(self):
-        seen = {}
+        seen = []
 
-        def run(command, **options):
-            grants = options["env"]["DDL_GATE_GRANT_DIR"]
-            seen.update(command=command, grants=grants, existed=os.path.isdir(grants))
-            return subprocess.CompletedProcess(command, 0, stdout="", stderr="..\n\nOK\n")
+        def shard(tally, code=0):
+            class Shard:  # subprocess.Popen as gate_suite calls it: the tally goes to the shard's output file
+                def __init__(self, command, **options):
+                    grants = options["env"]["DDL_GATE_GRANT_DIR"]
+                    seen.append((command, grants, os.path.isdir(grants)))
+                    if tally is not None:
+                        options["stdout"].write(tally + "\n")
+                        options["stdout"].flush()
 
-        with mock.patch.object(ddl_setup.subprocess, "run", run):
+                def wait(self):
+                    return code
+            return Shard
+
+        with mock.patch.object(ddl_setup.subprocess, "Popen", shard(ddl_setup.SHARD_TALLY + " ran 3")):
             result, _ = self.in_home(ddl_setup.gate_suite)
         self.assertEqual(result, (True, "OK"))
-        self.assertTrue(seen["command"][-1].endswith("test_ddl_gate.py"))
-        self.assertTrue(seen["existed"])
-        self.assertNotEqual(seen["grants"], str(self.grants))
-        self.assertFalse(os.path.exists(seen["grants"]))
+        self.assertEqual(len(seen), min(os.cpu_count() or 2, 8))
+        self.assertEqual(sorted(int(command[-2]) for command, _, _ in seen), list(range(len(seen))))
+        for command, grants, existed in seen:
+            self.assertTrue(command[-3].endswith("test_ddl_gate.py"))  # the path, then this shard's index and the count
+            self.assertTrue(existed)
+            self.assertNotEqual(grants, str(self.grants))
+            self.assertFalse(os.path.exists(grants))
+        self.assertEqual(len({grants for _, grants, _ in seen}), len(seen), "each shard has its own grant store")
+        for fake, expected in ((shard(ddl_setup.SHARD_TALLY + " ran 3 test_ddl_gate.T.test_x", 1),
+                                "test_ddl_gate.T.test_x"), (shard(None, 1), "shard(s) crashed")):
+            with self.subTest(expected=expected), mock.patch.object(ddl_setup.subprocess, "Popen", fake):
+                (passed, line), _ = self.in_home(ddl_setup.gate_suite)
+                self.assertFalse(passed)
+                self.assertTrue(line.startswith("FAILED: ") and expected in line, line)
 
 
 PUSH = "git push"

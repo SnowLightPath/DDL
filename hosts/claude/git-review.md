@@ -11,7 +11,7 @@ Read before the shared Git review operation for every ordinary commit or push; i
 | Prepare | `prepare-git-review --runtime claude` on the gate of approval's Prepare row, the request JSON (Formats) on stdin. |
 | `nativeRequest` | Pass it unchanged as the `AskUserQuestion` arguments (the five lines, header `Git`, labels, descriptions, selection mode) and wait for the submitted answer; a result carrying `afkTimeoutMs` is no submission. |
 | Revocation | A typed message is a `UserPromptSubmit` and revokes; an `AskUserQuestion` answer is not one and keeps the preparation. |
-| Decision | PreToolUse answers a commit or push that matches the answered review with `permissionDecision: allow`, reason `DDL: matches Git review <G-id>` (none with `dangerouslyDisableSandbox`), and an unmatched one with `deny`. |
+| Decision | PreToolUse answers a commit or push that matches the answered review with `permissionDecision: allow`, reason `DDL: matches Git review <G-id>` (a commit inside a grant: `DDL: inside grant <R-id> (commit)`; none with `dangerouslyDisableSandbox`), and an unmatched one with `deny`. |
 | Attribution | `attribution` in `.claude/settings.json` is empty (`commit` and `pr` empty, `sessionUrl: false`). |
 
 ## Observed

@@ -226,6 +226,7 @@ class DirectInvocationTest(SplitTest):
         self.assertEqual(set(started), {"run", "path"})
         self.assertEqual(self.same(["report", "--run", started["run"]])[1].splitlines(),
                          ["Questions: 0 (approved 0, revised 0, timed out 0)",
+                          "Records: commits 0 (inside the grant 0), push reviews 0",
                           "Waiting: human 0 min (median to answer not measured, longest not measured)",
                           "Denials: 0", "Grant: none",
                           "Flow: thinking slots not measured, run slots not measured; ready items 1"])
@@ -2045,34 +2046,35 @@ class FlowTest(RunFixture):
         run = self.start_run([{"id": "I1", "kind": "write"}, {"id": "I2", "kind": "verify", "after": ["I1"]}])
         code, stdout, _ = self.call("report", "--run", run, "--language", "en")
         lines = stdout.splitlines()
-        self.assertEqual((code, len(lines), lines[0]), (0, 5, "Questions: 0 (approved 0, revised 0, timed out 0)"))
-        self.assertEqual(lines[4], "Flow: thinking slots not measured, run slots not measured; ready items 1")
+        self.assertEqual((code, len(lines), lines[0]), (0, 6, "Questions: 0 (approved 0, revised 0, timed out 0)"))
+        self.assertEqual(lines[1], "Records: commits 0 (inside the grant 0), push reviews 0")
+        self.assertEqual(lines[5], "Flow: thinking slots not measured, run slots not measured; ready items 1")
         self.call("run-item", run, "I1", "running")
         self.call("run-item", run, "I1", "done")
         lines = self.call("report", "--run", run)[1].splitlines()  # in the plan's language
-        self.assertRegex(lines[4], r"^Flow: thinking slots \d+\.\d/5 \(\d+%\), run slots none; ready items 1$")
+        self.assertRegex(lines[5], r"^Flow: thinking slots \d+\.\d/5 \(\d+%\), run slots none; ready items 1$")
         lines = self.call("report", "--run", run, "--language", "ja")[1].splitlines()
-        self.assertRegex(lines[4], r"^稼働: 考える枠 \d+\.\d/5（\d+%）、回す枠 なし。用意できた項目 1$")
+        self.assertRegex(lines[5], r"^稼働: 考える枠 \d+\.\d/5（\d+%）、回す枠 なし。用意できた項目 1$")
         record = self.run_dir(run) / "run.json"
         record.write_text(json.dumps(dict(self.run_record(run), slots={"think": 10 ** 6})))
         code, stdout, _ = self.call("report", "--run", run, "--language", "en")  # the rest of the report prints
-        self.assertEqual((code, stdout.splitlines()[4]),
+        self.assertEqual((code, stdout.splitlines()[5]),
                          (0, "Flow: thinking slots not measured, run slots none; ready items 1"))
         questions = [{"id": "R-1", "outcome": "approved", "asked": 0, "answered": 60}, {"id": "R-2", "outcome": None,
                                                                                          "asked": 10}]
         self.assertEqual(ddl_run.count_lines("en", questions, 0, False)[0],
-                         "Questions: 2 (approved 1, revised 0, timed out 0, open 1)")
+                         "Questions: 2 (approved 1, revised 0, timed out 0, open 1; plan 0, confirm 0, Git 0, other 0, unknown 2)")
         self.assertEqual(ddl_run.count_lines("ja", questions, 0, False)[:2],
-                         ["問い: 2 件（承認 1、見直し 0、時間切れ 0、未回答 1）",
+                         ["問い: 2 件（承認 1、見直し 0、時間切れ 0、未回答 1。計画 0、確認 0、Git 0、ほか 0、不明 2）",
                           "待ち: 人間 1 分（答えまで中央値 1 分、最長 1 分）"])  # an open question waits in no bucket
         twice = [{"id": "R-3", "outcome": None, "asked": 0}, {"id": "R-3", "outcome": "approved", "asked": 5,
                                                               "answered": 9}]
         self.assertEqual(ddl_run.count_lines("en", twice, 0, False)[0],
-                         "Questions: 2 (approved 1, revised 0, timed out 0)")  # asked twice, answered once
+                         "Questions: 2 (approved 1, revised 0, timed out 0; plan 0, confirm 0, Git 0, other 0, unknown 2)")  # asked twice, answered once
         again = [{"id": "R-4", "outcome": "approved", "asked": 0, "answered": 3}, {"id": "R-4", "outcome": None,
                                                                                    "asked": 5}]
         self.assertEqual(ddl_run.count_lines("en", again, 0, False)[0],
-                         "Questions: 2 (approved 1, revised 0, timed out 0, open 1)")  # asked again after its answer
+                         "Questions: 2 (approved 1, revised 0, timed out 0, open 1; plan 0, confirm 0, Git 0, other 0, unknown 2)")  # asked again
         self.assertEqual(len(self.call("report", "--session", "S")[1].splitlines()), 4)  # a session has no flow line
 
     def test_the_runner_refills_marks_done_and_failed_and_skips_an_item_without_a_prompt(self):
@@ -2361,8 +2363,8 @@ class WaitingAndRestoreTest(RunFixture):
                 mock.patch.object(ddl_gate_core, "load_git_review", load_git_review), \
                 mock.patch.object(ddl_gate_core, "git_question_values",
                                   lambda record: ['Record commit "close" (41 files) on main?', "", ""]):
-            ja = self.call("report", "--run", run, "--language", "ja")[1].splitlines()[5:]
-            en = self.call("report", "--run", run, "--language", "en")[1].splitlines()[5:]
+            ja = self.call("report", "--run", run, "--language", "ja")[1].splitlines()[6:]
+            en = self.call("report", "--run", run, "--language", "en")[1].splitlines()[6:]
         self.assertEqual(ja, ["待っていた問い 4 件",
                               "  1. [見込み] Name the report columns as in A。依る項目 4 件",
                               "  2. [待ち] Reword the guarantee。止まっている項目 2 件",
@@ -2378,7 +2380,7 @@ class WaitingAndRestoreTest(RunFixture):
         run = self.start_run([{"id": "I1", "kind": "write"}])
         self.event("asked", "R-" + "1" * 16)
         self.event("answered", "R-" + "1" * 16, choice=0)
-        self.assertEqual(len(self.call("report", "--run", run)[1].splitlines()), 5)
+        self.assertEqual(len(self.call("report", "--run", run)[1].splitlines()), 6)
 
     def test_restore_puts_back_the_owner_files_of_the_items_and_their_dependents_in_the_working_tree(self):
         run, ref = self.restore_setup()
@@ -2521,6 +2523,97 @@ class HoldAndOwnerTest(RunFixture):
         self.assertEqual((code, stdout), (2, ""))
         self.assertIn("src/b.txt has uncommitted changes and belongs to an item outside", stderr)
         self.assertEqual((self.project / "src/b.txt").read_text(), "a change of the item I4 owns\n")
+
+
+class CloseAndRecordsTest(RunFixture):
+    """Stage M's run lane: the `close` item kind (the lead's, never a worker's) and the counts by kind and records."""
+
+    def test_a_close_item_is_accepted_and_never_started_by_the_runner(self):
+        run = self.start_run([{"id": "I1", "kind": "write"}, {"id": "C1", "kind": "close", "after": ["I1"]}])
+        self.prompt(run, "I1", "x\n")
+        self.prompt(run, "C1", "commit and push\n")
+        summary = self.runner(run, "--stagger", "0")[-1]
+        self.assertEqual((summary["done"], summary["skipped"]), (["I1"], []))
+        self.assertEqual(self.statuses(run), {"I1": "done", "C1": "ready"})
+        self.assertEqual(len(self.logged()), 1)  # C1's prompt was never handed to a worker
+        start = 1764000000.0
+        record = {"id": RUN_ID, "startedAt": ddl_gate_core.utc_stamp(start), "slots": {"think": 1, "run": 0},
+                  "items": [{"id": "I1", "kind": "write", "after": [], "status": "done"},
+                            {"id": "C1", "kind": "close", "after": [], "status": "done"}]}
+        events = [{"ts": ddl_gate_core.utc_stamp(start + seconds), "kind": "item", "run": RUN_ID, "item": item,
+                   "status": status} for seconds, item, status in ((0, "I1", "running"), (10, "I1", "done"),
+                                                                    (12, "C1", "done"))]
+        self.assertEqual(ddl_run.flow_line("en", record, events, now=start + 99),  # a close item takes no slot
+                         "Flow: thinking slots 1.0/1 (100%), run slots none; ready items 0")
+
+    def stubs(self):
+        reports = {"a" * 16: {"grant": {"paths": ["**"]}}, "b" * 16: {"confirm": [{"resource": "box"}]},
+                   "d" * 16: {"decision": "other"}}
+        reviews = {"c" * 16: {"operations": [{"kind": "commit"}, {"kind": "push"}]},
+                   "e" * 16: {"operations": [{"kind": "commit"}]}}
+
+        def load_report(hexid, runtime=None):
+            if hexid not in reports:
+                raise OSError("no such report")
+            return reports[hexid]
+
+        def load_git_review(hexid, runtime):
+            if hexid not in reviews:
+                raise ValueError("no such review")
+            return reviews[hexid], None
+
+        return mock.patch.object(ddl_gate_core, "load_report", load_report), \
+            mock.patch.object(ddl_gate_core, "load_git_review", load_git_review)
+
+    def test_the_questions_line_counts_by_kind(self):
+        questions = [{"id": ident, "outcome": "approved", "asked": 0, "answered": 60}
+                     for ident in ("R-" + "a" * 16, "R-" + "b" * 16, "G-" + "c" * 16, "R-" + "d" * 16, "R-" + "f" * 16)]
+        reports, reviews = self.stubs()
+        with reports, reviews:
+            self.assertEqual(ddl_run.count_lines("ja", questions, 0, False)[0],
+                             "問い: 5 件（承認 5、見直し 0、時間切れ 0。計画 1、確認 1、Git 1、ほか 1、不明 1）")
+            self.assertEqual(ddl_run.count_lines("en", questions[:4], 0, False)[0],
+                             "Questions: 4 (approved 4, revised 0, timed out 0; plan 1, confirm 1, Git 1, other 1)")
+        self.assertEqual(ddl_run.count_lines("en", [], 0, False)[0], "Questions: 0 (approved 0, revised 0, timed out 0)")
+
+    def hook_commit(self, command, session="S"):
+        """The real gate's PreToolUse for `command` in the project, in an open conversation: its decision."""
+        payload = json.loads((FIXTURES / "payload_pre_tool_use_claude.json").read_text())
+        payload.update(session_id=session, transcript_path=str(FIXTURES / "claude_open.jsonl"), cwd=str(self.project),
+                       hook_event_name="PreToolUse", tool_name="Bash", tool_input={"command": command},
+                       tool_use_id="commit-" + command[-12:])
+        proc = subprocess.run([sys.executable, "-I", GATE, "pre-tool-use", "--runtime", "claude"],
+                              input=json.dumps(payload), capture_output=True, encoding="utf-8", env=self.env,
+                              cwd=str(self.project), timeout=60)
+        self.assertEqual((proc.returncode, proc.stderr), (0, ""))
+        return json.loads(proc.stdout)["hookSpecificOutput"]["permissionDecision"] if proc.stdout.strip() else None
+
+    def test_the_records_line_counts_each_commit_once_and_each_push_review_once(self):
+        run = self.start_run([{"id": "I1", "kind": "write", "files": ["src/**"]}])
+        self.grant(["box"], commands=("commit", "test"), ident="R-00000000000000b1")
+        for n in (1, 2):  # two commits inside the grant: the hook writes an `allowed` line and a `commit` line for each
+            path = self.project / "src" / "f{}.txt".format(n)
+            path.parent.mkdir(exist_ok=True)
+            path.write_text("{}\n".format(n))
+            self.git("add", str(path))
+            self.assertEqual(self.hook_commit("git commit -m 'Add f{}'".format(n)), "allow")
+            self.git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgSign=false",
+                     "commit", "-q", "-m", "Add f{}".format(n))
+        lines = [(event["kind"], event.get("allow"), event.get("id")) for event in self.events("allowed")
+                 + self.events("commit")]
+        self.assertEqual(sorted(lines), sorted([("allowed", "commit", "R-00000000000000b1")] * 2
+                                               + [("commit", None, "R-00000000000000b1")] * 2))
+        # A Git review's commit and its push (twice, one review), and another review's push.
+        self.event("allowed", "G-" + "e" * 16, allow="commit")
+        self.event("allowed", "G-" + "e" * 16, allow="push")
+        self.event("allowed", "G-" + "e" * 16, allow="push")
+        self.event("allowed", "G-" + "9" * 16, allow="push")
+        self.event("asked", "G-" + "c" * 16)  # asked, never allowed: no push review yet
+        en = self.call("report", "--run", run, "--language", "en")[1].splitlines()
+        ja = self.call("report", "--run", run, "--language", "ja")[1].splitlines()
+        self.assertEqual(en[1], "Records: commits 3 (inside the grant 2), push reviews 2")
+        self.assertEqual(ja[1], "記録: コミット 3 件（許諾の内 2）、送信の確認 2 回")
+        self.assertEqual(ddl_run.records_line("en", None), "Records: not measured")
 
 
 class ResourceBoundaryTest(SplitTest):

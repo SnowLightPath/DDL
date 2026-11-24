@@ -27,13 +27,13 @@ Run Close after the last implementation stage's gates are marked passed, in this
 2. **Docs:** Audit the documentation the change set touches as `/docs` does (stale versions, references, sections, examples, names) and fix it.
 3. **Resonate:** Align every changed document with its language counterpart as `/resonate` does, dated Changelog rows included where the project keeps them.
 4. **Validate:** Run the Validation block and the mechanical Acceptance Gates after the Close edits; a failure stops (the command's validation detection).
-5. **Git review:** Stage the whole change set (implementation, design.md, its history, documents); prepare the review for the commit and, only with `remote` (Formats), the push after it; show its report with a summary of the design.md and documentation changes; its question names the report file, which holds the full diff. One native submission records, and when named sends, the set in one commit; no command chain follows.
+5. **Git review:** Stage the whole change set (implementation, design.md, its history, documents); with `commit` in the grant, commit the set inside it (Run) and, only with `remote`, prepare the review for the push alone (without, ask nothing: the final report lists the commits, their messages and file counts, and the commit to undo them to); else prepare it for the commit and, only with `remote` (Formats), the push after it; show its report with a summary of the design.md and documentation changes; its question names the report file, which holds the full diff. One native submission records the set in one commit, sends it, or both; no command chain follows.
 
 ## Formats
 
 - The final report after the commit ends with `nothing remains`, or names each item left as `left: <item> — <reason>`; it suggests no next command.
 - The progress line of a Close scan that found nothing (`/commit`): `Close scan: nothing to change`, in the user's language, without `+++DDL_REPORT`.
-- The Close row's Gate cell takes `passed <date>` only after the actual Git approval.
+- The Close row's Gate cell takes `passed <date>` only after the actual Git approval; a Close that commits inside the grant without a push has no gate.
 - `remote` — the word in the approved plan or the `/commit` argument that puts the push into the review; without it, no push.
 
 ## Example
@@ -61,7 +61,7 @@ Approved plan lines; `npm test` passed; no detection fired. Nothing remains.
 | A plan gate to see the Close changes first ("review first") | Run it through Approval when its evidence is ready, before preparing the Git review; it approves no Git. Without it the path asks only at the Git review; a detection STOP still applies |
 | Compaction or a restart during Close | Reconstruct (the entry's Interruption); rebuild the invalid Git preparation |
 | Validate fails | Step 4 stops; rerun after every further Close edit |
-| The plan or the argument names `remote` | The commit precedes the push; one answer covers both |
+| The plan or the argument names `remote` | Step 5 |
 | The change set is documentation only | Close runs unchanged: Reflect may find nothing, Docs and Resonate carry the work |
 | The assistant cannot reconstruct the approved scope or the pending state | Report the uncertainty and stop; claim no gate passed, retire no unfinished gate |
 | After the commit | The final report (Formats); `/draft` alone still ends by naming `/realize` |
