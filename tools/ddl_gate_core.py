@@ -4541,16 +4541,33 @@ def member_file(path):
     return path.endswith(".member") and os.path.dirname(path) == os.path.realpath(state_base())
 
 
+def redirect_targets(raw, masked):
+    """The files a segment's redirects write (`>`, `>>`, `>|`, `&>`, `&>>`, `<>`), each its whole shell word: a quoted
+    path with spaces stays one target. Read with the shell's own splitting; when that fails, the word after each
+    redirect up to the next blank."""
+    try:
+        lexer = shlex.shlex(raw, posix=True, punctuation_chars=True)
+        lexer.whitespace_split = True
+        tokens = list(lexer)
+    except ValueError:
+        tokens = None
+    if tokens is None:
+        return [raw[m.end():].lstrip().split()[0].strip("'\"") for m in re.finditer(r">>?", masked)
+                if raw[m.end():].strip()]
+    found = []
+    for i, token in enumerate(tokens[:-1]):
+        if token in (">", ">>", ">|", "&>", "&>>", "<>") and not tokens[i + 1].startswith("&"):
+            found.append(tokens[i + 1])
+    return found
+
+
 def shell_write_targets(command):
     """The paths a shell command visibly writes: redirect targets (`>`, `>>`, `>|`, `<>`), and the operands of
     the writers it calls (LEDGER_WRITERS, `sed -i`, `dd of=`). A bounded reading of literal text, not a shell."""
     parts = split_segments(command.replace(">|", "> ")) if isinstance(command, str) else None
     targets = []
     for raw, masked in zip(*parts) if parts else ():
-        for m in re.finditer(r">>?", masked):
-            word = raw[m.end():].lstrip().split()
-            if word:
-                targets.append(word[0].strip("'\""))
+        targets += redirect_targets(raw, masked)
         try:
             tokens = strip_redirect_tokens(shlex.split(raw))
         except ValueError:
@@ -4604,11 +4621,11 @@ def write_places(runtime, payload):
     command = shell_command(payload.get("tool_input"))
     if not isinstance(command, str):
         return [], False
-    head = heredoc_head(command)
-    parts = split_segments((head if head is not None else command).replace(">|", "> "))
+    text, readable = heredoc_bodies_out(command)
+    parts = split_segments(text.replace(">|", "> "))
     if parts is None:
-        return [], not shell_write_targets(command)
-    here, stack, lost, places, readable = os.path.realpath(cwd), [], False, [], True
+        return [], not shell_write_targets(text)
+    here, stack, lost, places = os.path.realpath(cwd), [], False, []
     literal = lambda word: bool(word) and not re.search(r"[$`\\]|^~[^/]", word)
     for raw, masked in zip(*parts):
         try:
@@ -4647,6 +4664,22 @@ def write_places(runtime, payload):
             else:
                 places.append(os.path.realpath(path))
     return places, readable
+
+
+def heredoc_bodies_out(command):
+    """(command, True): the command without its here-documents' bodies, which are data, not commands (a command
+    substitution in an unquoted body is read no more than one anywhere else)."""
+    lines, out, i = command.split("\n"), [], 0
+    while i < len(lines):
+        line = lines[i]
+        out.append(line)
+        i += 1
+        for found in re.finditer(r"(?<!<)<<(?!<)(-?)[ \t]*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\2", line):
+            dash, delimiter = found[1], found[3]
+            while i < len(lines) and (lines[i].lstrip("\t") if dash else lines[i]) != delimiter:
+                i += 1
+            i += 1  # the delimiter's own line
+    return "\n".join(out), True
 
 
 def protected_trees(roots):

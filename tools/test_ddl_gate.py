@@ -7866,18 +7866,49 @@ class PeerMailTest(GrantAnswers):
             "cd \"$SOMEWHERE\" && rm -rf runs",
             "rm -rf \"$X\"",
             "cd $(git rev-parse --show-toplevel)/.ddl && rm events.jsonl",
+            "cat <<'EOF' > tools/x.txt\nrm -f .ddl/events.jsonl\nEOF\nrm -f .ddl/events.jsonl",
         ]
         for runtime, session in (("claude", "s-peer2"), ("codex", "s-peer"), ("claude", "s-none"), ("codex", "s-none")):
             for command in refused:
                 with self.subTest(runtime=runtime, session=session, command=command):
                     out = self.shell_event(runtime, "pre-tool-use", session, command)
                     self.assertEqual(out["hookSpecificOutput"]["permissionDecision"], "deny", command)
-                    self.assertIn("only the gate writes the ledger", out["hookSpecificOutput"]["permissionDecisionReason"])
+                    if "<<" not in command or session == "s-none":  # a peer's here-document is held as an exit first
+                        self.assertIn("only the gate writes the ledger", out["hookSpecificOutput"]["permissionDecisionReason"])
             for command in ("cd tools && echo x > out.txt", "cd tools && rm -f *.pyc", "rm -rf build",
-                            "cd .ddl && ls", "cd tools && cd .. && rm -f tools/test_x.py"):
+                            "cd .ddl && ls", "cd tools && cd .. && rm -f tools/test_x.py",
+                            "cat > tools/x.sh <<'EOF'\necho x > $OUT/y\nEOF\nchmod +x tools/x.sh"):  # a body is data
                 with self.subTest(runtime=runtime, session=session, command=command):
                     out = self.shell_event(runtime, "pre-tool-use", session, command)
                     self.assertNotIn("only the gate writes", json.dumps(out))
+
+    def test_writes_are_placed_in_paths_with_spaces(self):
+        root = pathlib.Path(self.tmp) / "a project with spaces"
+        (root / ".ddl" / "runs" / self.RUN).mkdir(parents=True)
+        subprocess.run(["git", "init", "-q", str(root)], check=True, capture_output=True)
+        mark_project(root)
+        for name in ("events.jsonl", "runs/{}/run.json".format(self.RUN), "runs/{}/peers.json".format(self.RUN)):
+            (root / ".ddl" / name).write_text("{}\n")
+        state = pathlib.Path(self.tmp) / "state dir with spaces"
+        state.mkdir()
+        env = dict(self.gate_env(), DDL_GATE_STATE_DIR=str(state))
+        peers = root / ".ddl" / "runs" / self.RUN / "peers.json"
+        commands = ["echo '{{}}' >> {}".format(shlex.quote(str(peers))), "echo x > \"{}\"".format(peers),
+                    "cd {} && truncate -s 0 events.jsonl".format(shlex.quote(str(root / ".ddl"))),
+                    "sed -i '' s/a/b/ {}".format(shlex.quote(str(peers))), "rm -rf {}".format(shlex.quote(str(state))),
+                    "cd {} && rm -f -- *".format(shlex.quote(str(state))),
+                    "cp x {}".format(shlex.quote(str(root / ".ddl" / "runs" / self.RUN)))]
+        for runtime in ("claude", "codex"):
+            tool, key = SHELL[runtime]
+            for command in commands:
+                with self.subTest(runtime=runtime, command=command):
+                    data = payload(runtime, transcript=fixture(runtime + "_open.jsonl"), session="s-space", cwd=str(root),
+                                   tool_name=tool, tool_input={key: command})
+                    proc = subprocess.run([sys.executable, "-I", GATE, "pre-tool-use", "--runtime", runtime],
+                                          input=json.dumps(data), capture_output=True, text=True, env=env, cwd=str(root))
+                    out = json.loads(proc.stdout)["hookSpecificOutput"]
+                    self.assertEqual(out["permissionDecision"], "deny", command)
+                    self.assertIn("only the gate writes the ledger", out["permissionDecisionReason"])
 
     def test_a_stale_index_entry_is_dropped(self):
         self.join("claude", "s-peer2", "peer-2")
