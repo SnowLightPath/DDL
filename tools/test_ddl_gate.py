@@ -7320,9 +7320,9 @@ class EditionPushTest(GitReviewTest):
         self.git("commit", "-q", "--cleanup=verbatim", "-F", str(self.message))
         made = self.git("rev-parse", "HEAD")
         changes = change(made) if change else {}
-        edition = self.edition_commit(made, changes.get("parent", self.first), changes.get("message", self.MESSAGE),
-                                      changes.get("author"), changes.get("committer"), changes.get("tree"),
-                                      changes.get("env"), changes.get("config", ()))
+        edition = changes.get("commit") or self.edition_commit(
+            made, changes.get("parent", self.first), changes.get("message", self.MESSAGE), changes.get("author"),
+            changes.get("committer"), changes.get("tree"), changes.get("env"), changes.get("config", ()))
         self.git("branch", "-f", "public", edition)
         return made
 
@@ -7366,7 +7366,8 @@ class EditionPushTest(GitReviewTest):
                  "an empty directory more": (lambda made: dict(tree=self.with_empty_directory(self.edition_tree(made))),
                                              projection),
                  "an encoding header": (lambda made: dict(config=("-c", "i18n.commitEncoding=ISO-8859-1")),
-                                        "carries only a tree, at most one parent"),
+                                        "carries only, in Git's order"),
+                 "headers out of order": (lambda made: dict(commit=self.reordered(made)), "carries only, in Git's order"),
                  "an old author date": (lambda made: dict(env={"GIT_AUTHOR_DATE": "2001-01-01T00:00:00Z"}),
                                         "author date is not within a day"),
                  "an old committer date": (lambda made: dict(env={"GIT_COMMITTER_DATE": "2001-01-01T00:00:00Z"}),
@@ -7381,6 +7382,17 @@ class EditionPushTest(GitReviewTest):
                     self.built(change)
                     self.assertIn(reason, self.blocked(self.check(runtime, self.push)))
                     self.git("reset", "-q", "--soft", "HEAD~1")
+
+    def reordered(self, made):
+        """An edition commit with its headers out of Git's order: the parent after the author."""
+        good = self.edition_commit(made, self.first, self.MESSAGE)
+        header, _, message = subprocess.run(["git", "-C", str(self.repo), "cat-file", "commit", good], capture_output=True,
+                                            check=True).stdout.partition(b"\n\n")
+        lines = header.split(b"\n")
+        lines = [lines[0], lines[2], lines[1], lines[3]]  # tree, author, parent, committer
+        return subprocess.run(["git", "-C", str(self.repo), "hash-object", "-t", "commit", "-w", "--literally", "--stdin"],
+                              input=b"\n".join(lines) + b"\n\n" + message, capture_output=True, check=True,
+                              env=self.git_env).stdout.decode().strip()
 
     def with_empty_directory(self, tree):
         """`tree` with an empty subdirectory more: a listing of its files cannot tell the two apart."""
@@ -7776,12 +7788,7 @@ class PeerMailTest(GrantAnswers):
         for session, extra in (("s-lead", {}), ("s-lead", {"agent_id": "worker-1"}), ("s-none", {})):
             out = self.event("claude", "pre-tool-use", session, "Bash", {"command": "curl https://x.invalid/"}, **extra)
             self.assertNotIn("only the lead", json.dumps(out))
-        # The Run closed: no peer is held.
-        write_run(self.root, [{"id": "I1", "kind": "write", "files": [], "after": [], "status": "done"}], run=self.RUN)
-        out = self.event("claude", "pre-tool-use", "s-peer2", "Bash", {"command": "curl https://x.invalid/"})
-        self.assertNotIn("only the lead", json.dumps(out))
         # No lead named: nothing held; an unreadable peers.json, or one that no longer binds the session, holds it.
-        write_run(self.root, [{"id": "I1", "kind": "write", "files": [], "after": [], "status": "ready"}], run=self.RUN)
         data = self.peers()
         self.write_peers(dict(data, lead=None))
         out = self.event("claude", "pre-tool-use", "s-peer2", "Bash", {"command": "curl https://x.invalid/"})
@@ -7791,6 +7798,11 @@ class PeerMailTest(GrantAnswers):
             self.peers_file.write_text(broken)
             out = self.event("claude", "pre-tool-use", "s-peer2", "Bash", {"command": "curl https://x.invalid/"})
             self.assertIn("membership cannot be read", out["hookSpecificOutput"]["permissionDecisionReason"])
+        # The Run closed: no peer is held.
+        self.write_peers(data)
+        write_run(self.root, [{"id": "I1", "kind": "write", "files": [], "after": [], "status": "done"}], run=self.RUN)
+        out = self.event("claude", "pre-tool-use", "s-peer2", "Bash", {"command": "curl https://x.invalid/"})
+        self.assertNotIn("only the lead", json.dumps(out))
 
     def test_the_peers_mail_and_membership_files_are_the_gates(self):
         self.join("claude", "s-peer2", "peer-2")
@@ -7831,6 +7843,67 @@ class PeerMailTest(GrantAnswers):
         shutil.rmtree(self.state)
         out = self.event("claude", "pre-tool-use", "s-peer2", QUESTION_TOOL["claude"], {"questions": []})
         self.assertIn("only the lead lead-1 asks the human", out["hookSpecificOutput"]["permissionDecisionReason"])
+
+    def test_a_write_is_placed_where_it_lands_after_each_cd(self):
+        self.join("claude", "s-peer2", "peer-2")
+        self.join("codex", "s-peer", "peer-1")
+        state, store = pathlib.Path(self.state), pathlib.Path(self.grants)
+        rel_store = os.path.relpath(store, self.root)
+        refused = [
+            "cd .ddl/runs/{} && sed -i '' 's/lead-1/peer-2/' peers.json".format(self.RUN),
+            "cd .ddl/mail && echo '{{}}' >> {}.jsonl".format(self.RUN),
+            "cd .ddl && truncate -s 0 events.jsonl",
+            "cd .ddl/runs && rm -rf {}".format(self.RUN),
+            "pushd .ddl && rm -f events.jsonl && popd",
+            "cd tools && cd .. && cd .ddl/runs/{} && printf x > run.json".format(self.RUN),
+            "cd {} && rm -- *".format(shlex.quote(str(store / "members"))),
+            "cd {} && rm -rf {}".format(shlex.quote(str(store.parent)), shlex.quote(store.name)),
+            "cd {} && mv members m2".format(shlex.quote(rel_store)),
+            "rm -rf {}/members".format(shlex.quote(rel_store)),
+            "cd {} && rm -rf {}".format(shlex.quote(str(state.parent)), shlex.quote(state.name)),
+            "cd {} && rm -f -- *".format(shlex.quote(str(state))),
+            "cd {} && find . -name '*.json' -delete".format(shlex.quote(str(store))),
+            "cd \"$SOMEWHERE\" && rm -rf runs",
+            "rm -rf \"$X\"",
+            "cd $(git rev-parse --show-toplevel)/.ddl && rm events.jsonl",
+        ]
+        for runtime, session in (("claude", "s-peer2"), ("codex", "s-peer"), ("claude", "s-none"), ("codex", "s-none")):
+            for command in refused:
+                with self.subTest(runtime=runtime, session=session, command=command):
+                    out = self.shell_event(runtime, "pre-tool-use", session, command)
+                    self.assertEqual(out["hookSpecificOutput"]["permissionDecision"], "deny", command)
+                    self.assertIn("only the gate writes the ledger", out["hookSpecificOutput"]["permissionDecisionReason"])
+            for command in ("cd tools && echo x > out.txt", "cd tools && rm -f *.pyc", "rm -rf build",
+                            "cd .ddl && ls", "cd tools && cd .. && rm -f tools/test_x.py"):
+                with self.subTest(runtime=runtime, session=session, command=command):
+                    out = self.shell_event(runtime, "pre-tool-use", session, command)
+                    self.assertNotIn("only the gate writes", json.dumps(out))
+
+    def test_a_stale_index_entry_is_dropped(self):
+        self.join("claude", "s-peer2", "peer-2")
+        index = self.index("s-peer2")
+        write_run(self.root, [{"id": "I1", "kind": "write", "files": [], "after": [], "status": "done"}], run=self.RUN)
+        out = self.event("claude", "pre-tool-use", "s-peer2", QUESTION_TOOL["claude"], {"questions": []})
+        self.assertNotIn("only the lead", json.dumps(out))
+        self.assertFalse(index.exists())
+        # Its Run gone: dropped too, and the session may join another Run.
+        write_run(self.root, [{"id": "I1", "kind": "write", "files": [], "after": [], "status": "ready"}], run=self.RUN)
+        data = self.peers()
+        data["peers"]["peer-2"].update(session=None, bind=hashlib.sha256(self.nonces["peer-2"].encode()).hexdigest())
+        self.write_peers(data)
+        self.join("claude", "s-peer2", "peer-2")
+        self.assertTrue(index.exists())
+        shutil.rmtree(str(self.peers_file.parent))
+        self.event("claude", "pre-tool-use", "s-peer2", "Bash", {"command": "ls"})
+        self.assertFalse(index.exists())
+        other = "N-00000000000f"
+        write_run(self.root, [{"id": "I1", "kind": "write", "files": [], "after": [], "status": "ready"}], run=other)
+        (self.root / ".ddl" / "runs" / other / "peers.json").write_text(json.dumps({"lead": None, "peers": {
+            "peer-9": {"runtime": "claude", "session": None, "cursor": 0, "joinedAt": "2026-11-25T00:00:00.000Z",
+                       "bind": hashlib.sha256(b"9" * 32).hexdigest()}}}))
+        self.assertIsNone(self.join("claude", "s-peer2", "peer-9", run=other, printed=json.dumps(
+            {"run": other, "peer": "peer-9", "runtime": "claude", "lead": None, "bind": "9" * 32})))
+        self.assertEqual(json.loads(index.read_text())["run"], other)
 
     def test_a_busy_run_lock_delays_mail_and_changes_no_decision(self):
         self.join("claude", "s-peer2", "peer-2")

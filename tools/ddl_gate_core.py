@@ -1054,9 +1054,10 @@ def verify_edition(cwd, record, op, source):
     data = git_read(cwd, "cat-file", "commit", tip)
     header, _, message = data.partition(b"\n\n")
     lines = header.decode("utf-8", "replace").split("\n")
-    if [line.split(" ", 1)[0] for line in lines if not line.startswith("parent ")] != ["tree", "author", "committer"] \
-            or lines[0].split(" ", 1)[0] != "tree" or sum(line.startswith("parent ") for line in lines) > 1:
-        raise ValueError("the edition commit carries only a tree, at most one parent, an author and a committer.")
+    if [line.split(" ", 1)[0] for line in lines] not in (["tree", "parent", "author", "committer"],
+                                                          ["tree", "author", "committer"]):
+        raise ValueError("the edition commit carries only, in Git's order, a tree, at most one parent, an author and a "
+                         "committer.")
     parents = [line.split(" ", 1)[1] for line in lines if line.startswith("parent ")]
     if parents != ([head] if head else []):
         raise ValueError("the edition commit's parent is not the target's head.")
@@ -4569,30 +4570,138 @@ def shell_write_targets(command):
 
 
 def ledger_guard(runtime, payload, project):
-    """A deny for an edit or a recognized shell write of `.ddl/events.jsonl`, `.ddl/runs/*/run.json`,
-    `.ddl/runs/*/peers.json`, `.ddl/mail/**` (in any case where the file system ignores it) or a session's
-    `<session>.member` file in the state directory: in a DDL project only the gate writes them, grant or not."""
-    edit, cwd = edit_targets(runtime, payload), call_cwd(payload)
-    if edit is not None:
-        paths = edit[0]
-    elif payload.get("tool_name") in SHELL_TOOLS.get(runtime, set()):
-        command = shell_command(payload.get("tool_input"))
-        paths = shell_write_targets(command) if isinstance(command, str) and (
-            LEDGER in command.casefold() or ".member" in command) else []
-    else:
+    """A deny for an edit or a shell write that reaches `.ddl/events.jsonl`, `.ddl/runs/*/run.json`,
+    `.ddl/runs/*/peers.json`, `.ddl/mail/**` (in any case where the file system ignores it), the gate's state
+    directory or its grant store, or a parent of any of them: in a DDL project only the gate writes them, grant or
+    not. Shell writes are resolved where they land (write_places, following each literal cd); one that cannot be
+    read so is denied, since it could reach them."""
+    found = write_places(runtime, payload)
+    if found is None:
         return None
-    resolved = [os.path.realpath(os.path.join(cwd, path)) for path in paths]
-    member = next((path for path in resolved if member_file(path)), None)
-    if member:
-        return deny(LEDGER_REASON.format(os.path.basename(member)))
-    place = gate_dirs_hit(runtime, payload, None)
-    if place:
-        return deny(LEDGER_REASON.format(place))
-    hits = [path for path in resolved if os.sep + LEDGER + os.sep in (path + os.sep).casefold()]
-    ledger = ledger_root(project) if hits else None
-    folds = folds_case(ledger) if ledger else False
-    hit = next((path for path in hits if ledger_file(path, ledger, folds)), None)
-    return deny(LEDGER_REASON.format(os.path.relpath(hit, ledger))) if hit else None
+    places, readable = found
+    member = session_member(payload)
+    roots = {ledger_root(project)} | ({member["root"]} if member and member.get("root") else set())
+    hit = protected_hit(places, [root for root in roots if root])
+    if hit:
+        return deny(LEDGER_REASON.format(hit))
+    if not readable:
+        return deny(LEDGER_REASON.format("a write the gate cannot place: name its directory and target literally"))
+    return None
+
+
+def write_places(runtime, payload):
+    """(places, readable) a call writes: an editing tool's files, or a shell command's write targets (redirects, the
+    LEDGER_WRITERS, `sed -i`, `dd of=`, `find … -delete`), each resolved against the directory in effect at its
+    segment, following every literal cd, pushd and popd. A place is a path, or (directory, pattern) for a glob in its
+    last part. `readable` is False when a write's target, or a directory a cd moves to before a write, cannot be
+    read literally. None for a call that writes nothing the gate reads."""
+    cwd = call_cwd(payload)
+    edit = edit_targets(runtime, payload)
+    if edit is not None:
+        return [os.path.realpath(os.path.join(cwd, path)) for path in edit[0]], True
+    if payload.get("tool_name") not in SHELL_TOOLS.get(runtime, set()):
+        return None
+    command = shell_command(payload.get("tool_input"))
+    if not isinstance(command, str):
+        return [], False
+    head = heredoc_head(command)
+    parts = split_segments((head if head is not None else command).replace(">|", "> "))
+    if parts is None:
+        return [], not shell_write_targets(command)
+    here, stack, lost, places, readable = os.path.realpath(cwd), [], False, [], True
+    literal = lambda word: bool(word) and not re.search(r"[$`\\]|^~[^/]", word)
+    for raw, masked in zip(*parts):
+        try:
+            words = [word.strip("(){}") for word in shlex.split(raw)]
+        except ValueError:
+            words = None
+        words = [word for word in words or [] if word]
+        if words[:1] in (["cd"], ["pushd"], ["popd"]):
+            if words[0] == "popd":
+                here = stack.pop() if stack else here
+                continue
+            target = words[1] if len(words) > 1 and words[1] != "--" else (words[2] if len(words) > 2 else "~")
+            if not literal(target) or target == "-" or re.search(r"[*?\[]", target):
+                lost = True
+                continue
+            if words[0] == "pushd":
+                stack.append(here)
+            here = os.path.realpath(os.path.join(here, os.path.expanduser(target)))
+            continue
+        targets = shell_write_targets(raw) if words or raw.strip() else []
+        if words[:1] == ["find"] and any(flag in words for flag in ("-delete", "-exec", "-execdir")):
+            targets += [word for word in words[1:] if not word.startswith(("-", "!"))][:1]
+        if words is None or (not words and raw.strip()):
+            readable = readable and not targets
+            continue
+        for target in [target for target in targets if target]:  # `sed -i ''` names an empty suffix, no file
+            if lost or not literal(target):
+                readable = False
+                continue
+            path = os.path.join(here, os.path.expanduser(target))
+            folder, name = os.path.split(path)
+            if re.search(r"[*?\[]", folder):
+                readable = False
+            elif re.search(r"[*?\[]", name):
+                places.append((os.path.realpath(folder), name))
+            else:
+                places.append(os.path.realpath(path))
+    return places, readable
+
+
+def protected_trees(roots):
+    """[(parts, tree)] of what only the gate writes: each ledger's event log, Runs' records and peers (`*` for any
+    one name) and mail directory, the state directory and the grant store (trees: everything below them too)."""
+    found = [(os.path.realpath(state_base()).split(os.sep), True), (os.path.realpath(grant_store()).split(os.sep), True)]
+    for root in roots:
+        base = os.path.realpath(root).split(os.sep) + [LEDGER]
+        found += [(base + ["events.jsonl"], False), (base + ["mail"], True), (base + ["runs", "*", "run.json"], False),
+                  (base + ["runs", "*", "peers.json"], False)]
+    return found
+
+
+def protected_hit(places, roots):
+    """The first place that reaches a protected path (protected_trees): the path itself, one below a protected
+    tree, or a parent of either (moving or deleting it takes them along); a glob reaches one when its pattern can
+    match the next name on the way (a leading dot only when the pattern has one). Case is folded where the file
+    system ignores it. A short name for the place, or None."""
+    trees = protected_trees(roots)
+    folds = any(folds_case(root) for root in roots) if roots else False
+    norm = (lambda part: part.casefold()) if folds else (lambda part: part)
+    same = lambda mine, theirs: theirs == "*" or norm(mine) == norm(theirs)
+    for place in places:
+        glob = isinstance(place, tuple)
+        parts = (place[0] if glob else place).split(os.sep)
+        for protected, tree in trees:
+            shared = min(len(parts), len(protected))
+            if not all(same(parts[i], protected[i]) for i in range(shared)):
+                continue
+            if len(parts) <= len(protected) and not glob:
+                hit = True  # the protected path itself, or a parent of it
+            elif len(parts) > len(protected):
+                hit = tree  # below a protected tree
+            elif len(parts) == len(protected):
+                hit = tree  # a glob inside a protected tree
+            else:
+                following = protected[len(parts)]
+                hit = following == "*" and not place[1].startswith(".") or following != "*" and \
+                    fnmatch_name(following, place[1])
+            if hit:
+                text = place[0] + os.sep + place[1] if glob else place
+                for root in roots:  # a ledger path is named from its project's root
+                    inside = relative_parts(os.path.realpath(text), os.path.realpath(root))
+                    if inside and inside[0].casefold() == LEDGER:
+                        return os.sep.join(inside)
+                return text if len(text) < 120 else "…" + text[-110:]
+    return None
+
+
+def fnmatch_name(name, pattern):
+    """A shell glob's match of one name: a leading dot is matched only by a pattern that starts with one."""
+    import fnmatch
+    if name.startswith(".") and not pattern.startswith("."):
+        return False
+    return fnmatch.fnmatchcase(name, pattern)
 
 
 def exit_word(text):
@@ -6583,6 +6692,13 @@ def session_member(payload):
         return {"root": None, "run": None, "peer": None}  # a peer whose record cannot be read: held as one
     if not isinstance(member, dict) or not all(isinstance(member.get(key), str) for key in ("root", "run", "peer")):
         return {"root": None, "run": None, "peer": None}
+    if not os.path.isdir(os.path.join(member["root"], LEDGER, "runs", member["run"])) \
+            or os.path.exists(run_paths(member["root"], member["run"])[1]) and not run_is_open(member["root"], member["run"]):
+        try:  # its Run is gone or closed: the entry is stale, and the gate drops it
+            os.unlink(index)
+        except OSError:
+            pass
+        return None
     return member
 
 
@@ -6775,34 +6891,23 @@ def mail_calls(segments):
 
 
 def gate_dirs_hit(runtime, payload, member):
-    """The protected place a call writes, moves or deletes: the gate's state directory, the grant store (with the
-    membership index), or a parent of either, named literally (by an editing tool, a redirect, a writer such as rm or
-    mv, `find … -delete`); for a peer, also any shell command that names either path or the variables that place
-    them, unless it only reads. None otherwise."""
-    places = {os.path.realpath(state_base()), os.path.realpath(grant_store())}
-    edit, cwd = edit_targets(runtime, payload), call_cwd(payload)
-    if edit is not None:
-        paths = edit[0]
-    elif payload.get("tool_name") in SHELL_TOOLS.get(runtime, set()):
+    """For a peer anywhere: a write that reaches the gate's state directory or the grant store (with the membership
+    index), or a parent of either (write_places, following each literal cd), one the gate cannot place, or any
+    non-read shell command that names either path or the variables that place them. None otherwise."""
+    if payload.get("tool_name") in SHELL_TOOLS.get(runtime, set()):
         command = shell_command(payload.get("tool_input"))
-        if not isinstance(command, str):
-            return None
-        if member is not None and (re.search(r"\b(?:TMPDIR|DDL_GATE_STATE_DIR|DDL_GATE_GRANT_DIR|XDG_STATE_HOME)\b", command)
-                                   or any(place in command for place in places | {state_base(), grant_store()})) \
+        places = {os.path.realpath(state_base()), os.path.realpath(grant_store()), state_base(), grant_store()}
+        if isinstance(command, str) and (re.search(r"\b(?:TMPDIR|DDL_GATE_STATE_DIR|DDL_GATE_GRANT_DIR|XDG_STATE_HOME)\b",
+                                                   command) or any(place in command for place in places)) \
                 and not shell_is_read_only(command)[0]:  # reading a report there stays open
             return "the gate's state or its grant store"
-        paths = list(shell_write_targets(command))
-        for words in shell_words(command) or []:
-            if words[:1] == ["find"] and ("-delete" in words or "-exec" in words or "-execdir" in words):
-                paths += [word for word in words[1:] if not word.startswith(("-", "(", "!", ")"))][:1]
-    else:
+    found = write_places(runtime, payload)
+    if found is None:
         return None
-    for path in paths:
-        target = os.path.realpath(os.path.join(cwd, os.path.expanduser(path)))
-        for place in places:
-            if target == place or target.startswith(place + os.sep) or place.startswith(target.rstrip(os.sep) + os.sep):
-                return place
-    return None
+    hit = protected_hit(found[0], [])
+    if hit:
+        return hit
+    return None if found[1] else "a write the gate cannot place: name its directory and target literally"
 
 
 def peer_guard(runtime, payload, project, note):
