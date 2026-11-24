@@ -2848,13 +2848,21 @@ class KindsTest(RunFixture):
                 raise ValueError("no such review")
             return reviews[hexid], None
 
+        present = {"R": set(reports), "G": set(reviews)}
         return mock.patch.object(ddl_gate_core, "load_report", load_report), \
-            mock.patch.object(ddl_gate_core, "load_git_review", load_git_review)
+            mock.patch.object(ddl_gate_core, "load_git_review", load_git_review), \
+            mock.patch.object(ddl_run, "prepared_present", lambda: present)
 
-    def answered(self, ident, *choices):
-        self.event("asked", ident)
-        for choice in choices:
-            self.event("answered", ident, choice=choice)
+    def answered(self, ident, *choices, at=None):
+        """One asking of `ident` and its answers; `at` (seconds) dates them a second apart from there."""
+        def stamp(n):
+            return None if at is None else ddl_gate_core.utc_stamp(at + n)
+        self.event("asked", ident, ts=stamp(0))
+        for n, choice in enumerate(choices, 1):
+            if choice == "timeout":
+                self.event("answered", ident, ts=stamp(n), timeout=True)
+            else:
+                self.event("answered", ident, choice=choice, ts=stamp(n))
 
     def setUp(self):
         super().setUp()
@@ -2865,16 +2873,14 @@ class KindsTest(RunFixture):
             self.ids[name] = prefix + next(hexes)
             return self.ids[name][2:]
 
-        self.reports = {new("R-", "plan"): {"grant": {"paths": ["**"]}},
-                        new("R-", "box1"): {"confirm": [{"resource": "box", "action": "true"}]},
-                        new("R-", "box2"): {"confirm": [{"resource": "box", "action": "true"}]},
-                        new("R-", "box3"): {"confirm": [{"resource": "box", "action": "true"}]},
-                        new("R-", "svc1"): {"confirm": [{"resource": "svc", "action": "x"}]},
-                        new("R-", "svc2"): {"confirm": [{"resource": "svc", "action": "x"}]},
-                        new("R-", "svc3"): {"confirm": [{"resource": "svc", "action": "x"}]},
-                        new("R-", "gate1"): {"gate": True}, new("R-", "gate2"): {"kind": "gate"},
-                        new("R-", "gate3"): {"gate": True}, new("R-", "decision"): {"decision": "x"},
-                        new("R-", "draft"): {"kind": "draft"}}
+        self.reports = {new("R-", "plan"): {"grant": {"paths": ["**"]}}, new("R-", "decision"): {"decision": "x"},
+                        new("R-", "draft"): {"kind": "draft"}, new("R-", "write"):
+                            {"confirm": [{"resource": "careful", "action": "x", "approve": True}]}}
+        for resource in ("careful", "box", "svc"):
+            for n in range(1, 4):
+                self.reports[new("R-", "{}{}".format(resource, n))] = {"confirm": [{"resource": resource, "action": "x"}]}
+        for n, record in enumerate(({"gate": True}, {"kind": "gate"}, {"gate": True}), 1):
+            self.reports[new("R-", "gate{}".format(n))] = record
         self.reviews = {}
         for n in range(4):
             self.reviews[new("G-", "commit{}".format(n))] = {"operations": [{"kind": "commit"}]}
@@ -2887,98 +2893,157 @@ class KindsTest(RunFixture):
         for n in range(5):
             self.answered(self.ids["push{}".format(n)], 0)  # an exit: never a candidate, however often approved
         self.answered(self.ids["plan"], 0)
-        for name in ("box1", "box2", "box3"):
+        for name in ("careful1", "careful2", "careful3", "box1", "box2", "box3"):
             self.answered(self.ids[name], 0)
         self.answered(self.ids["svc1"], 0, 1)  # approved, then answered otherwise: overturned
         self.answered(self.ids["svc2"], 0)
         self.answered(self.ids["svc3"], 0)
+        for n in range(3):
+            self.answered(self.ids["write"], 0)  # a confirmed write, approved again and again: still an exit
         self.answered(self.ids["gate1"], 0)
         self.answered(self.ids["gate2"], 0)
         self.answered(self.ids["gate3"], 1)  # the latest answer revises: the streak ends
         self.answered(self.ids["decision"], 0)
         self.event("asked", self.ids["draft"])  # never answered: held
 
+    def kinds(self, *argv, reports=None):
+        patches = self.stubs(self.reports if reports is None else reports, self.reviews)
+        with patches[0], patches[1], patches[2]:
+            return self.ok("report", "--kinds", *argv)
+
+    def rows(self, lines):
+        return {line.split(": ", 1)[0]: line for line in lines if not line.startswith(("Promotion", "Demotion", "- ",
+                                                                                       "上げる", "下げる"))}
+
     def test_each_question_has_a_kind(self):
         self.assertEqual(ddl_run.kinds_of("G-x", {"operations": [{"kind": "commit"}]}), ["git:commit"])
         self.assertEqual(ddl_run.kinds_of("G-x", {"operations": [{"kind": "commit"}, {"kind": "push"}]}), ["git:push"])
         self.assertEqual(ddl_run.kinds_of("R-x", {"grant": {}, "confirm": [{"resource": "b"}, {"resource": "a"}]}),
                          ["confirm:a", "confirm:b"])
-        self.assertEqual([ddl_run.kinds_of("R-x", record) for record in ({"grant": {"paths": []}}, {"gate": True},
-                                                                          {"kind": "draft"}, {}, None)],
-                         [["plan"], ["gate"], ["draft"], ["decision"], ["unknown"]])
+        self.assertEqual(ddl_run.kinds_of("R-x", {"confirm": [{"resource": "a", "approve": True}]}), ["confirm-write:a"])
+        self.assertEqual([ddl_run.kinds_of("R-x", record) for record in (
+            {"grant": {"paths": []}}, {"gate": True}, {"kind": "draft"}, {"provisional": {"snapshot": "x"}}, {}, None)],
+            [["plan"], ["gate"], ["draft"], ["gate"], ["decision"], ["unknown"]])
 
     def test_report_kinds_counts_each_kind_and_names_the_candidates(self):
         self.history()
-        reports, reviews = self.stubs(self.reports, self.reviews)
-        with reports, reviews:
-            en = self.ok("report", "--kinds", "--language", "en")
-            ja = self.ok("report", "--kinds")
-            later = self.ok("report", "--kinds", "--language", "en", "--since", "2999-01-01")
-        rows = {line.split(":")[0] + (":" + line.split(":")[1] if line.startswith(("git:", "confirm:")) else ""): line
-                for line in en if not line.startswith(("Promotion", "Demotion", "- "))}
+        en, ja = self.kinds("--language", "en"), self.kinds()
+        rows = self.rows(en)
         self.assertEqual(rows["git:commit"], "git:commit: asked 4, approved 4, revised 0, held 0, timed out 0; approval 100%, "
                                              "median 0 min, streak 4, overturned 0")
-        self.assertEqual(rows["confirm:svc"], "confirm:svc: asked 3, approved 3, revised 0, held 0, timed out 0; "
-                                              "approval 100%, median 0 min, streak 3, overturned 1")
+        self.assertEqual(rows["confirm:svc"], "confirm:svc: asked 3, approved 2, revised 1, held 0, timed out 0; "
+                                              "approval 67%, median 0 min, streak 2, overturned 1")
+        self.assertEqual(rows["confirm-write:careful"], "confirm-write:careful: asked 1, approved 1, revised 0, held 0, "
+                                                        "timed out 0; approval 100%, median 0 min, streak 1, overturned 0")
         self.assertEqual(rows["gate"], "gate: asked 3, approved 2, revised 1, held 0, timed out 0; approval 67%, "
                                        "median 0 min, streak 0, overturned 0")
         self.assertEqual(rows["draft"], "draft: asked 1, approved 0, revised 0, held 1, timed out 0; approval -, "
                                         "median not measured, streak 0, overturned 0")
-        self.assertEqual(sorted(rows), ["confirm:box", "confirm:svc", "decision", "draft", "gate", "git:commit", "git:push",
-                                        "plan"])
+        self.assertEqual(sorted(rows), ["confirm-write:careful", "confirm:box", "confirm:careful", "confirm:svc", "decision",
+                                        "draft", "gate", "git:commit", "git:push", "plan"])
+        # Only a resource the table asks to confirm each run gets the advice; a push and a confirmed write never.
         self.assertEqual(en[en.index("Promotion candidates"):], [
             "Promotion candidates",
             "- git:commit: add the grant class commit (4 approvals in a row)",
-            "- confirm:box: drop confirm = \"each run\" for box in the resource table (the personal environment's file) "
-            "(3 approvals in a row)"])
-        self.assertFalse(any("git:push" in line or "confirm:svc" in line for line in en[en.index("Promotion candidates"):]))
-        self.assertIn("上げる候補", ja)
+            "- confirm:careful: drop confirm = \"each run\" for careful in the resource table (the personal environment's "
+            "file) (3 approvals in a row)"])
+        self.assertEqual(ja[ja.index("上げる候補"):], [
+            "上げる候補", "- git:commit: 許諾の命令の種類に commit を入れる（4 回続けて承認）",
+            "- confirm:careful: リソースの表（個人環境のファイル）で careful の confirm = \"each run\" をやめる（3 回続けて承認）"])
         self.assertIn("git:commit: 問い 4、承認 4、見直し 0、保留 0、時間切れ 0。承認率 100%、中央値 0 分、連続 4、覆った 0", ja)
-        self.assertEqual(later, ["none"])  # --since leaves nothing
+        self.assertEqual(self.kinds("--language", "en", "--since", "2999-01-01"), ["none"])
 
     def test_the_preparation_gets_a_block_and_one_line_or_nothing(self):
-        reports, reviews = self.stubs(self.reports, self.reviews)
-        with reports, reviews, mock.patch.dict(os.environ, self.env, clear=True):
+        patches = self.stubs(self.reports, self.reviews)
+        with patches[0], patches[1], patches[2], mock.patch.dict(os.environ, self.env, clear=True):
             self.assertEqual(ddl_run.promotion(self.root, "en"), {"block": [], "line": None})  # no history, no line
             self.history()
-            en = ddl_run.promotion(self.root, "en")
-            ja = ddl_run.promotion(self.root, "ja")
-        self.assertEqual(en["line"], "commit (4 approvals in a row), confirm:box (3 approvals in a row)")
-        self.assertEqual(ja["line"], "commit（4 回続けて承認）、confirm:box（3 回続けて承認）")
-        self.assertEqual(en["block"][0], "Promotion candidates")
-        self.assertEqual(ja["block"][0], "上げる候補")
+            en, ja = ddl_run.promotion(self.root, "en"), ddl_run.promotion(self.root, "ja")
+        self.assertEqual(en["line"], "commit (4 approvals in a row), confirm:careful (3 approvals in a row)")
+        self.assertEqual(ja["line"], "commit（4 回続けて承認）、confirm:careful（3 回続けて承認）")
+        self.assertEqual((en["block"][0], ja["block"][0]), ("Promotion candidates", "上げる候補"))
 
-    def test_a_kind_overturned_since_its_promotion_is_a_demotion_candidate(self):
-        self.grant(["box"], commands=("commit",), ident="R-00000000000000d1")  # approved on 2026-11-24: commit promoted
-        for n in range(3):
-            self.answered(self.ids["commit{}".format(n)], 0)
-        self.answered(self.ids["commit3"], 0, 1)  # overturned, after the grant's approval
-        self.answered(self.ids["gate1"], 0)
-        self.event("provisional-overturned", self.ids["gate1"])
-        reports, reviews = self.stubs(self.reports, self.reviews)
-        with reports, reviews:
-            en = self.ok("report", "--kinds", "--language", "en")
-        self.assertEqual(en[en.index("Demotion candidates"):], [
-            "Demotion candidates", "- git:commit: take the grant class commit out (1 overturned)",
-            "- gate: stop going ahead provisionally on gates (1 overturned)"])
-        self.assertNotIn("Promotion candidates", en)  # a kind overturned in the window is no promotion candidate
+    def test_streaks_count_questions_not_askings_and_a_timeout_never_overturns(self):
+        self.answered(self.ids["commit0"], 0)
+        self.answered(self.ids["commit0"], 0)
+        self.answered(self.ids["commit0"], 0)  # one question asked three times: a streak of one
+        rows = self.rows(self.kinds("--language", "en"))
+        self.assertTrue(rows["git:commit"].startswith("git:commit: asked 1, approved 1,"), rows["git:commit"])
+        self.assertTrue(rows["git:commit"].endswith("streak 1, overturned 0"))
+        self.answered(self.ids["commit1"], 0, "timeout")  # approved, then a timeout: no overturn
+        rows = self.rows(self.kinds("--language", "en"))
+        self.assertTrue(rows["git:commit"].endswith("streak 0, overturned 0"), rows["git:commit"])
 
-    def test_a_restore_overturns_the_provisional_question_whose_items_it_held(self):
+    def test_a_kind_overturned_after_its_promotion_is_a_demotion_candidate_by_the_answers_time(self):
+        self.grant(["box"], commands=("commit",), ident="R-00000000000000d1")  # approved 2026-11-24T00:00:00Z
+        before, after = ddl_gate_core.iso_seconds("2026-11-23T00:00:00Z"), ddl_gate_core.iso_seconds("2026-11-25T00:00:00Z")
+        self.answered(self.ids["commit0"], 0, at=before)  # first asked before the grant ...
+        self.answered(self.ids["commit0"], 1, at=after)  # ... and overturned after it: a demotion candidate
+        self.answered(self.ids["commit1"], 0, 1, at=before)  # overturned before the grant: not one
+        en = self.kinds("--language", "en")
+        self.assertEqual(en[en.index("Demotion candidates"):],
+                         ["Demotion candidates", "- git:commit: take the grant class commit out (1 overturned)"])
+        self.assertNotIn("Promotion candidates", en)
+        self.assertIn("下げる候補", self.kinds())
+
+    def test_a_provisional_choice_is_a_gate_and_its_overturn_demotes_gates(self):
         run = self.start_run([{"id": "I1", "kind": "write", "files": ["a.txt"]}])
-        reports = dict(self.reports, **{self.ids["decision"][2:]: {"provisional": {"snapshot": "refs/ddl/snapshots/x"},
-                                                                   "holds": {"run": run, "items": ["I1"]}}})
+        reports = dict(self.reports)
+        for name in ("decision", "plan"):
+            reports[self.ids[name][2:]] = {"decision": "x", "provisional": {"snapshot": "refs/ddl/snapshots/x"},
+                                           "holds": {"run": run, "items": ["I1"]}}
         self.answered(self.ids["decision"], 0)
-        self.event("restore", None, run=run, items=["I1"])
-        patches = self.stubs(reports, self.reviews)
-        with patches[0], patches[1]:
-            rows = {line.split(":")[0]: line for line in self.ok("report", "--kinds", "--language", "en")}
-        self.assertTrue(rows["decision"].endswith("streak 1, overturned 1"), rows["decision"])
+        self.event("provisional-overturned", self.ids["decision"])
+        en = self.kinds("--language", "en", reports=reports)
+        self.assertTrue(self.rows(en)["gate"].endswith("overturned 1"), self.rows(en)["gate"])
+        self.assertEqual(en[en.index("Demotion candidates"):],
+                         ["Demotion candidates", "- gate: stop going ahead provisionally on gates (1 overturned)"])
+
+    def test_time_orders_the_answers_since_bounds_them_and_a_restore_counts_only_after_the_approval(self):
+        run = self.start_run([{"id": "I1", "kind": "write", "files": ["a.txt"]}])
+        day = ddl_gate_core.iso_seconds("2026-11-20T00:00:00Z")
+        self.answered(self.ids["commit3"], 1, at=day + 300)  # written first, answered last: it ends the streak
+        for n in range(3):
+            self.answered(self.ids["commit{}".format(n)], 0, at=day + 10 * n)
+        rows = self.rows(self.kinds("--language", "en"))
+        self.assertTrue(rows["git:commit"].endswith("streak 0, overturned 0"), rows["git:commit"])
+        rows = self.rows(self.kinds("--language", "en", "--since", "2026-11-20T00:00:05Z"))  # the first approval is out
+        self.assertTrue(rows["git:commit"].startswith("git:commit: asked 3, approved 2, revised 1"), rows["git:commit"])
+        reports = dict(self.reports, **{self.ids["decision"][2:]: {"provisional": {"snapshot": "x"},
+                                                                    "holds": {"run": run, "items": ["I1"]}}})
+        self.event("restore", None, run=run, items=["I1"], ts=ddl_gate_core.utc_stamp(day + 400))  # before its approval
+        self.answered(self.ids["decision"], 0, at=day + 500)
+        self.assertTrue(self.rows(self.kinds("--language", "en", reports=reports))["gate"].endswith("overturned 0"))
+        self.event("restore", None, run=run, items=["I1"], ts=ddl_gate_core.utc_stamp(day + 600))  # after it
+        self.assertTrue(self.rows(self.kinds("--language", "en", reports=reports))["gate"].endswith("overturned 1"))
+        rows = self.rows(self.kinds("--language", "en", "--since", "2026-11-20T00:09:00Z", reports=reports))
+        self.assertNotIn("gate", rows)  # --since leaves out its approval and its overturn alike
+
+    def test_a_hundred_thousand_lines_are_read_in_one_pass(self):
+        import time
+        lines = []
+        for n in range(34000):
+            ident = ("G-" if n % 3 == 0 else "R-") + "{:016x}".format(n)
+            stamp = ddl_gate_core.utc_stamp(1764000000 + 3 * n)
+            lines.append(json.dumps({"v": ddl_gate_core.EVENT_VERSION, "ts": stamp, "session": "S", "kind": "asked",
+                                     "id": ident, "toolUseId": "t{}".format(n)}, separators=(",", ":")))
+            lines.append(json.dumps({"v": ddl_gate_core.EVENT_VERSION, "ts": stamp, "session": "S", "kind": "answered",
+                                     "id": ident, "toolUseId": "t{}".format(n), "choice": 0}, separators=(",", ":")))
+            lines.append(json.dumps({"v": ddl_gate_core.EVENT_VERSION, "ts": stamp, "session": "S", "kind": "pre"}))
+        path = pathlib.Path(self.root, ".ddl", "events.jsonl")
+        path.parent.mkdir(exist_ok=True)
+        path.write_text("\n".join(lines[:100000]) + "\n")
+        with mock.patch.dict(os.environ, self.env, clear=True):
+            start = time.monotonic()
+            found = ddl_run.promotion(self.root, "en")
+            took = time.monotonic() - start
+        self.assertEqual(found["line"], None)  # the records are gone: no kind is known
+        self.assertLess(took, 3.0)  # one pass: well under a second on a developer machine
 
     def ok(self, *argv):
         code, stdout, stderr = self.call(*argv)
         self.assertEqual((code, stderr), (0, ""), stdout)
         return stdout.splitlines()
-
 
 class ResourceBoundaryTest(SplitTest):
     def test_the_resource_words_load_the_run_module_through_the_gate_and_no_hook_event_does(self):

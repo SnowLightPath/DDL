@@ -150,14 +150,18 @@ summary {run, workTree, done, failed, skipped, blocked, held, stopped?, seconds}
 when none failed and nothing stopped it, 1 otherwise, 2 for a usage error or a Run another runner holds, 3
 without codex. It never commits, pushes or asks the human.
 
-`report --kinds` counts the project's questions by kind (E13 item 7): `git:commit` and `git:push` for Git reviews,
-`confirm:<resource>`, `plan` (a report with a grant), `gate` (`gate: true`), `decision`, or the report's own
-`kind`: asked, approved (first option), revised, held (unanswered), timed out, the approval rate, the median
-answer time, the current streak of first-option approvals, and how many were overturned (answered otherwise later,
-a provisional choice overturned, or a restore of what it held); then the candidates: to promote, a streak of 3 or
-more never overturned of `git:commit` (the grant class commit), `confirm:<resource>` (no confirmation each run) or
-`gate` (going ahead provisionally), never an exit; to demote, commit overturned since the grant that names it was
-approved, or a gate overturned. promotion(root, language) gives a plan's preparation the same candidates: the
+`report --kinds` counts the project's questions by kind (E13 item 7), one per question (its ID, however often
+asked), in timestamp order: `git:commit` and `git:push` for Git reviews, `confirm:<resource>` (`confirm-write:`
+for an item approved to write, an exit), `gate` (a provisional choice, or `gate: true`), `plan` (a report with a
+grant), `decision`, or the report's own `kind`: asked, approved (the latest answer the first option), revised,
+held (unanswered), timed out, the approval rate, the median answer time, the current streak of first-option
+approvals by answer time, and how many were overturned (answered otherwise after an approval, a provisional choice
+overturned, a restore of what it held after its approval; never a timeout); `--since` bounds answers and overturns
+alike. Then the candidates: to promote, a streak of 3 or more never overturned of `git:commit` (the grant class
+commit), `confirm:<resource>` when the resource table asks to confirm it each run, or `gate` (going ahead
+provisionally), never an exit; to demote, commit overturned (by that answer's time) after the grant that names it
+was approved, or a gate overturned. One pass over the ledger: what is not asked, answered, overturned or restored
+is not parsed. promotion(root, language) gives a plan's preparation the same candidates: the
 report file's block and the question's `Promote` line (at most 3), None when there is none.
 
 `run-join <N-id> --peer <name> --runtime claude|codex [--lead]` records a conversation of the Run in
@@ -327,31 +331,55 @@ def codex_questions(path):
     return list(asked.values())
 
 
-def ledger_lines(root):
-    """The ledger's event objects, first to last; None when the project has no ledger file.
+def ledger_lines(root, kinds=None):
+    """The ledger's event objects, first to last; None when the project has no ledger file. With `kinds`, only the
+    events of those kinds (a line that names none of them is not parsed at all).
 
     A line that repeats the session, kind, id and toolUseId of an earlier one is the second install's copy
     of the same hook event and is dropped. Lines without a toolUseId cannot be told apart and all stay."""
     events, seen = [], set()
+    marks = None if kinds is None else [('"kind":"' + kind + '"') for kind in kinds] + \
+        [('"kind": "' + kind + '"') for kind in kinds]
     try:
         fh = open(os.path.join(root, gate.LEDGER, "events.jsonl"), encoding="utf-8", errors="replace")
     except OSError:
         return None
     with fh:
         for line in fh:
+            if marks is not None and not any(mark in line for mark in marks):
+                continue
             try:
                 event = json.loads(line)
             except ValueError:
                 continue  # a torn or foreign line; the lines around it still count
             if not isinstance(event, dict) or event.get("v") != gate.EVENT_VERSION:
                 continue
+            if kinds is not None and event.get("kind") not in kinds:
+                continue
             if event.get("toolUseId") is not None:
-                key = json.dumps([event.get(name) for name in ("session", "kind", "id", "toolUseId")])
+                key = tuple(event.get(name) for name in ("session", "kind", "id", "toolUseId"))
+                try:
+                    hash(key)
+                except TypeError:
+                    key = json.dumps(key, sort_keys=True, default=str)
                 if key in seen:
                     continue
                 seen.add(key)
             events.append(event)
     return events
+
+
+def stamp_seconds(text):
+    """Seconds of a timestamp: the gate's own form (2026-11-25T01:02:03.456Z) read directly, any other through the
+    gate's reader."""
+    import calendar
+    if isinstance(text, str) and len(text) == 24 and text[10] == "T" and text[19] == "." and text[23] == "Z":
+        try:
+            return calendar.timegm((int(text[0:4]), int(text[5:7]), int(text[8:10]), int(text[11:13]),
+                                    int(text[14:16]), int(text[17:19]), 0, 0, 0)) + int(text[20:23]) / 1000.0
+        except ValueError:
+            pass
+    return gate.iso_seconds(text)
 
 
 def event_questions(events):
@@ -376,17 +404,19 @@ def event_questions(events):
 
 def open_questions(questions):
     """The questions still open: for each ID only its latest ask counts, and it is open unless an answer to that ID
-    came at or after it (or, where the times are not known, any answer to that ID)."""
-    latest = {}
+    came at or after it (or, where the times are not known, any answer to that ID). One pass, by ID."""
+    latest, answers = {}, {}
     for index, question in enumerate(questions):
         latest[question.get("id")] = index
+        if question["outcome"] is not None:
+            answers.setdefault(question.get("id"), []).append(question.get("answered"))
     still = []
     for index, question in enumerate(questions):
         if question["outcome"] is not None or latest[question.get("id")] != index:
             continue
         asked = question.get("asked")
-        if not any(other["outcome"] is not None and other.get("id") == question.get("id") and (
-                asked is None or other.get("answered") is None or other["answered"] >= asked) for other in questions):
+        if not any(asked is None or answered is None or answered >= asked
+                   for answered in answers.get(question.get("id"), ())):
             still.append(question)
     return still
 
@@ -3026,11 +3056,26 @@ KINDS_TEXT = {
 REPORT_KINDS = ("plan", "gate", "confirm", "decision", "draft")  # what prepare-report's optional `kind` names
 
 
+KIND_EVENTS = ("asked", "answered", "provisional-overturned", "restore")  # what kind_rows reads of the ledger
+
+
+def prepared_present():
+    """{"R": set, "G": set} of the report and review IDs (hex) prepared in this state directory: one listing each,
+    so that a question whose record is gone costs no file open."""
+    present = {"R": set(), "G": set()}
+    for kind, directory in (("R", gate.report_directory), ("G", gate.review_directory)):
+        try:
+            present[kind] = set(os.listdir(str(directory())))
+        except OSError:
+            pass
+    return present
+
+
 def kinds_of(ident, record):
     """The kinds of the question `ident` from its prepared record: `git:commit` or `git:push` for a Git review (by
-    what it sends); for a report its `kind` when it names one, else `plan` with a grant, `confirm:<resource>` for
-    each resource it confirms, `gate` when it says `gate: true`, `decision` otherwise. A record that is gone gives
-    `git` or `unknown`."""
+    what it sends); for a report its `kind` when it names one, else `confirm:<resource>` for each resource it
+    confirms (`confirm-write:<resource>` for an item it approves to write), `gate` when it is provisional or says
+    `gate: true`, `plan` with a grant, `decision` otherwise. A record that is gone gives `git` or `unknown`."""
     if ident.startswith("G-"):
         if not isinstance(record, dict):
             return ["git"]
@@ -3039,72 +3084,89 @@ def kinds_of(ident, record):
     if not isinstance(record, dict):
         return ["unknown"]
     named = record.get("kind") if record.get("kind") in REPORT_KINDS else None
-    resources = sorted({item.get("resource") for item in record.get("confirm") or []
-                        if isinstance(item, dict) and isinstance(item.get("resource"), str)})
-    if named == "confirm" or named is None and resources:
-        return ["confirm:" + resource for resource in resources] or ["confirm"]
+    items = [item for item in record.get("confirm") or [] if isinstance(item, dict)
+             and isinstance(item.get("resource"), str)]
+    if named == "confirm" or named is None and items:
+        kinds = sorted({("confirm-write:" if item.get("approve") is True else "confirm:") + item["resource"]
+                        for item in items})  # a confirmed write is an exit: its own kind, never a candidate
+        return kinds or ["confirm"]
     if named:
         return [named]
+    if record.get("provisional"):
+        return ["gate"]  # a provisional choice is a gate the lead went ahead on
     if record.get("grant"):
         return ["plan"]
     return ["gate"] if record.get("gate") is True else ["decision"]
 
 
 def kind_rows(events, since=None):
-    """{kind: tally} over the ledger's questions asked at or after `since` (seconds): asked, approved (first option),
-    revised, held (still unanswered), timed out, the answer times, the current streak of first-option approvals,
-    overturned (a later answer other than the first, a provisional choice overturned, or a restore of the items it
-    held), and when each was asked; plus the questions' records."""
-    chosen = [event for event in events if since is None or (gate.iso_seconds(event.get("ts")) or 0) >= since]
-    records, rows = {}, {}
-
-    def record_of(ident):
-        if ident not in records:
-            records[ident] = prepared_record(ident)[0]
-        return records[ident]
-
-    answers, overturned = {}, set()
-    for event in chosen:
-        ident = event.get("id")
-        if event.get("kind") == "answered" and isinstance(ident, str):
-            answers.setdefault(ident, []).append(event.get("choice"))
-        elif event.get("kind") == "provisional-overturned" and isinstance(ident, str):
-            overturned.add(ident)
-    for ident, choices in answers.items():
-        if 0 in choices and any(choice != 0 for choice in choices[choices.index(0) + 1:]):
-            overturned.add(ident)  # approved, then answered otherwise
-    for event in chosen:
-        if event.get("kind") != "restore" or not isinstance(event.get("items"), list):
+    """{kind: tally} over the ledger's questions, one per question (its report or review ID, however often asked), in
+    timestamp order, from `since` (seconds) on: asked (questions), approved (their latest answer the first option),
+    revised, held (never answered), timed out, the answer times, the current streak of first-option approvals by
+    answer time, and the times each was overturned: an answer other than the first after a first-option one, a
+    provisional choice overturned, a restore of the items it held after it was approved; a timeout never overturns.
+    One pass over the events; each question's record is read once."""
+    timed = []
+    for order, event in enumerate(events):
+        if not isinstance(event, dict) or event.get("kind") not in KIND_EVENTS:
             continue
-        for ident in answers:  # a provisional question whose held items were restored was overturned
-            record = record_of(ident) if gate.PREPARED_ID.fullmatch(ident) else None
-            holds = record.get("holds") if isinstance(record, dict) else None
-            if isinstance(record, dict) and record.get("provisional") and isinstance(holds, dict) and \
-                    holds.get("run") == event.get("run") and set(holds.get("items") or []) & set(event["items"]):
-                overturned.add(ident)
-    questions = event_questions(chosen)
-    still = {id(question) for question in open_questions(questions)}
-    for question in questions:
-        ident = question.get("id")
+        moment = stamp_seconds(event.get("ts"))
+        if moment is not None and (since is None or moment >= since):
+            timed.append((moment, order, event))
+    timed.sort(key=lambda entry: entry[:2])
+    asked, restores = {}, []
+    for moment, order, event in timed:
+        ident, kind = event.get("id"), event.get("kind")
+        when = (moment, order)  # the ledger's order among lines of the same moment
+        if kind == "restore" and isinstance(event.get("items"), list):
+            restores.append((when, event))
+            continue
         if not isinstance(ident, str) or not gate.PREPARED_ID.fullmatch(ident):
             continue
-        for kind in kinds_of(ident, record_of(ident)):
+        entry = asked.setdefault(ident, {"asks": [], "answers": [], "overturns": []})
+        if kind == "asked":
+            entry["asks"].append(when)
+        elif kind == "answered":
+            choice = event.get("choice")
+            outcome = "timeout" if event.get("timeout") else "approved" if choice == 0 else "revised" \
+                if type(choice) is int else None
+            if outcome:
+                entry["answers"].append((when, outcome))
+        elif kind == "provisional-overturned":
+            entry["overturns"].append(when)
+    rows, present = {}, prepared_present()
+    for ident, entry in asked.items():
+        if not entry["asks"] and not entry["answers"]:
+            continue
+        record = prepared_record(ident)[0] if ident[2:] in present[ident[0]] else None
+        approved_at = next((when for when, outcome in entry["answers"] if outcome == "approved"), None)
+        overturns = list(entry["overturns"])
+        if approved_at is not None:
+            overturns += [when for when, outcome in entry["answers"] if outcome == "revised" and when > approved_at]
+            holds = record.get("holds") if isinstance(record, dict) else None
+            if isinstance(record, dict) and record.get("provisional") and isinstance(holds, dict):
+                overturns += [when for when, restore in restores if when > approved_at
+                              and restore.get("run") == holds.get("run")
+                              and set(holds.get("items") or []) & set(restore["items"])]
+        last = entry["answers"][-1] if entry["answers"] else None
+        for kind in kinds_of(ident, record):
             row = rows.setdefault(kind, {"asked": 0, "approved": 0, "revised": 0, "held": 0, "timeout": 0, "waits": [],
-                                         "answers": [], "overturned": {}})
+                                         "ends": [], "overturned": {}})
             row["asked"] += 1
-            if question["outcome"] in ("approved", "revised", "timeout"):
-                row[question["outcome"]] += 1
-                row["answers"].append((question.get("answered") or 0, question["outcome"]))
-                if question["outcome"] != "timeout" and question.get("answered") is not None and \
-                        question.get("asked") is not None:
-                    row["waits"].append(question["answered"] - question["asked"])
-            elif id(question) in still:
+            if last is None:
                 row["held"] += 1
-            if ident in overturned:
-                row["overturned"].setdefault(ident, question.get("asked"))  # when it was asked
+            else:
+                row[last[1]] += 1
+                row["ends"].append(last)
+                if last[1] != "timeout":
+                    before = [when for when in entry["asks"] if when <= last[0]]
+                    if before:
+                        row["waits"].append(last[0][0] - before[-1][0])
+            if overturns:
+                row["overturned"][ident] = sorted(when[0] for when in overturns)  # the times, in seconds
     for row in rows.values():
         streak = 0
-        for _, outcome in sorted(row["answers"], reverse=True):  # from the latest answer back
+        for _, outcome in sorted(row["ends"], reverse=True):  # from the latest answer back
             if outcome != "approved":
                 break
             streak += 1
@@ -3112,34 +3174,46 @@ def kind_rows(events, since=None):
     return rows
 
 
-def kind_candidates(rows, grants=(), language="en"):
-    """(promotion candidates, demotion candidates), each [(kind, what a plan can do, why)], most approvals in a row
-    first. A promotion: a streak of STREAK_LEAST or more first-option approvals, never overturned, of a kind a plan
-    can include (`git:commit` → the grant class commit, `confirm:<resource>` → no confirmation each run, `gate` →
-    going ahead provisionally); never an exit. A demotion: the grant class commit of an active grant when a
-    `git:commit` question was overturned since that grant's approval; going ahead provisionally on gates when a
-    gate was overturned."""
+def kind_candidates(rows, grants=(), language="en", table=None):
+    """(promotion candidates, demotion candidates), each [(kind, what a plan can do, count)], most approvals in a row
+    first. A promotion: a streak of STREAK_LEAST or more first-option approvals, never overturned in the window, of a
+    kind a plan can include: `git:commit` (the grant class commit), `confirm:<resource>` when the resource table
+    gives that resource `confirm = "each run"` (no confirmation each run), `gate` (going ahead provisionally); never
+    an exit (a push, a confirmed write). A demotion: the grant class commit of an active grant when a `git:commit`
+    question was overturned after that grant was approved; going ahead provisionally on gates when a gate was
+    overturned."""
     text, promote, demote = KINDS_TEXT[language], [], []
+    table = {} if table is None else table
     for kind, row in rows.items():
         if row["streak"] < STREAK_LEAST or row["overturned"]:
             continue
         if kind == "git:commit":
             promote.append((kind, text["commit"], row["streak"]))
         elif kind.startswith("confirm:"):
-            promote.append((kind, text["confirm"].format(kind.split(":", 1)[1]), row["streak"]))
+            resource = kind.split(":", 1)[1]
+            if isinstance(table.get(resource), dict) and table[resource].get("confirm") == "each run":
+                promote.append((kind, text["confirm"].format(resource), row["streak"]))
         elif kind == "gate":
             promote.append((kind, text["gate"], row["streak"]))
     since = min((gate.iso_seconds(record.get("approvedAt")) or 0 for record in grants
                  if "commit" in record.get("grant", {}).get("commands", [])), default=None)
     commits = rows.get("git:commit")
-    after = [ident for ident, asked in (commits["overturned"].items() if commits else ())
-             if since is not None and (asked is None or asked >= since)]
-    if after:  # overturned since the grant that promoted it was approved
+    after = [ident for ident, moments in (commits["overturned"].items() if commits else ())
+             if since is not None and any(moment >= since for moment in moments)]
+    if after:  # overturned (that answer's own time) after the grant that promoted it was approved
         demote.append(("git:commit", text["demote_commit"], len(after)))
     if rows.get("gate") and rows["gate"]["overturned"]:
         demote.append(("gate", text["demote_gate"], len(rows["gate"]["overturned"])))
     promote.sort(key=lambda candidate: -candidate[2])
     return promote, demote
+
+
+def table_or_none():
+    """The resource table, or {} when there is none or it cannot be read (then no confirm advice)."""
+    try:
+        return resource_table()
+    except ValueError:
+        return {}
 
 
 def candidate_lines(language, promote, demote):
@@ -3148,7 +3222,8 @@ def candidate_lines(language, promote, demote):
     for heading, found, why in ((text["promote"], promote, text["streak"]), (text["demote"], demote, text["overturned"])):
         if found:
             lines.append(heading)
-            lines += ["- {}: {} ({})".format(kind, what, why.format(count)) for kind, what, count in found]
+            form = "- {}: {}（{}）" if language == "ja" else "- {}: {} ({})"
+            lines += [form.format(kind, what, why.format(count)) for kind, what, count in found]
     return lines
 
 
@@ -3156,9 +3231,9 @@ def promotion(root, language="en", events=None):
     """What a plan's preparation shows: {"block": the report file's candidate lines ([] when none), "line": the
     question's generated `Promote` line value (at most CANDIDATE_LINE_MOST, e.g. `commit（7 回続けて承認）`) or None}.
     The gate's prepare-report calls this for a report with a grant; it reads the project's ledger and grants."""
-    events = ledger_lines(root) if events is None else events
+    events = ledger_lines(root, KIND_EVENTS) if events is None else events
     grants = gate.active_grants(gate.project_decision(root))
-    promote, demote = kind_candidates(kind_rows(events or []), grants, language)
+    promote, demote = kind_candidates(kind_rows(events or []), grants, language, table_or_none())
     text = KINDS_TEXT[language]
     shown = ["{}（{}）".format(kind.replace("git:", ""), text["streak"].format(count)) if language == "ja" else
              "{} ({})".format(kind.replace("git:", ""), text["streak"].format(count))
@@ -3181,7 +3256,7 @@ def kinds_report(argv):
     root, _ = gate.cwd_ledger()
     if not root:
         raise ValueError("the kinds of a project's questions come from its ledger; run this inside the project.")
-    rows = kind_rows(ledger_lines(root) or [], since)
+    rows = kind_rows(ledger_lines(root, KIND_EVENTS) or [], since)
     text = KINDS_TEXT[language]
     lines = []
     for kind in sorted(rows):
@@ -3197,7 +3272,7 @@ def kinds_report(argv):
                                         len(row["overturned"])))
     if not lines:
         lines.append(text["none"])
-    promote, demote = kind_candidates(rows, gate.active_grants(gate.project_decision(root)), language)
+    promote, demote = kind_candidates(rows, gate.active_grants(gate.project_decision(root)), language, table_or_none())
     return lines + candidate_lines(language, promote, demote)
 
 
