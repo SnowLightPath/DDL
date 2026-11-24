@@ -2690,7 +2690,7 @@ class MailTest(RunFixture):
         self.join("claude-lead", lead=True)
         self.join("codex-peer", "codex")
         self.join("third", "codex")
-        sent = self.send("--to", "codex-peer", "--text", "take I2 next")
+        sent = self.send("--to", "codex-peer", "--as", "claude-lead", "--text", "take I2 next")
         self.assertRegex(sent["id"], r"^M-[0-9a-f]{12}$")
         self.assertEqual({key: sent[key] for key in ("from", "to", "kind")},
                          {"from": "claude-lead", "to": "codex-peer", "kind": "note"})
@@ -2719,8 +2719,11 @@ class MailTest(RunFixture):
         self.assertEqual(self.peers()["peers"]["third"]["cursor"], self.peers()["peers"]["codex-peer"]["cursor"])
 
     def test_mail_refusals_send_nothing(self):
-        self.no("mail", "send", "--run", self.run_id, "--to", "lead", "--text", "x", says="has no lead yet")
+        self.no("mail", "send", "--run", self.run_id, "--to", "lead", "--text", "x", says="name the sender with --as")
         self.join("claude-lead", lead=True)
+        self.no("mail", "send", "--run", self.run_id, "--to", "lead", "--text", "x",
+                says="name the sender with --as (the lead names itself, claude-lead): ddl_gate.py mail send --run {} "
+                     "--to lead --as <your peer name>".format(self.run_id))
         big, link = self.tmp / "big.md", self.tmp / "link.md"
         big.write_text("x" * 8193)
         os.symlink(str(big), str(link))
@@ -2731,11 +2734,13 @@ class MailTest(RunFixture):
                            (("--to", "lead", "--file", str(big)), "--file takes a regular file"),
                            (("--to", "lead", "--file", str(link)), "--file takes a regular file"),
                            (("--to", "lead", "--text", "x", "--file", str(big)), "usage"),
-                           (("--to", "lead", "--kind", "order", "--text", "x"), "--kind is one of"),
-                           (("--to", "lead", "--as", "stranger", "--text", "x"), "stranger has not joined")):
+                           (("--to", "lead", "--kind", "order", "--text", "x"), "--kind is one of")):
             with self.subTest(argv=argv):
-                self.no("mail", "send", "--run", self.run_id, *argv, says=says)
-        self.no("mail", "send", "--run", "N-ffffffffffff", "--to", "lead", "--text", "x", says="not in this project's ledger")
+                self.no("mail", "send", "--run", self.run_id, *argv, "--as", "claude-lead", says=says)
+        self.no("mail", "send", "--run", self.run_id, "--to", "lead", "--as", "stranger", "--text", "x",
+                says="stranger has not joined")
+        self.no("mail", "send", "--run", "N-ffffffffffff", "--to", "lead", "--as", "x", "--text", "x",
+                says="not in this project's ledger")
         self.no("mail", "read", "--run", self.run_id, "--peer", "stranger", says="stranger has not joined")
         self.no("mail", "post", says="usage: ddl_gate.py mail")
         self.assertFalse(pathlib.Path(self.root, ".ddl", "mail", self.run_id + ".jsonl").exists())
@@ -2745,8 +2750,8 @@ class MailTest(RunFixture):
         self.assertFalse(any(line.startswith("Mail:") for line in lines))  # no peers, no mail: no line
         self.join("claude-lead", lead=True)
         self.join("codex-peer", "codex")
-        self.send("--to", "codex-peer", "--text", "one")
-        self.send("--to", "all", "--kind", "amend", "--text", "two")
+        self.send("--to", "codex-peer", "--as", "claude-lead", "--text", "one")
+        self.send("--to", "all", "--as", "claude-lead", "--kind", "amend", "--text", "two")
         self.send("--to", "lead", "--as", "codex-peer", "--kind", "handoff", "--text", "three")
         self.read("codex-peer")
         en = self.ok("report", "--run", self.run_id, "--language", "en")
@@ -2777,6 +2782,55 @@ class MailTest(RunFixture):
         self.assertEqual(self.runner(run, "--host", "claude", code=3, PATH="/usr/bin:/bin")[0]["unavailable"],
                          "claude is not on PATH")
         self.no("runner", run, "--host", "gemini", says="--host is one of codex, claude")
+
+
+    def test_a_line_a_dead_writer_left_never_swallows_the_next_message_and_separators_print_escaped(self):
+        self.join("claude-lead", lead=True)
+        self.join("codex-peer", "codex")
+        path = pathlib.Path(self.root, ".ddl", "mail", self.run_id + ".jsonl")
+        self.send("--to", "codex-peer", "--as", "claude-lead", "--text", "first")
+        with path.open("ab") as fh:
+            fh.write(b'{"id": "M-dead", "from": "claude-lead", "to": "codex-peer", "te')  # its writer died here
+        self.send("--to", "codex-peer", "--as", "claude-lead", "--text", "after the dead line")
+        with path.open("ab") as fh:  # what an older writer did: a message glued to an unfinished line
+            fh.write(b'{"id": "M-old", "te' + json.dumps({"id": "M-glued", "at": "x", "run": self.run_id, "from": "claude-lead",
+                                                          "to": "codex-peer", "kind": "note", "text": "glued"}).encode() + b"\n")
+        note = self.tmp / "sep.md"
+        note.write_text("one\u2028two\u2029three\x7f\x9b end")
+        self.send("--to", "codex-peer", "--as", "claude-lead", "--file", str(note))
+        lines = self.ok("mail", "read", "--run", self.run_id, "--peer", "codex-peer")
+        self.assertEqual([json.loads(line)["text"] for line in lines[1:]],
+                         ["first", "after the dead line", "glued", "one\u2028two\u2029three\x7f\x9b end"])
+        self.assertTrue(all(not re.search("[\u2028\u2029\x7f-\x9f]", line) for line in lines))
+        self.assertIn("\\u2028", lines[-1])
+        self.assertEqual(len(self.ok("mail", "read", "--run", self.run_id, "--peer", "codex-peer", "--all")), 5)
+
+    def test_a_message_to_all_is_delivered_only_when_someone_but_its_sender_has_it(self):
+        self.join("claude-lead", lead=True)
+        self.send("--to", "all", "--as", "claude-lead", "--text", "to nobody yet")
+        self.read("claude-lead")
+        self.assertEqual(self.ok("report", "--run", self.run_id, "--language", "en")[6],
+                         "Mail: 1 sent (delivered 0, unread 1; note 1, amend 0, handoff 0)")
+        self.join("codex-peer", "codex")
+        self.read("codex-peer")
+        self.assertEqual(self.ok("report", "--run", self.run_id, "--language", "en")[6],
+                         "Mail: 1 sent (delivered 1, unread 0; note 1, amend 0, handoff 0)")
+
+    def test_the_runner_keeps_to_the_runs_slots(self):
+        run = self.start_run([{"id": "I1", "kind": "write"}, {"id": "I2", "kind": "verify"},
+                              {"id": "C1", "kind": "compute"}], slots={"think": 1, "run": 0})
+        for item in ("I1", "I2", "C1"):
+            self.prompt(run, item, "DELAY=0.5\n")
+        lines = self.runner(run, "--max", "3", "--stagger", "0")
+        order = [(line["item"], line.get("status") or "skipped") for line in lines if "item" in line]
+        self.assertLess(order.index(("I1", "done")), order.index(("I2", "running")))  # one thinking slot: one at a time
+        self.assertEqual([line["skipped"] for line in lines if line.get("item") == "C1"], ["the Run has no run slots"])
+        self.assertEqual((lines[-1]["done"], lines[-1]["skipped"]), (["I1", "I2"], ["C1"]))
+        run = self.start_run([{"id": "I1", "kind": "write"}, {"id": "C1", "kind": "compute"}], slots={"think": 1, "run": 1})
+        for item in ("I1", "C1"):
+            self.prompt(run, item, "DELAY=0.5\n")
+        order = [(line["item"], line["status"]) for line in self.runner(run, "--stagger", "0") if line.get("status")]
+        self.assertEqual(order[:2], [("I1", "running"), ("C1", "running")])  # a thinking and a run slot at once
 
 
 class ResourceBoundaryTest(SplitTest):
