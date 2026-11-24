@@ -23,16 +23,22 @@ Usage (from inside the project; the project and its `.ddl/` ledger come from the
                                   -- <command>…
   python3 tools/ddl_run.py service <name> --prompt-file FILE [--schema FILE] [--approve] [--confirmed <id>]
   python3 tools/ddl_run.py runner <N-id> [--max <n>] [--stagger <seconds>] [--timeout <minutes>] [--model <m>]
+  python3 tools/ddl_run.py restore <refs/ddl/snapshots/…> --run <N-id> --items <id>…
 
 `run-start` writes `.ddl/runs/<N-id>/run.json` from {report, items, slots?} and prints {run, path}; `slots`
-{think, run} are the Run's thinking and run slots (default 5 and 0). `run-item` sets one item's status (under a
+{think, run} are the Run's thinking and run slots (default 5 and 0). An item's `files` are owner globs below the
+project root: a leading `./` is dropped, and an empty glob or segment, an absolute path, `..`, a trailing slash or
+a bare existing directory (write `<dir>/**`) is refused, naming the entry. `run-item` sets one item's status (under a
 lock on the Run's directory) and prints {run, item, status}, and writes an `item` event (run, item, status, itemKind).
 `report` prints four lines: questions (with `open <n>` for those asked and never answered, counted in no other
 bucket; for one ID only its latest ask, open until an answer to that ID), waiting, denials, grant; for a Run a
 fifth, the flow line: the summed running time of its thinking items (write, verify, explore) and of its compute
 items over capacity × the Run's wall time, as used/capacity (percent), from its `item` events, and its ready items
 (ready, with every dependency done); a slot kind with an item that ended without a start, or with a capacity that
-is no whole number from 0 to 64, is not measured. A Run's lines count
+is no whole number from 0 to 64, is not measured. When the Run still waits on questions (prepared and queued, or
+asked, and not answered), the lines `Questions waiting: <n>` (`待っていた問い <n> 件`) follow, one per question,
+most held items first: `[provisional]` (a queued question the lead went ahead on), `[waiting]` or `[exit]` (a Git
+review or a report that confirms an exit), its decision line and its held items. A Run's lines count
 its plan's own question too, in the plan's language unless `--language` names one. A value that cannot be derived is printed as `未計測` (`not measured`). A usage or
 input error prints `DDL report: …`, `DDL run: …` or `DDL snapshot: …` on stderr and exits 2. Nothing here
 is read back by a hook decision: an item's `done` is never a gate pass.
@@ -124,10 +130,22 @@ are kept with the claim: a later runner finds an item a dead runner claimed, sto
 worker, and fails the item ("its runner died"); it never runs it again on its own. SIGTERM, SIGHUP or SIGINT, an unreadable record or
 any failure of the runner stops its workers and fails their items with the reason (in the ledger when the record
 cannot be written). Each end's `item` event carries the exit, the last message's path, why it failed and how long
-it took. An item that waits on a failed or dropped one stays ready and is listed as blocked. It prints one JSON
-line per state change and a summary {run, workTree, done, failed, skipped, blocked, stopped?, seconds}; exit 0
+it took. An item that waits on a failed or dropped one stays ready and is listed as blocked; one a question still
+waiting holds (its record's `holds`, read again before each start; a provisional question holds nothing), or that
+depends on such an item, stays ready and is listed as held. It prints one JSON line per state change and a
+summary {run, workTree, done, failed, skipped, blocked, held, stopped?, seconds}; exit 0
 when none failed and nothing stopped it, 1 otherwise, 2 for a usage error or a Run another runner holds, 3
 without codex. It never commits, pushes or asks the human.
+
+`restore <refs/ddl/snapshots/…> --run <N-id> --items <id>…` undoes a provisional choice the human overturned: the
+owner files (`files` globs) of those items and of every item that depends on them, as the snapshot holds them,
+into the working tree only (a file the snapshot lacks is removed; the index, HEAD and branches stay as they are),
+never a path outside the work tree or a protected one (listed, untouched); owners are compared as the file system
+compares names (NFC, and case-folded where it ignores case). The items become `ready`; a `restore` event; it
+prints {run, ref, snapshot, items, restored, removed, protected}. It refuses (exit 2, nothing changed) a
+ref outside refs/ddl/snapshots/ or one that names no commit, an unknown or a running item, items without owner
+files, a path whose directory resolves outside the work tree, and a file to restore with uncommitted changes that
+an item outside them also owns.
 
 The import boundary: this module imports the gate's code `ddl_gate_core` from its own directory,
 symbolic links resolved, so an installed `~/.claude/hooks/ddl_run.py` link finds the gate beside the
@@ -150,7 +168,8 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 import ddl_gate_core as gate  # noqa: E402
 
-WORDS = ("report", "run-start", "run-item", "snapshot", "resources", "measure", "remote", "service", "runner")
+WORDS = ("report", "run-start", "run-item", "snapshot", "resources", "measure", "remote", "service", "runner",
+         "restore")
 RUN_ID_BYTES = 6  # a Run ID is N- and these random bytes in hex
 RUN_ID = re.compile(r"N-[0-9a-f]{%d}" % (2 * RUN_ID_BYTES))
 ITEM_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,31}")
@@ -174,9 +193,9 @@ RUNNER_USAGE = ("usage: ddl_gate.py runner <N-id> [--max <n>] [--stagger <second
                 "[--model <model>]")
 SNAPSHOT_USAGE = ("usage: ddl_gate.py snapshot [--run N-ID] [--item ID] [--git-dir DIR --work-tree DIR] "
                   "| snapshot list [--run N-ID] [--git-dir DIR --work-tree DIR]")
-USAGE = ("usage: ddl_run.py report|run-start|run-item|snapshot|resources|measure|remote|service|runner … ({}; {}; "
-         "{}; {}; and the resource words in the module's docstring)").format(REPORT_USAGE, RUN_USAGE, SNAPSHOT_USAGE,
-                                                                             RUNNER_USAGE)
+USAGE = ("usage: ddl_run.py report|run-start|run-item|snapshot|resources|measure|remote|service|runner|restore … "
+         "({}; {}; {}; {}; and the resource words and restore in the module's docstring)").format(
+             REPORT_USAGE, RUN_USAGE, SNAPSHOT_USAGE, RUNNER_USAGE)
 SNAPSHOT_REFS = "refs/ddl/snapshots"
 SNAPSHOT_FLAGS = {"make": ("--run", "--item", "--git-dir", "--work-tree"), "list": ("--run", "--git-dir", "--work-tree")}
 # The identity of a snapshot made where Git has none configured: the tool's, at a domain that cannot exist.
@@ -456,6 +475,7 @@ def report_command(argv):
         chosen = None if events is None or start is None else [event for event in events if of_run(event)]
         grants = [record for record in gate.grant_records(key) if record["id"] == plan]
         flow = [flow_line(language, run, events or [])]  # after the four count lines
+        flow += waiting_lines(language, [event for event in events or [] if of_run(event)]) or []
     if chosen is None:
         return count_lines(language, None, None, grants[-1] if grants else False) + flow
     return count_lines(language, event_questions(chosen), sum(event.get("kind") == "denied" for event in chosen),
@@ -495,6 +515,33 @@ def run_items(items):
     return out
 
 
+def owner_glob(item_id, glob, root):
+    """One `files` entry of an item as the gate matches it against a path below the root: a leading `./` dropped;
+    ValueError, naming the entry, for an empty glob or segment, an absolute path, `..`, a trailing slash, or a bare
+    existing directory (a glob matches files: write `<dir>/**`). A held item's owners must hold what they say."""
+    given, glob = glob, glob
+    while glob.startswith("./"):
+        glob = glob[2:]
+
+    def refuse(why):
+        return ValueError("item {}: files entry {!r} {}.".format(item_id, given, why))
+
+    if not glob.strip():
+        raise refuse("is empty")
+    if glob.startswith(("/", "~", "\\")) or re.match(r"[A-Za-z]:[/\\]", glob):
+        raise refuse("is an absolute path; name a path below the project root")
+    if glob.endswith("/"):
+        raise refuse("ends with '/'; write {!r} for everything below it".format(glob.rstrip("/") + "/**"))
+    parts = glob.split("/")
+    if ".." in parts:
+        raise refuse("holds '..'")
+    if "" in parts or "." in parts:
+        raise refuse("holds an empty or '.' segment")
+    if os.path.isdir(os.path.join(root, glob)):
+        raise refuse("names a directory; write {!r} for everything below it".format(glob + "/**"))
+    return glob
+
+
 def run_slots(slots):
     """The Run's slots {think, run}: the given ones (each a whole number up to SLOT_LIMIT), the rest by default."""
     if slots is None:
@@ -521,6 +568,8 @@ def run_start(data, runtime=None):
     root, key = gate.cwd_ledger()
     if not root:
         raise ValueError("a Run belongs to a DDL project; start it from inside the project.")
+    for item in items:
+        item["files"] = [owner_glob(item["id"], glob, root) for glob in item["files"]]
     try:
         record = gate.load_report(match[2], runtime)
     except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
@@ -1453,17 +1502,9 @@ def remote_options(argv):
 
 
 def withheld(path):
-    """True for a tracked path no handover carries, compared without case: a secret-shaped file name
-    (SECRET_NAMES), or one of the gate's protected paths: an adapter's, the ledger's or a Git directory, an
-    instruction file or the notebook, CI workflows."""
-    parts = [part.casefold() for part in path.split("/")]
-    dirs = {name.casefold() for name in gate.PROTECTED_DIRS} | {".git"}
-    files = {name.casefold() for name in gate.PROTECTED_FILES}
-    pairs = {tuple(name.casefold() for name in pair) for pair in gate.PROTECTED_PAIRS}
-    return any(part in dirs for part in parts) or parts[-1] in files \
-        or any(part.endswith(".git") for part in parts[:-1]) \
-        or any(tuple(parts[i:i + 2]) in pairs for i in range(len(parts) - 1)) \
-        or any(fnmatch_case(parts[-1], glob) for glob in SECRET_NAMES)
+    """True for a tracked path no handover carries, compared without case: one of the gate's protected paths
+    (protected_path), or a secret-shaped file name (SECRET_NAMES)."""
+    return protected_path(path) or any(fnmatch_case(path.split("/")[-1].casefold(), glob) for glob in SECRET_NAMES)
 
 
 def handover_commit(source):
@@ -2128,6 +2169,7 @@ def runner_command(argv):
         say(run=run_id, unavailable="codex is not on PATH")
         return EXIT_UNAVAILABLE
     workers, skipped, ended, kinds, last_start = {}, [], {"done": [], "failed": []}, {}, None
+    records, was_held = {}, {}  # the prepared records read so far; the items a question held, and which
     # Items a runner claimed and never ended (it died: this one holds the Run now): stop what is left of their worker
     # when it is provably that worker's, and fail them; they are never run again on their own.
     for item in [entry for entry in load_run(root, run_id)["items"] if isinstance(entry, dict)
@@ -2190,6 +2232,12 @@ def runner_command(argv):
                 raise RunnerStopped("the Run's record cannot be read") from None
             kinds.update((item.get("id"), item.get("kind")) for item in run["items"] if isinstance(item, dict))
             waiting = [item["id"] for item in ready_items(run) if item["id"] not in workers and item["id"] not in skipped]
+            held = held_items(run, ledger_lines(root) or [], records) if waiting else {}
+            waiting = [item_id for item_id in waiting if item_id not in held]  # a question still decides them
+            for item_id in held:
+                if item_id not in was_held:
+                    was_held[item_id] = held[item_id]
+                    say(item=item_id, held=held[item_id])
             for item_id in list(waiting):
                 if len(workers) >= most or last_start is not None and time.monotonic() - last_start < stagger:
                     break
@@ -2243,13 +2291,272 @@ def runner_command(argv):
         stop_worker(worker)
         end(worker, None, stopped)
     try:
-        blocked = blocked_items(load_run(root, run_id))
+        final = load_run(root, run_id)
+        blocked = blocked_items(final)
+        held = sorted(held_items(final, ledger_lines(root) or [], records))
+        held = [item["id"] for item in final["items"] if isinstance(item, dict) and item.get("id") in held
+                and item.get("status") == "ready"]
     except ValueError:
-        blocked = None
+        blocked = held = None
     os.close(lock)  # the next runner may take the Run
     say(run=run_id, workTree=tree, done=ended["done"], failed=ended["failed"], skipped=skipped, blocked=blocked,
-        stopped=stopped)
+        held=held, stopped=stopped)
     return 1 if ended["failed"] or stopped else 0
+
+
+# --- held, queued and provisional questions; restore ------------------------------------------
+# The questions a Run still waits on, from the ledger and the prepared records; and the way back from a provisional
+# choice the human overturned: the owner files of its items, from the snapshot, into the working tree.
+
+WAITING_TEXT = {
+    "ja": {"header": "待っていた問い {} 件", "provisional": "[見込み]", "waiting": "[待ち]", "exit": "[出口]",
+           "provisional_count": "依る項目 {} 件", "waiting_count": "止まっている項目 {} 件", "join": "。",
+           "unknown": "{}（その報告はここに無い）"},
+    "en": {"header": "Questions waiting: {}", "provisional": "[provisional]", "waiting": "[waiting]", "exit": "[exit]",
+           "provisional_count": "{} items depend on it", "waiting_count": "{} items held", "join": "; ",
+           "unknown": "{} (its report is not here)"}}
+RESTORE_USAGE = "usage: ddl_gate.py restore <refs/ddl/snapshots/…> --run <N-id> --items <id>…"
+
+
+def prepared_record(ident):
+    """(record, kind) of a prepared report (R-) or Git review (G-) in this state directory, or (None, kind)."""
+    match = gate.PREPARED_ID.fullmatch(ident)
+    try:
+        if match[1] == "R":
+            return gate.load_report(match[2]), "R"
+        for runtime in gate.RUNTIMES:
+            try:
+                return gate.load_git_review(match[2], runtime)[0], "G"
+            except ValueError:
+                continue
+    except (OSError, ValueError, TypeError, KeyError, AttributeError):
+        pass
+    return None, match[1]
+
+
+def unanswered(events):
+    """{id: {queued, asked, order}} of the prepared questions (R-, G-) still waiting in `events`: prepared and queued
+    (`queued`) or asked, and neither answered nor confirmed or overturned (a provisional one)."""
+    state = {}
+    for order, event in enumerate(events):
+        ident, kind = event.get("id"), event.get("kind")
+        if not isinstance(ident, str) or not gate.PREPARED_ID.fullmatch(ident):
+            continue  # a Run's own `prepared` event names the Run
+        entry = state.setdefault(ident, {"queued": False, "asked": False, "answered": False, "order": order})
+        if kind == "prepared" and event.get("queued") is True:
+            entry["queued"] = True
+        elif kind == "asked":
+            entry["asked"] = True
+        elif kind in ("answered", "provisional-confirmed", "provisional-overturned"):
+            entry["answered"] = True
+    return {ident: entry for ident, entry in state.items() if not entry["answered"] and (entry["queued"] or entry["asked"])}
+
+
+def held_items(run, events, records=None):
+    """{item: the question that holds it} for the Run's items a question still waiting holds (its record's `holds`
+    names this Run), and every item that depends on one of them; a provisional question holds nothing (the lead went
+    ahead on it). `records` caches the prepared records by ID."""
+    records = {} if records is None else records
+    held = {}
+    for ident in unanswered(events):
+        if ident not in records:
+            records[ident] = prepared_record(ident)[0]
+        record = records[ident]
+        holds = record.get("holds") if isinstance(record, dict) else None
+        if record is None or record.get("provisional") or not isinstance(holds, dict) or holds.get("run") != run["id"]:
+            continue
+        for name in holds.get("items") or []:
+            held.setdefault(name, ident)
+    grew = True
+    while grew:  # and what depends on a held item
+        grew = False
+        for item in run["items"]:
+            if isinstance(item, dict) and item.get("id") not in held:
+                by = next((held[need] for need in item.get("after", []) if need in held), None)
+                if by:
+                    held[item["id"]] = by
+                    grew = True
+    return held
+
+
+def waiting_lines(language, events):
+    """The questions the Run still waits on (E13 item 5), from its events: each prepared and queued (`queued`) or
+    asked, and not yet answered (an answer, or a provisional choice confirmed or overturned, ends it). One line
+    each, the most held items first: `[provisional]` for a queued question the lead went ahead on (its record's
+    `provisional`), `[exit]` for a Git review or a report that confirms an exit (`confirm`), `[waiting]` for the
+    rest; the decision line; the held items (`holds`). None when no question waits."""
+    text, shown = WAITING_TEXT[language], []
+    for ident, entry in unanswered(events).items():
+        record, kind = prepared_record(ident)
+        holds = record.get("holds") if isinstance(record, dict) else None
+        held = len(set(holds["items"])) if isinstance(holds, dict) and isinstance(holds.get("items"), list) else 0
+        if record is None:
+            tag, decision = "exit" if kind == "G" else "waiting", text["unknown"].format(ident)
+        elif kind == "G":
+            tag, decision = "exit", gate.git_question_values(record)[0]
+        else:
+            tag = "provisional" if record.get("provisional") else "exit" if record.get("confirm") else "waiting"
+            decision = record.get("decision") if isinstance(record.get("decision"), str) else ident
+        shown.append((-held, tag == "exit", entry["order"], tag, decision, held))
+    if not shown:
+        return None
+    lines = [text["header"].format(len(shown))]
+    for number, (_, _, _, tag, decision, held) in enumerate(sorted(shown), 1):
+        count = text[tag + "_count"].format(held) if held and tag != "exit" else None
+        lines.append("  {}. {} {}".format(number, text[tag], decision + (text["join"] + count if count else "")))
+    return lines
+
+
+def protected_path(path):
+    """True for one of the gate's protected paths, compared without case: an adapter's, the ledger's or a Git
+    directory, an instruction file or the notebook, CI workflows."""
+    parts = [part.casefold() for part in path.split("/")]
+    dirs = {name.casefold() for name in gate.PROTECTED_DIRS} | {".git"}
+    files = {name.casefold() for name in gate.PROTECTED_FILES}
+    pairs = {tuple(name.casefold() for name in pair) for pair in gate.PROTECTED_PAIRS}
+    return any(part in dirs for part in parts) or parts[-1] in files \
+        or any(part.endswith(".git") for part in parts[:-1]) \
+        or any(tuple(parts[i:i + 2]) in pairs for i in range(len(parts) - 1))
+
+
+def restore_options(argv):
+    """(snapshot ref, N-id, item ids) of `restore`; ValueError names the usage."""
+    if not argv or argv[0].startswith("-"):
+        raise ValueError(RESTORE_USAGE)
+    ref, rest, run, names = argv[0], list(argv[1:]), None, []
+    while rest:
+        word = rest.pop(0)
+        if word == "--run" and run is None and rest:
+            run = rest.pop(0)
+        elif word.startswith("--run=") and run is None:
+            run = word[len("--run="):]
+        elif word == "--items":
+            taken = 0
+            while rest and not rest[0].startswith("--"):
+                names.append(rest.pop(0))
+                taken += 1
+            if not taken:
+                raise ValueError(RESTORE_USAGE)
+        else:
+            raise ValueError(RESTORE_USAGE)
+    if run is None or not names:
+        raise ValueError(RESTORE_USAGE)
+    if not RUN_ID.fullmatch(run):
+        raise ValueError("a Run ID is N- and 12 hexadecimal characters.")
+    return ref, run, names
+
+
+def git_paths(output):
+    return [os.fsdecode(name) for name in output.split(b"\0") if name]
+
+
+def restore_command(argv):
+    """`restore <snapshot-ref> --run <N-id> --items <id>…`: put the owner files (`files` globs) of those items and of
+    every item that depends on them back as the snapshot holds them, in the working tree only (the index, HEAD and
+    every branch stay as they are): a file the snapshot holds is written, one it does not hold is removed. Never a
+    path outside the work tree or a protected one (listed, untouched). The items become `ready`; a `restore` event.
+    Refused (nothing changes) for a ref outside refs/ddl/snapshots/, a ref that names no commit, an unknown or a
+    running item, items that own no file, a path whose directory resolves outside the work tree, and a file to
+    restore with uncommitted changes that an item outside them also owns."""
+    ref, run_id, names = restore_options(argv)
+    if not ref.startswith(SNAPSHOT_REFS + "/") or ".." in ref.split("/") or not ref.isprintable():
+        raise ValueError("restore takes a snapshot ref under {}/.".format(SNAPSHOT_REFS))
+    root, _ = gate.cwd_ledger()
+    if not root:
+        raise ValueError("a Run belongs to a DDL project; restore from inside the project.")
+    run = load_run(root, run_id)
+    items = {item["id"]: item for item in run["items"] if isinstance(item, dict) and isinstance(item.get("id"), str)}
+    unknown = [name for name in names if name not in items]
+    if unknown:
+        raise ValueError("Run {} has no item {}.".format(run_id, ", ".join(unknown)))
+    chosen, grew = set(names), True
+    while grew:  # and every item that depends on them, through `after`
+        grew = False
+        for name, item in items.items():
+            if name not in chosen and any(need in chosen for need in item.get("after", [])):
+                chosen.add(name)
+                grew = True
+    order = [name for name in items if name in chosen]
+    running = [name for name in order if items[name].get("status") == "running"]
+    if running:
+        raise ValueError("{} still runs; stop it before its files are restored.".format(", ".join(running)))
+    globs = [glob for name in order for glob in items[name].get("files", [])]
+    others = [glob for name, item in items.items() if name not in chosen for glob in item.get("files", [])]
+    if not globs:
+        raise ValueError("{} own no file (`files`); there is nothing to restore.".format(", ".join(order)))
+    git = SnapshotGit({})
+    top = git("rev-parse", "--show-toplevel", optional=True)
+    if not top or not top.strip():
+        raise ValueError("restore works in a Git work tree; run it inside one.")
+    top = os.path.realpath(os.fsdecode(top.rstrip(b"\n")))
+    git.cwd = top
+    found = git("rev-parse", "--verify", "--quiet", ref + "^{commit}", optional=True)
+    if not found or not found.strip():
+        raise ValueError("{} names no snapshot of this repository.".format(ref))
+    commit = found.decode("ascii").strip()
+
+    import unicodedata
+    folds = gate.folds_case(top)
+
+    def spelled(text):  # as the file system compares names: NFC, and case-folded where it ignores case
+        text = unicodedata.normalize("NFC", text)
+        return text.casefold() if folds else text
+
+    def owned(path, patterns):
+        parts = spelled(path).split("/")
+        return any(gate.glob_matches(spelled(pattern), parts) for pattern in patterns)
+
+    held = {}
+    for entry in git("ls-tree", "-r", "-z", "--full-tree", commit).split(b"\0"):
+        if entry:
+            meta, _, name = entry.partition(b"\t")
+            mode, kind, sha = meta.decode("ascii").split()
+            path = os.fsdecode(name)
+            if owned(path, globs):
+                held[path] = (mode, kind, sha)
+    now = git_paths(git("ls-files", "-z")) + git_paths(git("ls-files", "-z", "--others", "--exclude-standard"))
+    paths = sorted(set(held) | {path for path in now if owned(path, globs)})
+    protected = [path for path in paths if protected_path(path)]
+    paths = [path for path in paths if path not in protected and held.get(path, ("", "blob"))[1] == "blob"]
+    for path in paths:
+        parent = os.path.realpath(os.path.join(top, os.path.dirname(path)))
+        if parent != top and not parent.startswith(top + os.sep):
+            raise ValueError("{} lies in a directory that resolves outside the work tree; nothing was restored.".format(
+                path))
+        if os.path.isdir(os.path.join(top, path)) and not os.path.islink(os.path.join(top, path)):
+            raise ValueError("{} is a directory now; nothing was restored.".format(path))
+    status = git("status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames").split(b"\0")
+    changed = {os.fsdecode(line[3:]) for line in status if len(line) > 3}
+    shared = [path for path in paths if path in changed and owned(path, others)]
+    if shared:
+        raise ValueError("{} has uncommitted changes and belongs to an item outside {} too; nothing was restored."
+                         .format(", ".join(shared), ", ".join(order)))
+    restored, removed = [], []
+    for path in paths:
+        target = os.path.join(top, path)
+        if path not in held:
+            if os.path.lexists(target):
+                os.unlink(target)
+                removed.append(path)
+            continue
+        mode, _, sha = held[path]
+        data = git("cat-file", "blob", sha)
+        os.makedirs(os.path.dirname(target) or top, exist_ok=True)
+        scratch = "{}.ddl-restore.{}".format(target, os.getpid())
+        if mode == "120000":  # a symbolic link: the link itself, whatever it points at
+            os.symlink(os.fsdecode(data), scratch)
+        else:
+            with open(scratch, "wb") as fh:
+                fh.write(data)
+            os.chmod(scratch, 0o755 if mode == "100755" else 0o644)
+        os.replace(scratch, target)
+        restored.append(path)
+    for name in order:
+        set_item(root, run_id, name, "ready", restoredFrom=ref)
+    gate.ledger_event(root, None, None, "restore", run=run_id, ref=ref, snapshot=commit, items=order,
+                      restored=len(restored), removed=len(removed))
+    return {"run": run_id, "ref": ref, "snapshot": commit, "items": order, "restored": restored, "removed": removed,
+            "protected": protected}
 
 
 def main(argv) -> int:
@@ -2290,6 +2597,13 @@ def main(argv) -> int:
             return 0
         except Exception as exc:
             print("DDL snapshot: " + str(exc), file=sys.stderr)
+            return 2
+    if argv and argv[0] == "restore":
+        try:
+            gate.emit(restore_command(argv[1:]))
+            return 0
+        except Exception as exc:  # a usage error or a refusal: nothing was restored
+            print("DDL restore: " + str(exc), file=sys.stderr)
             return 2
     if argv and argv[0] == "runner":
         try:

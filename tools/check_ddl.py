@@ -102,7 +102,8 @@ OPERATION_STEPS = {
 FORMATS = {
     "approval": ("+++DDL_REPORT", *REPORT_LABELS, "Outcome:", "approve all", "subset", "hold",
                  "approved in advance (<date>)", "prepare-report", "reportId", "R-<id>",
-                 "<state dir>/reports/<id>/report.md", "nativeRequest", "Full report", "全文", "R1–R12"),
+                 "<state dir>/reports/<id>/report.md", "nativeRequest", "Full report", "全文", "R1–R12", "`holds`",
+                 "`queue: true`", "`provisional`", "`replaces: <R-id>`"),
     "close": ("nothing remains", "left: <item> — <reason>"),
     "git-review": ("language", "operations", "cwd", "command", "reviewId", "report", "question", "nativeRequest",
                    "G-<id>"),
@@ -115,7 +116,8 @@ FORMATS = {
     "run": ("`grant`", "Scope:", "Budget:", "Expiry:", "範囲", "予算", "期限", "`Grant`", "許諾", "N-<id>",
             ".ddl/events.jsonl", ".ddl/runs/<run id>/run.json", "Questions", "Waiting", "Denials", "問い", "待ち", "拒否",
             "not measured", "未計測", "$XDG_CONFIG_HOME/ddl/resources.toml", "~/.config/ddl/resources.toml",
-            "`confirm`", "`Confirm`", "確認", "`slots`", "`item`", "items/<item>.md", "Flow", "稼働"),
+            "`confirm`", "`Confirm`", "確認", "`slots`", "`item`", "items/<item>.md", "Flow", "稼働",
+            "Questions waiting", "待っていた問い", "`[provisional]`", "`[waiting]`", "`[exit]`"),
     "command-authoring": ("### Phase N: NAME", "+++DETECT:", "D1: name — trigger", "+++STOP: always",
                           "+++STOP: on D<n>", "**Pre-condition.**", "+++Report:", *REPORT_LABELS, "+++NEVER:",
                           "+++DDL_PHASE: <PhaseName>", "+++DDL_REPORT"),
@@ -154,13 +156,13 @@ CONCERNS = {"start": START_CONCERNS, "parallel-work": PARALLEL_CONCERNS, "approv
 # the generated tree; file names are the files of the installed skill directory, the host's implementations
 # folded into them (start in SKILL.md, the others in the operation of the same name).
 BUDGET_PATHS = (
-    ("validate", 20250, ("SKILL.md", "approval.md")),
-    ("draft", 29250, ("notebook.md",)),
-    ("realize-plan", 51843, ("parallel-work.md", "run.md")),
-    ("realize-close", 67030, ("close.md", "git-review.md")),
+    ("validate", 20857, ("SKILL.md", "approval.md")),
+    ("draft", 29764, ("notebook.md",)),
+    ("realize-plan", 52846, ("parallel-work.md", "run.md")),
+    ("realize-close", 67870, ("close.md", "git-review.md")),
 )
-EXECUTION_LIMIT = 67030
-FILE_LIMITS = {"run.md": 13509}  # a generated file's own limit, the host's implementation folded in
+EXECUTION_LIMIT = 67870
+FILE_LIMITS = {"run.md": 13806}  # a generated file's own limit, the host's implementation folded in
 AUTHOR_ONLY = ("command-authoring",)  # operations read by authors only: outside the execution total
 # The folded implementations in the generated skill (P9 on dist): the file, the H2 section and the H3 sections.
 FOLDED_H3 = ("Mapping", "Observed", "Coverage")

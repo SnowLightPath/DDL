@@ -56,6 +56,8 @@ implementations.
 - The exceptions are the report's preparation and its prepared question; neither
   grants work permission. Before the question, or after an actual request for
   clarification, read-only tools may clarify the report, never begin the next phase.
+- While every pending question has `holds`, in-grant edits, and tests and checks
+  naming their paths, outside the held files go on; nothing else does (Approval).
 
 ## Reading map
 

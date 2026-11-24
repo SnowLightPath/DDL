@@ -1887,9 +1887,8 @@ echo '{"type":"turn.completed","usage":{"input_tokens":1}}'
 """
 
 
-class FlowTest(ResourceTest):
-    """run-start's slots, run-item's `item` event, the flow line and the open questions of `report`, and the runner
-    with a fake codex, in a disposable DDL project."""
+class RunFixture(ResourceTest):
+    """A disposable DDL project with Runs, a fake codex for the runner, and helpers; no tests of its own."""
 
     def setUp(self):
         super().setUp()
@@ -1947,6 +1946,31 @@ class FlowTest(ResourceTest):
             return False
         os.kill(pid, 9)
         return True
+
+    def event(self, kind, ident, **fields):
+        with mock.patch.dict(os.environ, self.env, clear=True):
+            ddl_gate_core.ledger_event(self.root, "claude", "S", kind, id=ident, **fields)
+
+    def restore_setup(self, extra=()):
+        files = {"src/a/x.txt": "x1\n", "src/a/y.txt": "y1\n", "src/b.txt": "b1\n", "docs/c.md": "c1\n"}
+        for name, text in files.items():
+            path = self.project / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+        self.git("add", "-A")
+        self.git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "-c", "commit.gpgSign=false",
+                 "commit", "-q", "-m", "files")
+        run = self.start_run([{"id": "I1", "kind": "write", "files": ["src/a/**", "CLAUDE.md"]},
+                              {"id": "I2", "kind": "write", "files": ["src/b.txt"], "after": ["I1"]},
+                              {"id": "I3", "kind": "write", "files": ["docs/**"]}, *extra])
+        code, stdout, stderr = self.call("snapshot", "--run", run, "--item", "before")
+        self.assertEqual((code, stderr), (0, ""))
+        return run, json.loads(stdout)["ref"]
+
+
+class FlowTest(RunFixture):
+    """run-start's slots, run-item's `item` event, the flow line and the open questions of `report`, and the runner
+    with a fake codex, in a disposable DDL project."""
 
     def test_slots_are_stored_and_run_item_writes_an_item_event(self):
         run = self.start_run([{"id": "I1", "kind": "write"}], slots={"run": 2})
@@ -2062,7 +2086,7 @@ class FlowTest(ResourceTest):
         summary = lines.pop()
         self.assertIsInstance(summary.pop("seconds"), float)
         self.assertEqual(summary, {"run": run, "workTree": self.root, "done": ["I1", "I4"],
-                                   "failed": ["I2", "I5", "I6"], "skipped": ["I3"], "blocked": []})
+                                   "failed": ["I2", "I5", "I6"], "skipped": ["I3"], "blocked": [], "held": []})
         order = [(line["item"], line.get("status") or "skipped") for line in lines]
         self.assertEqual(order[:2], [("I1", "running"), ("I2", "running")])
         # An item is skipped when a slot is free for it; no waves: I2's slot is refilled (I5, I6) while I1 still runs;
@@ -2295,6 +2319,208 @@ class FlowTest(ResourceTest):
         self.prompt(run, "I1", "x\n")
         self.assertEqual(self.runner(run, code=3, PATH="/usr/bin:/bin")[0]["unavailable"], "codex is not on PATH")
         self.assertEqual(self.statuses(run), {"I1": "ready"})
+
+
+class WaitingAndRestoreTest(RunFixture):
+    """`report --run`'s questions waiting, from the ledger and the prepared records, and `restore` in a temporary
+    repository: the working tree only, the owners of the items and their dependents, the refusals."""
+
+    def test_the_questions_a_run_waits_on_most_held_items_first(self):
+        run = self.start_run([{"id": "I1", "kind": "write"}])
+        ids = {name: "R-" + name * 16 for name in "abdef"}
+        ids.update(c="G-" + "c" * 16, g="R-" + "9" * 16)
+        records = {ids["a"][2:]: {"decision": "Name the report columns as in A",
+                                  "holds": {"run": run, "items": ["I1", "I2", "I3", "I4"]},
+                                  "provisional": {"snapshot": "refs/ddl/snapshots/x"}, "queue": True},
+                   ids["b"][2:]: {"decision": "Reword the guarantee", "holds": {"run": run, "items": ["I5", "I6"]}},
+                   ids["d"][2:]: {"decision": "answered already"}, ids["e"][2:]: {"decision": "overturned"},
+                   ids["f"][2:]: {"decision": "prepared, never asked"}}
+
+        def load_report(hexid, runtime=None):
+            if hexid not in records:
+                raise OSError("no such report")
+            return records[hexid]
+
+        def load_git_review(hexid, runtime):
+            if hexid != "c" * 16:
+                raise ValueError("no such review")
+            return {"id": hexid}, None
+
+        self.event("prepared", ids["a"], queued=True)
+        self.event("prepared", ids["b"])
+        self.event("asked", ids["b"])
+        self.event("asked", ids["c"])
+        self.event("prepared", ids["d"], queued=True)
+        self.event("asked", ids["d"])
+        self.event("answered", ids["d"], choice=0)
+        self.event("asked", ids["e"])
+        self.event("provisional-overturned", ids["e"])
+        self.event("prepared", ids["f"])
+        self.event("prepared", ids["g"], queued=True)  # a queued question whose record is gone
+        with mock.patch.object(ddl_gate_core, "load_report", load_report), \
+                mock.patch.object(ddl_gate_core, "load_git_review", load_git_review), \
+                mock.patch.object(ddl_gate_core, "git_question_values",
+                                  lambda record: ['Record commit "close" (41 files) on main?', "", ""]):
+            ja = self.call("report", "--run", run, "--language", "ja")[1].splitlines()[5:]
+            en = self.call("report", "--run", run, "--language", "en")[1].splitlines()[5:]
+        self.assertEqual(ja, ["待っていた問い 4 件",
+                              "  1. [見込み] Name the report columns as in A。依る項目 4 件",
+                              "  2. [待ち] Reword the guarantee。止まっている項目 2 件",
+                              "  3. [待ち] {}（その報告はここに無い）".format(ids["g"]),
+                              '  4. [出口] Record commit "close" (41 files) on main?'])
+        self.assertEqual(en, ["Questions waiting: 4",
+                              "  1. [provisional] Name the report columns as in A; 4 items depend on it",
+                              "  2. [waiting] Reword the guarantee; 2 items held",
+                              "  3. [waiting] {} (its report is not here)".format(ids["g"]),
+                              '  4. [exit] Record commit "close" (41 files) on main?'])
+
+    def test_no_line_when_no_question_waits(self):
+        run = self.start_run([{"id": "I1", "kind": "write"}])
+        self.event("asked", "R-" + "1" * 16)
+        self.event("answered", "R-" + "1" * 16, choice=0)
+        self.assertEqual(len(self.call("report", "--run", run)[1].splitlines()), 5)
+
+    def test_restore_puts_back_the_owner_files_of_the_items_and_their_dependents_in_the_working_tree(self):
+        run, ref = self.restore_setup()
+        for name in ("I1", "I2", "I3"):
+            self.call("run-item", run, name, "done")
+        (self.project / "src/a/x.txt").write_text("x2\n")
+        (self.project / "src/a/new.txt").write_text("made after the snapshot\n")
+        (self.project / "src/a/y.txt").unlink()
+        (self.project / "src/b.txt").write_text("b2\n")
+        self.git("add", "src/b.txt")  # staged: the index keeps it
+        (self.project / "docs/c.md").write_text("c2\n")
+        (self.project / "CLAUDE.md").write_text("# Project\n\n" + MARKER_LINE + "\n\nchanged by hand\n")
+        index = (self.project / ".git" / "index").read_bytes()
+        head = self.git("rev-parse", "HEAD")
+        code, stdout, stderr = self.call("restore", ref, "--run", run, "--items", "I1")
+        self.assertEqual((code, stderr), (0, ""))
+        result = json.loads(stdout)
+        self.assertEqual({key: result[key] for key in ("items", "restored", "removed", "protected")},
+                         {"items": ["I1", "I2"], "restored": ["src/a/x.txt", "src/a/y.txt", "src/b.txt"],
+                          "removed": ["src/a/new.txt"], "protected": ["CLAUDE.md"]})
+        self.assertEqual(result["snapshot"], self.git("rev-parse", ref))
+        self.assertEqual([(self.project / name).read_text() for name in ("src/a/x.txt", "src/a/y.txt", "src/b.txt")],
+                         ["x1\n", "y1\n", "b1\n"])
+        self.assertFalse((self.project / "src/a/new.txt").exists())
+        self.assertEqual(((self.project / "docs/c.md").read_text(), (self.project / "CLAUDE.md").read_text()[-16:]),
+                         ("c2\n", "changed by hand\n"))  # another item's file and a protected one stay
+        self.assertEqual(((self.project / ".git" / "index").read_bytes(), self.git("rev-parse", "HEAD")), (index, head))
+        self.assertEqual(self.statuses(run), {"I1": "ready", "I2": "ready", "I3": "done"})
+        event = self.events("restore")[-1]
+        self.assertEqual({key: event[key] for key in ("run", "ref", "items", "restored", "removed")},
+                         {"run": run, "ref": ref, "items": ["I1", "I2"], "restored": 3, "removed": 1})
+        self.assertEqual(self.events("item")[-1]["restoredFrom"], ref)
+
+    def test_restore_refuses_and_changes_nothing(self):
+        run, ref = self.restore_setup(extra=[{"id": "I4", "kind": "write", "files": ["src/b.txt"]}])
+        (self.project / "src/a/x.txt").write_text("x2\n")
+        (self.project / "src/b.txt").write_text("b2\n")
+        cases = [(("refs/heads/main", "--run", run, "--items", "I1"), "a snapshot ref under refs/ddl/snapshots/"),
+                 (("main", "--run", run, "--items", "I1"), "a snapshot ref under refs/ddl/snapshots/"),
+                 (("refs/ddl/snapshots/none", "--run", run, "--items", "I1"), "names no snapshot"),
+                 ((ref, "--run", run, "--items", "I9"), "has no item I9"),
+                 ((ref, "--run", run, "--items", "I1"), "src/b.txt has uncommitted changes and belongs to an item"),
+                 ((ref, "--run", run), "usage: ddl_gate.py restore"), ((ref, "--items", "I1"), "usage"),
+                 ((ref, "--run", "N-1", "--items", "I1"), "a Run ID is N-")]
+        for argv, says in cases:
+            with self.subTest(argv=argv):
+                code, stdout, stderr = self.call("restore", *argv)
+                self.assertEqual((code, stdout), (2, ""))
+                self.assertTrue(stderr.startswith("DDL restore: ") and says in stderr, stderr)
+        self.call("run-item", run, "I3", "running")
+        code, _, stderr = self.call("restore", ref, "--run", run, "--items", "I3")
+        self.assertEqual(code, 2)
+        self.assertIn("I3 still runs", stderr)
+        (self.project / "src/b.txt").write_text("b1\n")  # no change left in the shared file
+        outside = self.tmp / "outside-a"
+        outside.mkdir()
+        shutil.rmtree(str(self.project / "src/a"))
+        os.symlink(str(outside), str(self.project / "src/a"))
+        code, _, stderr = self.call("restore", ref, "--run", run, "--items", "I1")
+        self.assertEqual(code, 2)
+        self.assertIn("resolves outside the work tree", stderr)
+        self.assertEqual(os.listdir(str(outside)), [])
+        self.assertEqual(self.events("restore"), [])
+        self.assertEqual(self.statuses(run)["I1"], "ready")
+
+
+class HoldAndOwnerTest(RunFixture):
+    """What N4's holds mean for the Run's own words: owner globs that hold what they say, a runner that leaves the
+    items a question still decides, and a restore that compares owners as the file system compares names."""
+
+    def records(self, run, **holds):
+        """A stand-in for the prepared records: R-<letter×16> → {holds, provisional?}."""
+        records = {(letter * 16): dict({"decision": letter, "holds": {"run": run, "items": items}},
+                                       **({"provisional": {"snapshot": "refs/ddl/snapshots/x"}} if letter == "b" else {}))
+                   for letter, items in holds.items()}
+
+        def load_report(hexid, runtime=None):
+            if hexid not in records:
+                raise OSError("no such report")
+            return records[hexid]
+
+        return mock.patch.object(ddl_gate_core, "load_report", load_report)
+
+    def test_owner_globs_are_normalized_and_bad_ones_refused(self):
+        (self.project / "tools" / "dir").mkdir(parents=True)
+        run = self.start_run([{"id": "I1", "kind": "write", "files": ["./tools/held.py", "tools/dir/**", "././a.txt"]}])
+        self.assertEqual(self.run_record(run)["items"][0]["files"], ["tools/held.py", "tools/dir/**", "a.txt"])
+        for glob, says in (("tools/dir/", "ends with '/'; write 'tools/dir/**'"),
+                           ("tools/dir", "names a directory; write 'tools/dir/**'"), ("./tools/dir", "names a directory"),
+                           ("/etc/x", "is an absolute path"), ("~/x", "is an absolute path"), ("C:/x", "is an absolute path"),
+                           ("../x", "holds '..'"), ("a/../b", "holds '..'"), ("a//b", "holds an empty or '.' segment"),
+                           ("a/./b", "holds an empty or '.' segment"), ("./", "is empty")):
+            with self.subTest(glob=glob), self.assertRaises(ValueError) as caught:
+                self.start_run([{"id": "I1", "kind": "write", "files": ["ok.txt", glob]}])
+            self.assertIn("item I1: files entry {!r} {}".format(glob, says), str(caught.exception))
+
+    def test_the_runner_leaves_the_items_a_question_still_holds_and_their_dependents(self):
+        run = self.start_run([{"id": "I1", "kind": "write"}, {"id": "I2", "kind": "write", "after": ["I1"]},
+                              {"id": "I3", "kind": "write"}, {"id": "I4", "kind": "write"}, {"id": "I5", "kind": "write"}])
+        for name in ("I1", "I2", "I3", "I4", "I5"):
+            self.prompt(run, name, "x\n")
+        self.event("prepared", "R-" + "a" * 16, queued=True)  # queued: holds I1, and so I2
+        self.event("prepared", "R-" + "b" * 16, queued=True)  # provisional: the lead went ahead on I4
+        self.event("asked", "R-" + "d" * 16)
+        self.event("answered", "R-" + "d" * 16, choice=0)  # answered: holds nothing any more
+        with self.records(run, a=["I1"], b=["I4"], d=["I5"]):
+            lines = self.runner(run, "--stagger", "0")
+        held = [(line["item"], line["held"]) for line in lines if "held" in line and "item" in line]
+        self.assertEqual(held, [("I1", "R-" + "a" * 16), ("I2", "R-" + "a" * 16)])
+        self.assertEqual((lines[-1]["done"], lines[-1]["held"]), (["I3", "I4", "I5"], ["I1", "I2"]))
+        self.assertEqual(self.statuses(run), {"I1": "ready", "I2": "ready", "I3": "done", "I4": "done", "I5": "done"})
+
+    def test_a_hold_is_read_again_before_each_start(self):
+        import threading
+        run = self.start_run([{"id": "I3", "kind": "write"}, {"id": "I4", "kind": "write"}])
+        self.prompt(run, "I3", "DELAY=1.5\n")
+        self.prompt(run, "I4", "x\n")
+
+        def ask():
+            for _ in range(100):
+                if self.logged():
+                    break
+                time.sleep(0.05)
+            self.event("asked", "R-" + "c" * 16)  # asked while I3 runs: it holds I4
+
+        asker = threading.Thread(target=ask)
+        asker.start()
+        with self.records(run, c=["I4"]):
+            lines = self.runner(run, "--max", "1", "--stagger", "0")
+        asker.join()
+        self.assertEqual((lines[-1]["done"], lines[-1]["held"]), (["I3"], ["I4"]))
+        self.assertEqual(len(self.logged()), 1)
+
+    def test_restore_compares_owners_as_the_file_system_does(self):
+        if not ddl_gate_core.folds_case(str(self.project.resolve())):
+            self.skipTest("this file system tells names apart by case")
+        run, ref = self.restore_setup(extra=[{"id": "I4", "kind": "write", "files": ["SRC/B.TXT"]}])
+        (self.project / "src/b.txt").write_text("a change of the item I4 owns\n")
+        code, stdout, stderr = self.call("restore", ref, "--run", run, "--items", "I1")
+        self.assertEqual((code, stdout), (2, ""))
+        self.assertIn("src/b.txt has uncommitted changes and belongs to an item outside", stderr)
+        self.assertEqual((self.project / "src/b.txt").read_text(), "a change of the item I4 owns\n")
 
 
 class ResourceBoundaryTest(SplitTest):

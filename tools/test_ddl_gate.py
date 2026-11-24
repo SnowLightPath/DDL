@@ -4106,6 +4106,652 @@ class GrantAnswerTest(GrantAnswers):
                         self.assertEqual(text, "")
 
 
+RUN = "N-0123456789ab"
+# A Run's items: I2 depends on I1, I4 on I2 (so, through it, on I1); I6 names its file in another case.
+RUN_ITEMS = [{"id": "I1", "kind": "write", "files": ["tools/held.py", "tools/held/**"], "after": [], "status": "ready"},
+             {"id": "I2", "kind": "write", "files": ["tools/later/**"], "after": ["I1"], "status": "ready"},
+             {"id": "I3", "kind": "write", "files": ["tools/free.py"], "after": [], "status": "ready"},
+             {"id": "I4", "kind": "verify", "files": ["skills/*.md"], "after": ["I2"], "status": "ready"},
+             {"id": "I5", "kind": "explore", "files": [], "after": [], "status": "ready"},
+             {"id": "I6", "kind": "write", "files": ["Tools/FOLDED.py"], "after": [], "status": "ready"}]
+MARKED_REPORT = "+++DDL_REPORT\n\nA short report before the question."
+
+
+def write_run(root, items=RUN_ITEMS, run=RUN):
+    """The Run's run.json in the project's ledger, as run-start writes it."""
+    path = pathlib.Path(root) / ".ddl" / "runs" / run / "run.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"id": run, "report": "R-" + "9" * 16, "grant": None, "language": "en", "items": items}))
+
+
+def report_text_row(runtime):
+    """An assistant message carrying a +++DDL_REPORT, as each host records it."""
+    if runtime == "claude":
+        return {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": MARKED_REPORT}]}}
+    return {"type": "response_item", "payload": {"type": "message", "role": "assistant",
+                                                 "content": [{"type": "output_text", "text": MARKED_REPORT}]}}
+
+
+class HoldBase(GrantAnswers):
+    """A question that names the items it holds (`holds`) stops only those items, the items that depend on them, and
+    every exit; other work inside an active grant goes on. Any pending question without `holds` stops everything."""
+
+    def setUp(self):
+        super().setUp()
+        write_run(self.root)
+        for name in ("free.py", "held.py", "other.py"):
+            (self.root / "tools" / name).write_text("")
+        self.ident = self.granted(paths=["tools/**", "skills/*.md"], commands=["test", "check", "build"])
+
+    def held(self, runtime, items=("I1",), **fields):
+        return self.prepare_report(runtime, cwd=self.cwd, holds={"run": RUN, "items": list(items)}, **fields)
+
+    def waiting(self, prepared):
+        return ddl_gate.WAITING_REASON.format(prepared["reportId"], prepared["report"])
+
+    def beside(self, kind, *held):
+        return "allow", ddl_gate.HELD_ALLOW.format(self.ident, kind, ", ".join(prepared["reportId"] for prepared in held))
+
+    def check(self, runtime, transcript, call, expected):
+        """`expected` is an outcome, or the prefix of a deny's reason."""
+        with self.subTest(runtime=runtime, call=call):
+            got = self.outcome(runtime, call, transcript)
+            if isinstance(expected, str):
+                self.assertEqual(got and got[0], "deny", got)
+                self.assertTrue(got[1].startswith(expected), got)
+            else:
+                self.assertEqual(got, ("allow", None) if expected and expected[0] == "allow" and runtime == "codex"
+                                 else expected)
+
+    def joined(self, runtime, first, second, first_stage="asked", second_stage="asked", call="second-question"):
+        """One record: `first` up to its stage, then `second`'s rows after its own human prompt, in the same turn."""
+        rows = self.rows(runtime, first, first_stage) + self.rows(runtime, second, second_stage, call=call)[
+            1 if runtime == "claude" else 2:]
+        return self.record_of("{}-{}-{}".format(runtime, first["reportId"], second["reportId"]), rows)
+
+
+class HoldTest(HoldBase):
+    """Held questions: what goes on beside them, and what stays stopped."""
+
+    def test_unheld_work_inside_the_grant_goes_on_beside_a_held_question(self):
+        for runtime in ("claude", "codex"):
+            prepared = self.held(runtime)
+            asked = self.flow(runtime, prepared, "asked")
+            for path in ("tools/free.py", "tools/new/x.py", "tools/other.py"):
+                self.check(runtime, asked, self.edit(runtime, path), self.beside("edit", prepared))
+            for command in ("python3 tools/test_x.py", "python3 tools/test_x.py tools/free.py", "cd tools && python3 test_x.py"):
+                self.check(runtime, asked, self.shell(runtime, command), self.beside("test", prepared))
+            self.check(runtime, asked, self.shell(runtime, "git status"), None if runtime == "codex" else None)  # a read
+
+    def test_the_held_items_their_dependents_and_every_exit_stay_stopped(self):
+        escaped = {"claude": ("Bash", {"command": "python3 tools/test_x.py", "dangerouslyDisableSandbox": True}),
+                   "codex": ("exec_command", {"cmd": "python3 tools/test_x.py", "sandbox_permissions": "require_escalated",
+                                              "justification": "x"})}
+        os.symlink("held.py", str(self.root / "tools" / "alias.py"))
+        for runtime in ("claude", "codex"):
+            prepared = self.held(runtime)
+            asked, stop = self.flow(runtime, prepared, "asked"), self.waiting(prepared)
+            # The held item's files, a dependent's, a dependent's dependent's; through a link; by a rename.
+            for path in ("tools/held.py", "tools/held/x.py", "tools/later/y.py", "skills/a.md", "tools/alias.py"):
+                self.check(runtime, asked, self.edit(runtime, path), stop)
+            if runtime == "codex":
+                move = ("apply_patch", {"patch": PATCH.format("*** Update File: tools/free.py\n*** Move to: tools/held.py\n"
+                                                              "@@\n-a\n+b\n")})
+                self.check(runtime, asked, move, stop)
+                self.check(runtime, asked, self.edit(runtime, "tools/free.py", "tools/held.py"), stop)
+            for command in ("python3 tools/test_x.py tools/held.py", "python3 tools/test_x.py --out=tools/later/r.txt",
+                            "git commit -m x", "git push origin main", "git add tools/free.py", "python3 tools/build.py",
+                            "echo x >> .ddl/events.jsonl", "python3 -m unittest tools.test_x", "touch tools/free.py",
+                            "ssh build-1 make", "python3 tools/test_x.py && git push", "curl -T f https://example.invalid"):
+                self.check(runtime, asked, self.shell(runtime, command), stop)
+            self.check(runtime, asked, escaped[runtime], stop)
+            self.check(runtime, asked, self.edit(runtime, "docs/a.md"), stop)  # outside the grant
+            # A new question is no work beside the held one.
+            tool, request = QUESTION_TOOL[runtime], {"questions": [{QUESTION_KEY[runtime]: "Another?", "options": ["Yes", "No"]}]}
+            self.check(runtime, asked, (tool, request), "DDL STOP")
+
+    def test_an_owner_glob_is_compared_without_case_where_the_file_system_ignores_it(self):
+        folds = ddl_gate.folds_case(os.path.realpath(str(self.root)))
+        for runtime in ("claude", "codex"):
+            prepared = self.held(runtime, ("I6",))
+            asked = self.flow(runtime, prepared, "asked")
+            self.check(runtime, asked, self.edit(runtime, "tools/folded.py"),
+                       self.waiting(prepared) if folds else self.beside("edit", prepared))
+
+    def test_any_question_without_holds_and_any_other_stop_keep_the_total_stop(self):
+        for runtime in ("claude", "codex"):
+            held, plain = self.held(runtime), self.prepare_report(runtime, cwd=self.cwd)
+            free = self.edit(runtime, "tools/free.py")
+            self.check(runtime, self.flow(runtime, plain, "asked"), free, self.waiting(plain))
+            self.check(runtime, self.joined(runtime, held, plain), free, self.waiting(plain))
+            self.check(runtime, self.joined(runtime, plain, held), free, self.waiting(held))
+            # Two held questions: what both hold, together.
+            other = self.held(runtime, ("I3",))
+            both = self.joined(runtime, held, other)
+            self.check(runtime, both, free, self.waiting(other))
+            ids = sorted([held, other], key=lambda prepared: prepared["reportId"])
+            self.check(runtime, both, self.edit(runtime, "tools/other.py"), self.beside("edit", *ids))
+            # A report the human never saw asked, and a STOP only the marker shows.
+            reported = self.record_of(runtime + "-reported", self.rows(runtime, held, "asked") + [report_text_row(runtime)])
+            self.check(runtime, reported, free, self.waiting(held))
+        marker = pathlib.Path(self.state) / "codex.pending"
+        marker.write_text("1")
+        self.check("codex", fixture("codex_open.jsonl"), self.edit("codex", "tools/free.py"), ddl_gate.DENY_REASON)
+        marker.unlink()
+
+    def test_a_report_written_right_before_its_held_question_belongs_to_it(self):
+        for runtime in ("claude", "codex"):
+            prepared = self.held(runtime)
+            rows = self.rows(runtime, prepared, "asked")
+            at = next(i for i, row in enumerate(rows) if (row.get("type") == "assistant" and "tool_use" in json.dumps(row))
+                      or (row.get("payload") or {}).get("name") in ddl_gate.QUESTION_TOOLS["codex"])
+            before = self.record_of(runtime + "-before", rows[:at] + [report_text_row(runtime)] + rows[at:])
+            after = self.record_of(runtime + "-after", rows + [report_text_row(runtime)])
+            self.check(runtime, before, self.edit(runtime, "tools/free.py"), self.beside("edit", prepared))
+            self.check(runtime, after, self.edit(runtime, "tools/free.py"), self.waiting(prepared))
+            # A report whose question was prepared but never asked stops everything, held or not.
+            prepared_only = self.record_of(runtime + "-unasked", self.rows(runtime, prepared, "prepared") + [report_text_row(runtime)])
+            self.check(runtime, prepared_only, self.edit(runtime, "tools/free.py"), self.waiting(prepared))
+
+    def test_without_an_active_grant_a_held_question_still_stops_everything(self):
+        for path in self.store.iterdir():
+            path.unlink()
+        for runtime in ("claude", "codex"):
+            prepared = self.held(runtime)
+            self.check(runtime, self.flow(runtime, prepared, "asked"), self.edit(runtime, "tools/free.py"), self.waiting(prepared))
+
+    def test_a_held_question_is_answered_as_any_other(self):
+        for runtime in ("claude", "codex"):
+            prepared = self.held(runtime)
+            self.assertEqual(prepared["question"].count("\n"), 4)  # the five lines, no more
+            text = pathlib.Path(prepared["report"]).read_text(encoding="utf-8")
+            self.assertIn("```\nHolds: {}: I1\n```".format(RUN) if False else "{}: I1".format(RUN), text)
+            answered = self.flow(runtime, prepared, "answered")
+            # Answered, the record is OPEN again: the grant answers as it did, the held file included.
+            self.check(runtime, answered, self.edit(runtime, "tools/held.py"), self.allow(self.ident, "edit"))
+
+    def test_malformed_holds_are_refused_before_anything_is_written(self):
+        many = ["I{}".format(i) for i in range(17)]
+        for holds, reason in (("I1", "holds is {run, items}"), ({"run": RUN}, "holds is {run, items}"),
+                              ({"run": RUN, "items": ["I1"], "x": 1}, "holds is {run, items}"),
+                              ({"run": "N-1", "items": ["I1"]}, "holds.run is a Run ID"),
+                              ({"run": "N-" + "f" * 12, "items": ["I1"]}, "Run N-ffffffffffff is not in this project's ledger."),
+                              ({"run": RUN, "items": []}, "holds.items is a list of 1 to 16"),
+                              ({"run": RUN, "items": many}, "holds.items is a list of 1 to 16"),
+                              ({"run": RUN, "items": ["I1", "I1"]}, "holds.items is a list of 1 to 16"),
+                              ({"run": RUN, "items": ["../x"]}, "holds.items is a list of 1 to 16"),
+                              ({"run": RUN, "items": [1]}, "holds.items is a list of 1 to 16"),
+                              ({"run": RUN, "items": ["I9"]}, "holds.items: I9 is not an item of Run")):
+            for runtime in ("claude", "codex"):
+                with self.subTest(holds=holds, runtime=runtime):
+                    before = sorted(pathlib.Path(self.state).rglob("report.*"))
+                    proc = self.subcommand(["prepare-report", "--runtime", runtime],
+                                           dict(PrepareReportTest.BASE, holds=holds), self.cwd)
+                    self.assertEqual((proc.returncode, proc.stdout), (2, ""))
+                    self.assertIn(reason, proc.stderr)
+                    self.assertEqual(sorted(pathlib.Path(self.state).rglob("report.*")), before)
+        proc = self.subcommand(["prepare-report", "--runtime", "claude"],
+                               dict(PrepareReportTest.BASE, holds={"run": RUN, "items": ["I1"]}), self.tmp)
+        self.assertEqual(proc.returncode, 2)  # outside a DDL project
+        self.assertIn("belong to a DDL project", proc.stderr)
+
+
+class QueueBase(HoldBase):
+    """A queued report makes no STOP pending until it is asked; several queued questions go in one Claude call."""
+
+
+    def queued(self, runtime, items=("I1",), **fields):
+        return self.held(runtime, items, queue=True, **fields)
+
+    def batch_rows(self, first, others, answers):
+        """The Claude record of one call asking `first` and `others`, answered with `answers` (option indexes)."""
+        rows = self.rows("claude", first, "answered")
+        questions = [prepared["nativeRequest"]["questions"][0] for prepared in [first] + others]
+        rows[3]["message"]["content"][0]["input"] = {"questions": questions}
+        rows[4]["toolUseResult"]["answers"] = {prepared["question"]: option_label(prepared, answer)
+                                               for prepared, answer in zip([first] + others, answers)}
+        return rows
+
+
+class QueueTest(QueueBase):
+    """Queued questions and the batch."""
+
+    def test_a_queued_report_stops_nothing_until_it_is_asked(self):
+        for runtime in ("claude", "codex"):
+            queued, plain = self.queued(runtime), self.prepare_report(runtime, cwd=self.cwd)
+            free = self.edit(runtime, "tools/free.py")
+            self.check(runtime, self.flow(runtime, queued, "prepared"), free, self.allow(self.ident, "edit"))
+            self.check(runtime, self.flow(runtime, plain, "prepared"), free, self.waiting(plain))
+            self.check(runtime, self.flow(runtime, queued, "asked"), free, self.beside("edit", queued))
+            line = [row for row in events(self.root, kind="prepared") if row.get("id") == queued["reportId"]][0]
+            self.assertEqual((line["queued"], line["holds"]), (True, {"run": RUN, "items": ["I1"]}))
+            self.assertNotIn("queued", [row for row in events(self.root, kind="prepared") if row.get("id") == plain["reportId"]][0])
+        for queue in (False, "yes", 1):
+            proc = self.subcommand(["prepare-report", "--runtime", "claude"], dict(PrepareReportTest.BASE, queue=queue), self.cwd)
+            self.assertEqual(proc.returncode, 2)
+            self.assertIn("queue is true when given", proc.stderr)
+
+    def test_a_batch_of_queued_questions_is_asked_answered_and_granted_question_by_question(self):
+        first, second = self.queued("claude", grant=grant()), self.queued("claude", ("I3",), grant=grant())
+        batch = {"questions": [first["nativeRequest"]["questions"][0], second["nativeRequest"]["questions"][0]]}
+        self.assert_allowed(self.ask("claude", first, "batch", request=batch))
+        self.assertEqual([row["id"] for row in events(self.root, session="batch", kind="asked")],
+                         [first["reportId"], second["reportId"]])
+        self.assertEqual(self.armed_ids("batch"), [first["reportId"], second["reportId"]])
+        # While both are pending, what both hold stays stopped; the rest goes on.
+        asked = self.record_of("batch-asked", self.batch_rows(first, [second], [0, 0])[:4])
+        self.check("claude", asked, self.edit("claude", "tools/free.py"), self.waiting(first))
+        self.check("claude", asked, self.edit("claude", "tools/other.py"), self.beside("edit", *sorted(
+            [first, second], key=lambda prepared: prepared["reportId"])))
+        # The answers: each question its own line, each first option its own grant.
+        answered = self.record_of("batch-answered", self.batch_rows(first, [second], [0, 1]))
+        self.assert_allowed(self.tool("claude", answered, "batch"))
+        rows = events(self.root, session="batch", kind="answered")
+        self.assertEqual([(row["id"], row["choice"]) for row in rows], [(first["reportId"], 0), (second["reportId"], 1)])
+        self.assertIsNotNone(self.record(first))
+        self.assertIsNone(self.record(second))  # its answer was not the first option
+        self.assertEqual([row["id"] for row in events(self.root, session="batch", kind="granted")], [first["reportId"]])
+
+    def test_a_batch_is_only_queued_prepared_questions_unchanged(self):
+        first, second = self.queued("claude"), self.queued("claude", ("I3",))
+        plain = self.prepare_report("claude", cwd=self.cwd)
+        q = lambda prepared: prepared["nativeRequest"]["questions"][0]  # noqa: E731
+        altered = dict(q(second), header="Other")
+        extra = self.queued("claude", ("I5",))
+        cases = [({"questions": [q(first), q(plain)]}, ddl_gate.BATCH_UNCHANGED.format(plain["reportId"])),
+                 ({"questions": [q(first), altered]}, ddl_gate.BATCH_UNCHANGED.format(second["reportId"])),
+                 ({"questions": [q(first), q(first)]}, ddl_gate.BATCH_UNCHANGED.format(first["reportId"])),
+                 ({"questions": [q(first), q(second)], "metadata": {}}, ddl_gate.BATCH_UNCHANGED.format(first["reportId"])),
+                 ({"questions": [q(first), q(second), q(extra), q(extra), q(extra)]},
+                  ddl_gate.BATCH_UNCHANGED.format(first["reportId"])),
+                 ({"questions": [q(first), {"question": "Ordinary?", "options": []}]}, ddl_gate.BATCH_UNCHANGED.format("?")),
+                 # A batch led by an unqueued question is refused as it always was: it is not that question.
+                 ({"questions": [q(plain), q(first)]}, ddl_gate.ASK_UNCHANGED.format(plain["reportId"]))]
+        for request, reason in cases:
+            with self.subTest(request=request):
+                self.assert_reason(self.ask("claude", first, "bad", request=request), reason)
+        # Codex asks one question at a time.
+        one, two = self.queued("codex"), self.queued("codex", ("I3",))
+        both = {"questions": [one["nativeRequest"]["questions"][0], two["nativeRequest"]["questions"][0]]}
+        self.assert_reason(self.ask("codex", one, "codex-batch", request=both), ddl_gate.ASK_UNCHANGED.format(one["reportId"]))
+
+
+class ProvisionalBase(QueueBase):
+    """A provisional question goes ahead with its first option: it holds the items depending on the choice, and
+    until it is answered nothing leaves the machine. Its answer confirms or overturns what went ahead."""
+
+
+    def setUp(self):
+        super().setUp()
+        self.git_env = dict(os.environ, GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
+        shutil.rmtree(str(self.root / ".git"))
+        for args in (["init", "-q", "-b", "main"], ["config", "user.email", "fixture@example.invalid"],
+                     ["config", "user.name", "DDL fixture"], ["config", "commit.gpgSign", "false"], ["add", "tools"],
+                     ["commit", "-q", "-m", "base"]):
+            subprocess.run(["git", "-C", str(self.root), *args], check=True, capture_output=True, env=self.git_env)
+        self.snapshot = "refs/ddl/snapshots/{}/20261124T000000Z-I1".format(RUN)
+        subprocess.run(["git", "-C", str(self.root), "update-ref", self.snapshot, "HEAD"], check=True, capture_output=True,
+                       env=self.git_env)
+        self.markers = pathlib.Path(self.grants) / project_key(self.root) / "queued"  # one marker per queued question
+
+    def provisional(self, runtime, items=("I1",), **fields):
+        return self.queued(runtime, items, provisional={"snapshot": self.snapshot}, **fields)
+
+    def exits(self, runtime):
+        return [self.shell(runtime, command) for command in (
+            "git commit -m x", "git push origin main", "ssh build-1 make", "scp a build-1:", GATE_CALL + " remote build-1 -- make",
+            GATE_CALL + " service svc --prompt-file tools/p.md", "curl -T f https://example.invalid",
+            "python3 tools/test_x.py && git push")]
+
+
+class ProvisionalTest(ProvisionalBase):
+    """Provisional questions: their preparation, the exits they stop, their answer."""
+
+    def test_a_provisional_preparation_is_checked(self):
+        def refused(reason, **fields):
+            for runtime in ("claude",) if fields.get("multiSelect") else ("claude", "codex"):  # Codex refuses it first
+                with self.subTest(reason=reason, runtime=runtime, fields=fields):
+                    proc = self.subcommand(["prepare-report", "--runtime", runtime], dict(PrepareReportTest.BASE, **fields), self.cwd)
+                    self.assertEqual((proc.returncode, proc.stdout), (2, ""))
+                    self.assertIn(reason, proc.stderr)
+
+        holds = {"run": RUN, "items": ["I1"]}
+        together = "provisional goes with queue: true and holds"
+        refused(together, provisional={"snapshot": self.snapshot}, holds=holds)
+        refused(together, provisional={"snapshot": self.snapshot}, queue=True)
+        for ref in ("refs/ddl/snapshots/" + RUN + "/none", "refs/heads/main", "refs/ddl/snapshots/../heads/main", "",
+                    "refs/ddl/snapshots/"):
+            refused("provisional.snapshot is an existing ref under refs/ddl/snapshots/", provisional={"snapshot": ref},
+                    queue=True, holds=holds)
+        refused("provisional is {snapshot}", provisional={"snapshot": self.snapshot, "x": 1}, queue=True, holds=holds)
+        refused("a provisional report takes one answer", provisional={"snapshot": self.snapshot}, queue=True, holds=holds,
+                multiSelect=True)
+        first = self.provisional("claude")
+        marker = self.markers / (first["reportId"] + ".json")
+        self.assertEqual(marker.stat().st_mode & 0o777, 0o600)
+        self.assertEqual((json.loads(marker.read_text())["holds"], json.loads(marker.read_text())["provisional"]),
+                         ({"run": RUN, "items": ["I1"]}, True))
+        line = [row for row in events(self.root, kind="prepared") if row.get("id") == first["reportId"]][0]
+        self.assertEqual((line["queued"], line["provisional"]), (True, True))
+        # No provisional decision rests on another: the same item, or one that depends on it, is refused.
+        for items in (["I1"], ["I2"], ["I4"]):
+            refused("no provisional decision rests on another", provisional={"snapshot": self.snapshot}, queue=True,
+                    holds={"run": RUN, "items": items})
+        self.assertTrue(self.provisional("codex", ("I3",))["reportId"])  # an item apart from it
+
+    def test_nothing_leaves_the_machine_while_a_provisional_question_is_unanswered(self):
+        for runtime in ("claude", "codex"):
+            prepared = self.provisional(runtime, ("I1",) if runtime == "claude" else ("I3",))
+            opened = fixture(runtime + "_open.jsonl")  # queued: no STOP is pending, the local work goes on
+            pending = sorted(path.name[:-5] for path in self.markers.iterdir())
+            for call in self.exits(runtime):
+                self.check(runtime, opened, call, ("deny", ddl_gate.PROVISIONAL_EXIT.format(", ".join(pending))))
+            self.check(runtime, opened, self.edit(runtime, "tools/free.py"), self.allow(self.ident, "edit"))
+            self.check(runtime, opened, self.shell(runtime, "grep -n 'git push' tools/free.py"), self.allow(self.ident, "read"))
+            preparation = ('python3 "$HOME/.{}/hooks/ddl_gate.py" prepare-report --runtime {} <<\'JSON\'\n'.format(
+                runtime, runtime) + json.dumps({"detail": "then git push"}) + "\nJSON")  # the body is data
+            self.check(runtime, opened, self.shell(runtime, preparation), self.allow(self.ident, "gate"))
+            self.assertTrue(prepared)
+
+    def test_the_answer_confirms_or_overturns_and_lets_exits_run(self):
+        for runtime in ("claude", "codex"):
+            for answer, kind in ((0, "provisional-confirmed"), (1, "provisional-overturned")):
+                with self.subTest(runtime=runtime, answer=answer):
+                    prepared, session = self.provisional(runtime), "{}-provisional-{}".format(runtime, answer)
+                    self.assert_allowed(self.approve(runtime, prepared, answer, session))
+                    self.assertEqual([row["id"] for row in events(self.root, session=session, kind=kind)], [prepared["reportId"]])
+                    self.assertFalse((self.markers / (prepared["reportId"] + ".json")).exists())
+                    got = self.outcome(runtime, self.shell(runtime, "git push origin main"), fixture(runtime + "_open.jsonl"))
+                    self.assertIn("DDL Git review", got[1])  # the push meets its own review again, not the provisional stop
+                    for path in self.markers.iterdir():
+                        path.unlink()
+
+
+class HoldEscapeTest(HoldBase):
+    """What may not slip past a hold: owner paths through links, another Unicode spelling or a directory; commands that
+    name no path; and an error, which keeps today's denial."""
+
+    def test_owner_paths_are_compared_resolved(self):
+        import unicodedata
+        root = self.root
+        (root / "tools" / "realdir").mkdir()
+        (root / "tools" / "realdir" / "x.py").write_text("")
+        os.symlink("realdir", str(root / "tools" / "linkdir"))
+        (root / "tools" / "real.py").write_text("")
+        os.symlink("real.py", str(root / "tools" / "link.py"))
+        (root / "tools" / "dirheld").mkdir()
+        (root / "tools" / "dirheld" / "a.py").write_text("")
+        nfc = unicodedata.normalize("NFC", "tools/café.py")
+        (root / nfc).write_text("")
+        write_run(root, [{"id": "A", "kind": "write", "files": ["tools/linkdir/**", "tools/link.py"], "after": []},
+                         {"id": "B", "kind": "write", "files": ["tools/dirheld/", "./tools/held.py"], "after": []},
+                         {"id": "C", "kind": "write", "files": [nfc], "after": []},
+                         {"id": "D", "kind": "write", "files": ["tools/free.py"], "after": []}])
+        for runtime in ("claude", "codex"):
+            prepared = self.held(runtime, ("A", "B", "C"))
+            asked, stop = self.flow(runtime, prepared, "asked"), self.waiting(prepared)
+            for path in ("tools/linkdir/x.py", "tools/realdir/x.py", "tools/link.py", "tools/real.py", "tools/dirheld/a.py",
+                         "tools/dirheld/new.py", "tools/held.py", "./tools/held.py", unicodedata.normalize("NFD", nfc), nfc):
+                self.check(runtime, asked, self.edit(runtime, path), stop)
+            for command in ("cd tools/dirheld && python3 ../test_x.py out.txt", "python3 tools/test_x.py tools/dirheld",
+                            "python3 tools/test_x.py tools/realdir/x.py", "python3 tools/test_x.py tools",
+                            "python3 tools/test_x.py --out=tools/linkdir/r.txt"):
+                self.check(runtime, asked, self.shell(runtime, command), stop)
+            self.check(runtime, asked, self.edit(runtime, "tools/free.py"), self.beside("edit", prepared))
+
+    def test_a_command_that_names_no_path_stays_held(self):
+        for runtime in ("claude", "codex"):
+            prepared = self.held(runtime)
+            asked, stop = self.flow(runtime, prepared, "asked"), self.waiting(prepared)
+            for command in ("make test", "pytest", "python3 -m pytest", "python3 -m unittest discover -s tools",
+                            "python3 -m unittest discover", "npm test", "cargo test", "go test ./...", "git diff --check"):
+                self.check(runtime, asked, self.shell(runtime, command), stop)
+            self.check(runtime, asked, self.shell(runtime, "python3 tools/test_x.py"), self.beside("test", prepared))
+
+    def test_an_error_beside_a_hold_keeps_the_stop(self):
+        for runtime in ("claude", "codex"):
+            for prepared in (self.held(runtime), self.prepare_report(runtime, cwd=self.cwd)):
+                asked = self.flow(runtime, prepared, "asked")
+                for name in ("pending_signals", "active_grants", "edit_grant", "owner_specs", "run_record"):
+                    with self.subTest(runtime=runtime, failing=name), \
+                            mock.patch.object(ddl_gate, name, side_effect=RuntimeError("probe")):
+                        self.assertEqual(self.outcome(runtime, self.edit(runtime, "tools/free.py"), asked),
+                                         ("deny", self.waiting(prepared)))
+        # An older entry with a text block of no text, before the preparation: the walk beside the hold meets it.
+        for prepared in (self.held("claude"), self.prepare_report("claude", cwd=self.cwd)):
+            rows = self.rows("claude", prepared, "asked")
+            rows.insert(1, {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": None}]}})
+            odd = self.record_of("odd-" + prepared["reportId"], rows)
+            self.assertEqual(self.outcome("claude", self.edit("claude", "tools/free.py"), odd), ("deny", self.waiting(prepared)))
+
+
+class ProvisionalEscapeTest(ProvisionalBase):
+    """What may not leave the machine while a provisional question is open, however it is spelled; a stale one asked
+    again; its answer recorded once."""
+
+    def test_every_spelling_of_an_exit_is_denied(self):
+        self.granted("R-" + "c" * 16, commands=["remote-run", "test"], machines=["build-1"], handover=["code"],
+                     approved="2026-11-21T00:00:00.000Z")
+        link = os.path.join(self.tmp, "g.py")
+        os.symlink(GATE, link)
+        for runtime in ("claude", "codex"):
+            prepared = self.provisional(runtime)
+            denied = ("deny", ddl_gate.PROVISIONAL_EXIT.format(prepared["reportId"]))
+            opened = fixture(runtime + "_open.jsonl")
+            for command in (GATE_CALL + " r'emote' build-1 -- make", GATE_CALL + " re\\mote build-1 -- make",
+                            GATE_CALL + " serv\\ice svc --prompt-file tools/p.md", GATE_CALL + " measure build-1",
+                            "python3 {} remote build-1 -- make".format(shlex.quote(link)),
+                            "python3 {} measure build-1".format(shlex.quote(link)),
+                            "s'sh' build-1 make", "ss\\h build-1 make", '"ssh" build-1 make',
+                            "git -c alias.p=push p origin main", "git -c alias.c=commit c -m x", "git p origin main",
+                            "git -c core.sshCommand=x fetch", "env git push", "bash -c 'git push'", "xargs git push",
+                            "git submodule foreach git push", "python3 -c 'print(1)'", "osascript -e x",
+                            "open https://example.invalid/?q=1", "curl https://example.invalid/?q=1",
+                            "printf x | nc example.invalid 1", "echo $HOME | wc -c"):
+                self.check(runtime, opened, self.shell(runtime, command), denied)
+            for tool in ("mcp__tracker__create_issue", "mcp__tracker__sendMessage", "mcp__drive__upload_file",
+                         "mcp__tracker__get_issue", "mcp__drive__search_files", "mcp__drive__listFiles"):
+                self.check(runtime, opened, (tool, {}), denied)  # every connector tool: no name tells what it sends
+            # Local work, reads and the gate's own words go on.
+            self.check(runtime, opened, self.shell(runtime, "python3 tools/test_x.py"), self.allow("R-" + "a" * 16, "test"))
+            for command in ("git status", "git -c color.ui=never log", "grep -rn 'git push' tools"):
+                self.check(runtime, opened, self.shell(runtime, command), self.allow("R-" + "a" * 16, "read"))
+            for path in self.markers.iterdir():
+                path.unlink()
+        self.check("claude", fixture("claude_open.jsonl"), ("mcp__tracker__create_issue", {}), None)  # none open
+
+    def test_a_stale_provisional_question_is_asked_again(self):
+        first = self.provisional("claude")
+        holds = {"run": RUN, "items": ["I1"]}
+        again = dict(PrepareReportTest.BASE, queue=True, holds=holds, provisional={"snapshot": self.snapshot})
+
+        def refused(reason, **fields):
+            proc = self.subcommand(["prepare-report", "--runtime", "claude"], dict(again, **fields), self.cwd)
+            self.assertEqual(proc.returncode, 2)
+            self.assertIn(reason, proc.stderr)
+
+        refused("no provisional decision rests on another")
+        same = "replaces asks the same question again"
+        refused("replaces names an open queued question", replaces="R-" + "e" * 16)
+        refused("replaces names an open queued question", replaces="x")
+        refused(same, replaces=first["reportId"], holds={"run": RUN, "items": ["I1", "I5"]})
+        refused(same, replaces=first["reportId"], decision="Something else?")
+        refused(same, replaces=first["reportId"], options=[{"label": "a", "description": "a"}, {"label": "b", "description": "b"}])
+        refused("replaces goes with queue: true", replaces=first["reportId"], queue=None, provisional=None)
+        second = self.provisional("claude", replaces=first["reportId"])
+        self.assertEqual([path.name for path in self.markers.iterdir()], [first["reportId"] + ".json"])  # taken over
+        lines = self.subcommand(["status"], cwd=self.cwd).stdout.splitlines()
+        self.assertTrue(any(line.startswith("Provisional: {} (Run {}, snapshot {}, open ".format(
+            second["reportId"], RUN, self.snapshot)) and line.endswith("asked again from {})".format(first["reportId"]))
+                            for line in lines), lines)
+        self.assertTrue(any(line.startswith("Queued: " + second["reportId"]) for line in lines), lines)
+        # A typed prompt clears nothing; only the answer does, for both askings.
+        self.prompt("claude", fixture("claude_open.jsonl"), "how is it going?", "stale")
+        self.assertEqual(len(list(self.markers.iterdir())), 1)
+        self.assert_allowed(self.approve("claude", second, 0, "stale-answer"))
+        self.assertEqual(list(self.markers.iterdir()), [])
+        self.assertEqual(sorted((row["id"], row.get("by")) for row in events(self.root, kind="provisional-confirmed")),
+                         sorted([(second["reportId"], None), (first["reportId"], second["reportId"])]))
+        got = self.outcome("claude", self.shell("claude", "git push origin main"), fixture("claude_open.jsonl"))
+        self.assertIn("DDL Git review", got[1])
+
+    def test_a_long_chain_of_askings_clears_on_the_last_answer(self):
+        for runtime in ("claude", "codex"):
+            ident = self.provisional(runtime)["reportId"]
+            for _ in range(20):
+                ident = self.provisional(runtime, replaces=ident)["reportId"]
+            (marker,) = list(self.markers.iterdir())
+            self.assertEqual((len(json.loads(marker.read_text())["ids"]), json.loads(marker.read_text())["current"]), (21, ident))
+            last = json.loads((pathlib.Path(self.state) / "reports" / ident[2:] / "report.json").read_text())
+            prepared = {"reportId": ident, "question": last["question"], "nativeRequest": last["nativeRequest"],
+                        "report": str(pathlib.Path(self.state) / "reports" / ident[2:] / "report.md")}
+            self.assert_allowed(self.approve(runtime, prepared, 1, runtime + "-chain"))
+            self.assertEqual(list(self.markers.iterdir()), [])
+            self.assertEqual(len(events(self.root, session=runtime + "-chain", kind="provisional-overturned")), 21)
+
+    def test_outward_tools_and_writing_connector_tools_wait(self):
+        for runtime in ("claude", "codex"):
+            prepared = self.provisional(runtime)
+            denied = ("deny", ddl_gate.PROVISIONAL_EXIT.format(prepared["reportId"]))
+            opened = fixture(runtime + "_open.jsonl")
+            for tool in ("mcp__srv__get_and_delete", "mcp__srv__readwrite", "mcp__srv__fetch_and_upload",
+                         "mcp__srv__list_then_publish", "mcp__srv__delete", "mcp__srv__getAndSendMail", "mcp__srv__show_and_run",
+                         "Artifact", "ArtifactData", "ArtifactComments", "SendUserFile", "SendMessage",
+                         "RemoteTrigger", "WebFetch", "WebSearch"):
+                self.check(runtime, opened, (tool, {"url": "https://example.invalid/?d=x"}), denied)
+            for tool in ("mcp__srv__get_issue", "mcp__srv__searchFiles", "mcp__srv__list_files", "mcp__srv__describe_table",
+                         "mcp__srv__fetch", "mcp__srv__get_and_purge", "mcp__srv__list_and_revoke", "mcp__srv__fetch_and_email",
+                         "mcp__srv__getURLANDSEND"):
+                self.check(runtime, opened, (tool, {}), denied)
+            if runtime == "claude":  # telling the human is no exit: the one notification when no unheld work is left
+                self.check(runtime, opened, ("PushNotification", {"message": "Waiting for your answer"}), None)
+            for path in self.markers.iterdir():
+                path.unlink()
+        self.check("claude", fixture("claude_open.jsonl"), ("Artifact", {"action": "publish"}), None)  # none open
+        self.check("claude", fixture("claude_open.jsonl"), ("mcp__srv__get_and_purge", {}), None)
+
+    def test_a_program_is_only_the_word_in_command_position(self):
+        self.granted("R-" + "c" * 16, commands=["remote-run", "test"], machines=["build-1"], handover=["code"],
+                     approved="2026-11-21T00:00:00.000Z")
+        (self.root / "tools" / "http").mkdir()
+        (self.root / "tools" / "python_x_test.py").write_text("")
+        (self.root / "tools" / "g.py").symlink_to(GATE)
+        (self.root / "design.md").write_text("## Validation\n\n```bash\n# V1 a check with a variable\necho $HOME | wc -c\n```\n")
+        test = self.allow("R-" + "a" * 16, "test")
+        for runtime in ("claude", "codex"):
+            prepared = self.provisional(runtime)
+            opened = fixture(runtime + "_open.jsonl")
+            for command in ("pytest tools/http", "pytest -k ssh", "pytest -k http tools", "python3 tools/test_x.py --name gh",
+                            "python3 tools/python_x_test.py -c cfg", "python3 tools/test_x.py -c cfg",
+                            "python3 tools/test_x.py links", "python3 tools/test_x.py curl",
+                            "python3 tools/test_x.py open https://example.invalid"):
+                self.check(runtime, opened, self.shell(runtime, command), test)
+            for command in ("python3 tools/test_x.py tools/*.py", "open tools/free.py"):
+                self.check(runtime, opened, self.shell(runtime, command), None)  # the host's, not a provisional stop
+            self.check(runtime, opened, self.shell(runtime, "echo $HOME | wc -c"), self.allow("R-" + "a" * 16, "check"))
+            denied = ("deny", ddl_gate.PROVISIONAL_EXIT.format(prepared["reportId"]))
+            for command in ("cd tools && python3 g.py remote build-1 -- make", "cd tools && ./g.py measure build-1",
+                            "env -i FOO=1 ssh build-1 make", "xargs -n 1 curl", "nohup git push", "time npm publish",
+                            "find . -exec curl x {} ;", "*.sh", "git -C tools push"):
+                self.check(runtime, opened, self.shell(runtime, command), denied)
+            for path in self.markers.iterdir():
+                path.unlink()
+
+    def test_the_answer_is_recorded_once_on_both_hosts(self):
+        for runtime in ("claude", "codex"):
+            prepared, session = self.provisional(runtime, grant=grant()), runtime + "-once"
+            self.assert_allowed(self.approve(runtime, prepared, 0, session))
+            self.assert_allowed(self.tool(runtime, self.flow(runtime, prepared, "answered"), session))
+            self.assert_allowed(self.stop(runtime, self.flow(runtime, prepared, "answered"), session))
+            self.assertEqual([row["id"] for row in events(self.root, session=session, kind="provisional-confirmed")],
+                             [prepared["reportId"]])
+
+
+class QueuedTraceTest(QueueBase):
+    """A queued question not asked yet leaves a trace: its held files stay held, and the turn's end names it."""
+
+    def test_a_queued_questions_held_files_wait_for_its_answer(self):
+        for runtime in ("claude", "codex"):
+            queued = self.queued(runtime)
+            opened = self.flow(runtime, queued, "prepared")  # prepared, not asked: no STOP
+            for path in ("tools/held.py", "tools/later/x.py", "skills/a.md"):
+                self.check(runtime, opened, self.edit(runtime, path), ("deny", ddl_gate.QUEUED_HOLD.format(queued["reportId"], path)))
+            self.check(runtime, opened, self.edit(runtime, "tools/free.py"), self.allow(self.ident, "edit"))
+            session = runtime + "-queued"
+            self.assert_allowed(self.approve(runtime, queued, 1, session))  # any answer ends the hold
+            self.check(runtime, fixture(runtime + "_open.jsonl"), self.edit(runtime, "tools/held.py"), self.allow(self.ident, "edit"))
+
+    def test_a_queued_questions_held_files_wait_for_commands_too(self):
+        for runtime in ("claude", "codex"):
+            queued = self.queued(runtime)
+            opened = fixture(runtime + "_open.jsonl")
+            for command, word in (("python3 tools/test_x.py tools/held.py", "tools/held.py"),
+                                  ("python3 tools/test_x.py --out=tools/held.py", "tools/held.py"),
+                                  ("sed -i 's/a/b/' tools/held.py", "tools/held.py"), ("echo x > tools/held.py", "tools/held.py"),
+                                  ("echo x >tools/later/a.txt", "tools/later/a.txt"), ("cd tools && cp free.py held.py", "held.py"),
+                                  ("python3 tools/test_x.py tools", "tools")):
+                self.check(runtime, opened, self.shell(runtime, command),
+                           ("deny", ddl_gate.QUEUED_HOLD.format(queued["reportId"], word)))
+            self.check(runtime, opened, self.shell(runtime, "make test"), self.allow(self.ident, "test"))  # names nothing
+            self.check(runtime, opened, self.shell(runtime, "python3 tools/test_x.py tools/free.py"), self.allow(self.ident, "test"))
+            self.check(runtime, opened, self.shell(runtime, "cat tools/held.py"), self.allow(self.ident, "read"))
+            self.assert_allowed(self.approve(runtime, queued, 1, runtime + "-touch"))
+
+    def test_a_hard_link_to_a_held_file_is_held(self):
+        os.unlink(str(self.root / "tools" / "free.py"))
+        os.link(str(self.root / "tools" / "held.py"), str(self.root / "tools" / "free.py"))
+        for runtime in ("claude", "codex"):
+            prepared = self.held(runtime)
+            self.check(runtime, self.flow(runtime, prepared, "asked"), self.edit(runtime, "tools/free.py"), self.waiting(prepared))
+            queued = self.queued(runtime)
+            self.check(runtime, fixture(runtime + "_open.jsonl"), self.edit(runtime, "tools/free.py"),
+                       ("deny", ddl_gate.QUEUED_HOLD.format(queued["reportId"], "tools/free.py")))
+            self.assert_allowed(self.approve(runtime, queued, 1, runtime + "-link"))
+
+    def test_a_stale_queued_question_is_asked_again_and_its_answer_ends_the_hold(self):
+        for runtime in ("claude", "codex"):
+            queued, session = self.queued(runtime), runtime + "-stale"
+            time.sleep(0.01)
+            self.prompt(runtime, fixture(runtime + "_open.jsonl"), "back now", session)
+            self.assert_reason(self.ask(runtime, queued, session), ddl_gate.PREDATES.format(queued["reportId"]))
+            again = self.queued(runtime, replaces=queued["reportId"])
+            self.assert_allowed(self.approve(runtime, again, 0, session + "-again"))
+            self.check(runtime, fixture(runtime + "_open.jsonl"), self.edit(runtime, "tools/held.py"), self.allow(self.ident, "edit"))
+            self.assertEqual(self.subcommand(["status"], cwd=self.cwd).stdout.count("Queued:"), 0)
+
+    def test_a_replacement_of_an_answered_question_is_refused(self):
+        for runtime in ("claude", "codex"):
+            original = self.queued(runtime)
+            self.assert_allowed(self.approve(runtime, original, 0, runtime + "-settled"))  # answered: its marker is gone
+            proc = self.subcommand(["prepare-report", "--runtime", runtime], dict(
+                PrepareReportTest.BASE, queue=True, holds={"run": RUN, "items": ["I1"]}, replaces=original["reportId"]), self.cwd)
+            self.assertEqual(proc.returncode, 2)
+            self.assertIn("replaces names an open queued question", proc.stderr)
+            # Prepared while the original was open, then the original answered: the replacement is not asked.
+            first = self.queued(runtime)
+            again = self.queued(runtime, replaces=first["reportId"])
+            self.assert_allowed(self.approve(runtime, first, 1, runtime + "-first"))
+            self.assert_reason(self.ask(runtime, again, runtime + "-again"),
+                               ddl_gate.SETTLED_REPLACEMENT.format(again["reportId"], first["reportId"]))
+        first, other = self.queued("claude"), self.queued("claude", ("I5",))
+        again = self.queued("claude", replaces=first["reportId"])
+        self.assert_allowed(self.approve("claude", first, 0, "batch-first"))
+        batch = {"questions": [other["nativeRequest"]["questions"][0], again["nativeRequest"]["questions"][0]]}
+        self.assert_reason(self.ask("claude", other, "batch-again", request=batch),
+                           ddl_gate.SETTLED_REPLACEMENT.format(again["reportId"], first["reportId"]))
+
+    def test_the_turns_end_names_the_queued_questions_not_asked(self):
+        for runtime in ("claude", "codex"):
+            queued, session = self.queued(runtime, ("I5",)), runtime + "-unasked"
+            proc = self.stop(runtime, self.flow(runtime, queued, "prepared"), session)
+            out = json.loads(proc.stdout)
+            self.assertEqual(out, {"systemMessage": ddl_gate.QUEUED_NOTICE.format(queued["reportId"])})
+            self.assert_allowed(self.ask(runtime, queued, session))
+            self.assert_allowed(self.stop(runtime, self.flow(runtime, queued, "asked"), session))  # asked: nothing more
+            self.assert_allowed(self.approve(runtime, queued, 0, session + "-answer"))
+            self.assert_allowed(self.stop(runtime, fixture(runtime + "_open.jsonl"), session + "-later"))
+
+
 class GrantMatchTest(unittest.TestCase):
     """The pieces of the grant's answers, in process."""
 
@@ -5423,6 +6069,15 @@ class QuestionFormatTest(unittest.TestCase):
                 for ptype in ("reasoning", "thinking", "custom_tool_call"):
                     self.assertEqual(ddl_gate.codex_pending_signal("response_item", ptype, {"output": output}),
                                      (False, None))
+        # Reading a preparation's output (whether it was queued) creates nothing, not even the state directory.
+        fresh = os.path.join(tempfile.mkdtemp(prefix="ddl-gate-read-"), "state")
+        self.addCleanup(shutil.rmtree, os.path.dirname(fresh), True)
+        with mock.patch.dict(os.environ, {"DDL_GATE_STATE_DIR": fresh}):
+            output = codex_desktop_output({"reportId": "R-" + hexid, "nativeRequest": {}})
+            self.assertEqual(ddl_gate.codex_pending_signal("response_item", "function_call_output", {"output": output}),
+                             (True, ("R", hexid)))
+            self.assertFalse(ddl_gate.queued_preparation(("R", hexid)))
+        self.assertFalse(os.path.exists(fresh))
 
     def test_only_the_exact_preparation_call_is_recognized(self):
         own = os.path.realpath(ddl_gate.__file__)

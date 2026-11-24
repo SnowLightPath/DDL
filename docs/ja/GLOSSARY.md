@@ -192,6 +192,14 @@
 | acceptance conditions | 受け入れの条件 |  | 節の名前 Acceptance Gates は英字のまま |
 | background worker / completion notice | 背景のワーカー / 完了の通知 |  | 完了の通知は人間の発言ではない |
 | serial part | 直列の部分 |  | 書き手を増やしても縮まない部分（人間の確認、統合、長い確かめ） |
+| holds / held item（質問の `holds`） | 止める項目 / 止めた項目 |  | 質問が名指しする Run の項目。その項目と依る項目の持ち主のファイルは回答まで止まる。ゲートのラベル `止める項目` と同じ語。三つの選択肢の hold（保留）とは別の語 |
+| queued question / queue | 貯めた質問 / 貯める |  | 準備しても STOP を待機中にしない質問（`queue: true`）。人間が戻ったときか止めずに済む仕事が尽きたときに、リードがまとめて尋ねる |
+| provisional / go ahead provisionally | 見込み / 見込みで進める |  | 保存点を作ってから推奨の第一の選択肢で先に進めること。回答が第一の選択肢なら確定し、ほかなら覆る。報告の印は `[見込み]`。見込みの上に見込みは重ねない |
+| confirm / overturn（見込みを） | 確定する / 覆す |  | 確認（confirmation）とは別の語 |
+| restore（ゲートの `restore`） | `restore` / 戻す |  | サブコマンドは英字のままコード体で書く。覆った見込みの選択を保存点から作業ツリーにだけ戻し、項目を `ready` にする |
+| stale（質問が） | 古くなった |  | `replaces` を付けて変えずに尋ね直す |
+| connector / MCP tool | コネクタ / MCP のツール |  |  |
+| Questions waiting（`report` の行） | `待っていた問い` の行 |  | Run がまだ待っている質問を 1 件ずつ並べる。印は `[見込み]`、`[待ち]`、`[出口]` |
 | stagger（ワーカーの開始を） | 間を空けて始める |  | 一斉に始めないこと。`runner` の `--stagger`（既定は 5 秒） |
 | promised behavior | 保証した振る舞い |  | contract の行の「使わない訳」に当たる語を避ける |
 | check（照らし合わせる） | 照らす / 確かめる |  | 名詞の checks は「検査」 |

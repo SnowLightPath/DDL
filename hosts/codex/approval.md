@@ -8,10 +8,10 @@ Read before a STOP or design.md human gate, with Approval; names the choice tool
 
 | Concern | Implementation |
 |---|---|
-| Choice tool | GUI first: `request_user_input_async` where exposed for approval, one whole-set question with the prepared `nativeRequest` (`questions`, the prepared lines as `title`, `options`); `request_user_input` is Plan-only in some hosts and barred from permission requests in Default. |
-| Subset | Async has no multi-select field; a grouped form requires a permitted interface that supports it; no invented `multiSelect`. |
+| Choice tool | GUI first: `request_user_input_async` where exposed for approval, one whole-set question with the prepared `nativeRequest` (`questions`, the prepared lines as `title`, `options`); `request_user_input` is Plan-only in some hosts and barred from permission requests in Default; a batch goes one question at a time. |
+| Subset | Async has no multi-select field; no invented `multiSelect`. |
 | Receipt | Async `accepted: true` is a receipt, not an answer. |
-| Timeout | A host clearing its pending question at turn completion is unable to collect approval for that decision (`interface unavailable`). |
+| Timeout | A host that clears its question at turn completion cannot collect approval (`interface unavailable`). |
 | Mutating tools | `apply_patch`, writing shell commands, starting, messaging or resuming an agent (MCP: entry's Pending STOP). |
 | Human input boundary | The `UserMessage` reply is the boundary recognized by `UserPromptSubmit`. |
 | Prepare | `python3 "$HOME/.codex/hooks/ddl_gate.py" prepare-report --runtime codex <<'EOF'`, input JSON (Formats), `EOF`; or project copy (start: Adapter paths). |
@@ -29,5 +29,5 @@ Read before a STOP or design.md human gate, with Approval; names the choice tool
 
 ## Coverage
 
-- Live results cover only the listed hosts and dates; synchronous choice and independent host-cwd behavior remain untested.
+- Untested: synchronous choice and independent host-cwd behavior.
 - Outside DDL projects (a working-directory-to-repository-root instruction file, below `$HOME`, carries `→ DDL-PROTOCOL`), each hook event returns at once.

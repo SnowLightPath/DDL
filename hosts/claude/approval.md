@@ -8,7 +8,7 @@ Read with the Approval operation before a STOP or a design.md human gate; it nam
 
 | Concern | Implementation |
 |---|---|
-| Choice tool | `AskUserQuestion` with the prepared `nativeRequest`: the prepared lines in `questions[0].question`, header `DDL`, the action options. |
+| Choice tool | `AskUserQuestion` with the prepared `nativeRequest`: the prepared lines in `questions[0].question`, header `DDL`, the action options; a batch, 2–4 prepared `questions` in one call. |
 | Subset | `multiSelect` (a preparation input) where the exposed schema has it. |
 | Receipt | An empty or dismissed result, or one carrying `afkTimeoutMs`, is no submission. |
 | Timeout | The host-only field `afkTimeoutMs` marks idle auto-resolution (Observed); the gate places no boundary on it. |

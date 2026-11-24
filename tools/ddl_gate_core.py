@@ -43,7 +43,7 @@ beside this file, which `main` imports for those words only (`ddl_run.py <word> 
 event imports it. The resource table they read is this module's (read_resource_table, below).
 
 prepare-report reads JSON {language, decision, recommendation, consequence, detail, options?,
-multiSelect?, grant?, confirm?} on stdin, writes report.md and report.json under `<state dir>/reports/<id>/`,
+multiSelect?, grant?, confirm?, holds?, queue?, provisional?} on stdin, writes report.md and report.json under `<state dir>/reports/<id>/`,
 and prints {reportId, report, question, nativeRequest}. prepare-git-review reads JSON
 {language: en|ja, operations: [{cwd, command}, ...]}, snapshots the staged changes and push
 targets, writes review detail in the private state directory, and prints the same shape with
@@ -69,7 +69,16 @@ It adds a `Confirm` (`確認`) line after the grant's and a block to report.md, 
 once as `<project key>/confirmations/R-<id>.json` {id, projectKey, root, items [{resource, action, digest?,
 schemaDigest?, approve?, used: null}], approvedAt, session, host}; tools/ddl_run.py finds the unused items
 with confirmation_items (the first with confirmation_item) and marks one used with mark_confirmation_used
-before anything is sent. In a DDL project the gate appends one JSON line per event to
+before anything is sent. `holds` {run, items} names 1 to 16 items of a Run in the ledger that the question stops
+(report.md shows them; the five lines stay); `queue: true` prepares it for a later batch, so its preparation makes
+no STOP pending (the `prepared` line carries `queued`, `holds` and `provisional`); `provisional` {snapshot}, with
+both, goes ahead as if its first option were chosen: the snapshot ref must exist under refs/ddl/snapshots/, no
+other unanswered provisional question of the Run may hold an item it holds or one depending on them, and its
+answer is `provisional-confirmed` on the first option, else `provisional-overturned`. Every queued report is kept
+as `<project key>/queued/<original R-id>.json` until a proven answer to any asking of it: its held files stay held
+meanwhile (edits and what commands name), a provisional one keeps every exit waiting, and Stop names those not
+asked yet (a systemMessage; it never blocks). `replaces: <R-id>` (with `queue: true`) asks an open one again (the
+same Run and items, snapshot, decision line and option labels) and takes over its marker; `status` lists them. In a DDL project the gate appends one JSON line per event to
 `.ddl/events.jsonl` at the root of the main work tree (a silent pass writes nothing; an approved
 grant that was not recorded leaves a `warn` line whose rule is `grant-proof` or `grant-store`; a recorded
 confirmation writes `confirmed`, one not recorded a `warn` of `confirm-proof` or `confirm-store`).
@@ -94,7 +103,16 @@ the source.
 Decisions (JSON on stdout; the exit status is always 0):
   pre-tool-use        CLOSED and the tool may mutate -> permissionDecision "deny";
                       a question carrying an ID must equal the prepared request (else "deny"), and
-                      while CLOSED a question without the pending ID is denied;
+                      while CLOSED a question without the pending ID is denied; a Claude call of 2 to 4
+                      questions passes when each is a queued report's unchanged question, and each is
+                      armed, answered and proved on its own; while a question holds items (every
+                      pending question names `holds`), a call an active grant allows as an edit, test
+                      or check, no exit and no question, naming no owner file of a held item or of one
+                      depending on it (resolved: links, NFC, case), is allowed as if no STOP were
+                      pending, and a command naming no path stays held; while a provisional question
+                      is unanswered, every command that may leave the machine (however quoted, the
+                      gate by its real path, any Git alias) and every MCP tool without a read verb is
+                      denied; an edit of a file an unanswered queued question holds is denied;
                       ordinary commit/push also needs a matching native content review while OPEN,
                       and the matched one is allowed ("allow": the review was its one confirmation);
                       codex also denies unsupported push forms in confirmation-enabled modes;
@@ -260,7 +278,7 @@ LANGUAGE_CODE = _Pattern("LANGUAGE_CODE", r"[A-Za-z]{2,8}(?:[-_][A-Za-z0-9]{1,8}
 MIN_OPTIONS, MAX_OPTIONS = 2, 4  # the bounds of one native Claude question's options
 REPORT_VERSION = 3  # the report.json schema; a change of fields bumps it (2: grant and projectKey; 3: confirm)
 REPORT_INPUT_KEYS = {"language", "decision", "recommendation", "consequence", "detail", "options", "multiSelect",
-                     "grant", "confirm"}
+                     "grant", "confirm", "holds", "queue", "provisional", "replaces"}
 REPORT_LINE_KEYS = ("decision", "recommendation", "consequence")
 # The fields the report ID hashes; report.json adds id, question, nativeRequest and reportHash.
 # `grant` and `confirm` are None for a report without them; `projectKey` is None outside a DDL project.
@@ -280,6 +298,48 @@ ASK_UNCHANGED = "DDL STOP: ask the prepared question for {} unchanged"
 PREPARE_FIRST = "DDL STOP: prepare the report and ask its question"
 NOT_PREPARED = "DDL STOP: {} was not prepared here; prepare the report again"
 PREDATES = "DDL STOP: {} predates the latest user message, resume or compaction; prepare the report again"
+# Held, queued and provisional questions (each only where a report names it; without these keys nothing changes).
+# A report's optional keys are hashed into its ID only when given, so a report without them keeps its bytes.
+REPORT_OPTIONAL_KEYS = ("holds", "queue", "provisional", "replaces")
+HOLD_ITEMS = (1, 16)  # items one question may hold
+RUN_ID_SOURCE, ITEM_ID_SOURCE = r"N-[0-9a-f]{12}", r"[A-Za-z0-9][A-Za-z0-9._-]{0,31}"  # as tools/ddl_run.py reads them
+SNAPSHOT_REFS = "refs/ddl/snapshots/"
+BATCH_QUESTIONS = (2, 4)  # the prepared questions one native call may carry (Claude)
+HELD_KINDS = {"edit", "test", "check"}  # what may go on beside a held question, inside an active grant
+HELD_ALLOW = "DDL: inside grant {} ({}); outside the items {} holds"
+HOLD_LABELS = {"ja": ("止める項目", "見込み"), "en": ("Holds", "Provisional")}
+BATCH_UNCHANGED = "DDL STOP: a batch carries 2 to 4 queued prepared questions, each unchanged ({})"
+SETTLED_REPLACEMENT = ("DDL STOP: {} asks {} again, which is answered already; prepare the question anew, without "
+                       "replaces, if it is still open")
+PROVISIONAL_EXIT = ("DDL provisional: {} is not answered yet; a provisional decision never leaves this machine, so no "
+                    "commit, push or other exit runs until it is answered")
+QUEUED_HOLD = ("DDL queued: {} holds {} and is not answered yet; ask it (in a batch with the other queued questions) and "
+               "wait for its answer")
+QUEUED_NOTICE = "DDL: queued questions not asked yet: {}. Ask them together in one question call."
+OWNER_MATCHES = 4096  # existing files one owner glob is resolved to, at most
+NETWORK_CLIENTS = {"curl", "wget", "http", "https", "xh", "aria2c", "lynx", "w3m", "links", "elinks"}
+WRAPPERS = {"env", "command", "exec", "nohup", "nice", "time", "timeout", "stdbuf", "sudo", "doas", "xargs", "chronic"}
+WRAPPER_VALUES = {"env": ("-u", "-C", "-S"), "nice": ("-n",), "sudo": ("-u", "-g", "-C"), "xargs": ("-n", "-P", "-I", "-L",
+                                                                                               "-s", "-d", "-E"),
+                  "stdbuf": ("-i", "-o", "-e"), "timeout": ("-s", "-k")}
+PUBLISHERS = {("npm", ("publish",)), ("yarn", ("publish",)), ("pnpm", ("publish",)), ("twine", ("upload",)),
+              ("cargo", ("publish",)), ("gem", ("push",)), ("docker", ("push",)), ("podman", ("push",))}
+# The host's own tools that carry something off the machine: publishing a page and its data and comments, sending a
+# file to the user, a message to another session, a remote trigger, the web. A notification to the human (Claude's
+# PushNotification) is no exit: the lead tells the human once that no unheld work is left.
+OUTWARD_TOOLS = {"Artifact", "ArtifactData", "ArtifactComments", "SendUserFile", "SendFile", "SendMessage",
+                 "SendUserMessage", "RemoteTrigger", "WebFetch", "WebSearch"}
+# Git subcommands that ship with Git and stay on this machine (or are read by exit_word as exits); any other is
+# possibly an alias, which may run anything.
+LOCAL_GIT = {"status", "diff", "log", "show", "ls-files", "rev-parse", "branch", "check-ignore", "blame", "grep", "add",
+             "restore", "rm", "mv", "init", "stash", "checkout", "switch", "fetch", "clone", "config", "notes",
+             "describe", "shortlog", "show-ref", "cat-file", "ls-tree", "for-each-ref", "worktree", "clean", "apply",
+             "reflog", "fsck", "count-objects", "var", "help", "version", "range-diff", "whatchanged", "diff-tree",
+             "diff-index", "diff-files", "merge-base", "name-rev", "rev-list", "ls-remote", "hash-object", "bisect",
+             "check-attr", "check-ref-format", "verify-commit", "verify-tag", "symbolic-ref", "read-tree", "write-tree",
+             "update-index", "gc", "prune", "repack", "maintenance"} | {"push", "commit", "merge", "rebase", "reset",
+             "cherry-pick", "revert", "am", "pull", "tag", "update-ref", "send-email", "commit-tree", "send-pack",
+             "http-push", "receive-pack", "upload-pack", "upload-archive"}
 GIT_QUESTION_MISMATCH = "DDL Git review: the question does not match prepared review {}; ask it unchanged"
 PENDING_NOTICE = ("DDL gate: report {} is awaiting the user's answer (report: {}). Prepare it again under a new ID "
                   "and ask its question; do not continue the phase.")
@@ -391,7 +451,8 @@ EVENT_VERSION = 1
 EVENT_TEXT_LIMIT = 200  # characters kept of a label, tool name or rule in one ledger line
 ARMED_LIMIT = 8  # prepared questions one session keeps waiting for their answers; past it the oldest is let go
 # The subcommands tools/ddl_run.py holds (see run_module); tools/test_ddl_run.py pins them to its WORDS.
-RUN_WORDS = ("report", "run-start", "run-item", "snapshot", "resources", "measure", "remote", "service", "runner")
+RUN_WORDS = ("report", "run-start", "run-item", "snapshot", "resources", "measure", "remote", "service", "runner",
+             "restore")
 CACHE = "pycache"  # the launcher's bytecode cache under the state directory (ddl_gate.py reads the same name)
 ENTRY = None  # the launcher's path as it was run; ddl_gate.py sets it (gate_path_tokens)
 # A timestamp the gate reads: date, `T`, time to the minute or finer, then `Z` or `±HH:MM` (group 8, optional
@@ -1635,6 +1696,161 @@ def confirm_prompt(given, what="prompt"):
             what, "holds more than 32 KiB" if "larger" in str(exc) else "is not a regular file")) from None
 
 
+def run_record(root, run_id):
+    """The items of a Run in the project's ledger, `.ddl/runs/<N-id>/run.json` (read as tools/ddl_run.py's load_run
+    reads it): {item id: {"files": [owner globs], "after": [item ids]}}; ValueError when there is no such Run."""
+    try:
+        with open(os.path.join(root, LEDGER, "runs", run_id, "run.json"), encoding="utf-8") as fh:
+            run = json.load(fh)
+    except (OSError, ValueError, TypeError):
+        run = None
+    if not isinstance(run, dict) or run.get("id") != run_id or not isinstance(run.get("items"), list):
+        raise ValueError("Run {} is not in this project's ledger.".format(run_id))
+    items = {}
+    for item in run["items"]:
+        if isinstance(item, dict) and isinstance(item.get("id"), str):
+            files, after = item.get("files", []), item.get("after", [])
+            items[item["id"]] = {"files": [glob for glob in files if isinstance(glob, str)] if isinstance(files, list) else [],
+                                 "after": [name for name in after if isinstance(name, str)] if isinstance(after, list) else []}
+    return items
+
+
+def held_closure(items, held):
+    """The held items and every item that depends on one of them, through `after`, transitively."""
+    closure, grown = set(held), True
+    while grown:
+        grown = False
+        for name, item in items.items():
+            if name not in closure and closure & set(item["after"]):
+                closure.add(name)
+                grown = True
+    return closure
+
+
+def validated_holds(holds, root):
+    """`holds` unchanged once it names 1 to 16 different items of a Run in the project's ledger; ValueError says why
+    not."""
+    if not isinstance(holds, dict) or set(holds) != {"run", "items"}:
+        raise ValueError("holds is {run, items}: a Run ID and the IDs of the items the question holds.")
+    if not isinstance(holds["run"], str) or not re.fullmatch(RUN_ID_SOURCE, holds["run"]):
+        raise ValueError("holds.run is a Run ID: N- and 12 hexadecimal characters.")
+    low, high = HOLD_ITEMS
+    items = holds["items"]
+    if not isinstance(items, list) or not low <= len(items) <= high or len(set(map(str, items))) != len(items) \
+            or not all(isinstance(name, str) and re.fullmatch(ITEM_ID_SOURCE, name) for name in items):
+        raise ValueError("holds.items is a list of {} to {} different item IDs.".format(low, high))
+    known = run_record(root, holds["run"])
+    unknown = [name for name in items if name not in known]
+    if unknown:
+        raise ValueError("holds.items: {} is not an item of Run {}.".format(unknown[0], holds["run"]))
+    return holds
+
+
+def open_markers(key):
+    """{original R-id: record} of the project's queued questions not answered yet: the files
+    `<store>/<project key>/queued/<original R-id>.json` {id (the original), current (the latest asking), ids (every
+    asking, oldest first), holds, provisional, snapshot, decision, options (labels), createdAt}. A question asked
+    again (`replaces`) takes over its original's marker; a marker goes only on a proven answer to one of its ids."""
+    found = {}
+    if not key:
+        return found
+    directory = os.path.join(grant_store(), str(key), "queued")
+    try:
+        names = sorted(os.listdir(directory))
+    except OSError:
+        return found
+    for name in names:
+        try:
+            with open(os.path.join(directory, name), encoding="utf-8") as fh:
+                record = json.load(fh)
+        except (OSError, ValueError):
+            continue
+        if isinstance(record, dict) and name == str(record.get("id")) + ".json" and isinstance(record.get("ids"), list) \
+                and record.get("current") in record["ids"]:
+            found[record["id"]] = record
+    return found
+
+
+def provisional_markers(key):
+    """{current R-id: record} of the project's open provisional questions."""
+    return {record["current"]: record for record in open_markers(key).values() if record.get("provisional")}
+
+
+def write_marker(key, body):
+    """Write the marker of an open queued question, privately (0600), whole or not at all."""
+    store = grant_store()
+    for part in (None, key, "queued"):
+        store = os.path.join(store, part) if part else store
+        private_directory(store)
+    path = os.path.join(store, body["id"] + ".json")
+    scratch = "{}.{}.tmp".format(path, os.getpid())
+    fd = os.open(scratch, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.write(fd, (review_json(body) + "\n").encode("ascii"))
+    finally:
+        os.close(fd)
+    os.replace(scratch, path)
+
+
+def validated_replaces(replaces, key, holds, provisional, decision, labels):
+    """The original of the open queued question `replaces` asks again, when it is the same question: this project's,
+    with the same Run and items (or none), the same provisional snapshot (or none), the same decision line and the
+    same option labels. ValueError otherwise."""
+    markers = open_markers(key)
+    original = next((name for name, record in markers.items() if isinstance(replaces, str) and replaces in record["ids"]),
+                    None)
+    if original is None:
+        raise ValueError("replaces names an open queued question of this project, by its report ID.")
+    old, mine = markers[original], holds or {}
+    theirs = old.get("holds") or {}
+    same_holds = theirs.get("run") == mine.get("run") and \
+        sorted(map(str, theirs.get("items") or [])) == sorted(map(str, mine.get("items") or []))
+    if not same_holds or bool(old.get("provisional")) != bool(provisional) \
+            or old.get("snapshot") != (provisional or {}).get("snapshot") or old.get("decision") != decision \
+            or old.get("options") != labels:
+        raise ValueError("replaces asks the same question again: the same Run and items, snapshot, decision line and "
+                         "option labels as {}.".format(replaces))
+    return original
+
+
+def validated_provisional(provisional, holds, queue, root, key, skip=None):
+    """`provisional` unchanged when it names an existing snapshot ref, goes with `queue: true` and `holds`, and no
+    other unanswered provisional question of the same Run (`skip`, the original asked again, aside) holds an item
+    this one holds or one depending on them."""
+    if not isinstance(provisional, dict) or set(provisional) != {"snapshot"}:
+        raise ValueError("provisional is {snapshot}: the snapshot ref to go back to when the answer differs.")
+    if holds is None or queue is not True:
+        raise ValueError("provisional goes with queue: true and holds: the items that depend on the choice.")
+    ref = provisional["snapshot"]
+    if not one_line(ref) or not ref.startswith(SNAPSHOT_REFS) or ".." in ref or not ref[len(SNAPSHOT_REFS):] \
+            or git_read(root, "rev-parse", "--verify", "--quiet", ref + "^{commit}", optional=True) is None:
+        raise ValueError("provisional.snapshot is an existing ref under {}.".format(SNAPSHOT_REFS))
+    items = run_record(root, holds["run"])
+    mine = held_closure(items, holds["items"])
+    for original, other in open_markers(key).items():
+        if original == skip or not other.get("provisional") or not other.get("holds"):
+            continue
+        if other["holds"].get("run") == holds["run"] and \
+                mine & held_closure(items, [str(name) for name in other["holds"].get("items", [])]):
+            raise ValueError("provisional: {} is not answered yet and holds items of Run {} this one depends on or "
+                             "holds; no provisional decision rests on another.".format(other["current"], holds["run"]))
+    return provisional
+
+
+def hold_block(language, record):
+    """The items a report holds (and its snapshot, for a provisional one), as report.md shows them: a code fence."""
+    holds_label, provisional_label = HOLD_LABELS["ja" if is_japanese(language) else "en"]
+    lines = ["{}: {}: {}".format(holds_label, record["holds"]["run"], ", ".join(record["holds"]["items"]))]
+    if record.get("provisional"):
+        lines.append("{}: {}".format(provisional_label, record["provisional"]["snapshot"]))
+    return "```\n" + "\n".join(lines) + "\n```"
+
+
+def report_core(record):
+    """The fields a report's ID hashes: REPORT_CORE_KEYS, and each of REPORT_OPTIONAL_KEYS the report carries."""
+    return {key: record[key] for key in REPORT_CORE_KEYS + tuple(key for key in REPORT_OPTIONAL_KEYS if key in record)}
+
+
 def prepare_report(runtime, data):
     """Prepare a decision report and its native question; never an approval. Input is JSON on stdin."""
     if not isinstance(data, dict):
@@ -1685,12 +1901,32 @@ def prepare_report(runtime, data):
         if project is None:
             raise ValueError("a confirmation belongs to a DDL project; prepare the report from inside the project.")
         confirm = confirm_resources(confirm)
+    optional = {key: data[key] for key in REPORT_OPTIONAL_KEYS if data.get(key) is not None}
+    if optional:
+        root = cwd_ledger()[0]
+        if project is None or root is None:
+            raise ValueError("holds, queue and provisional belong to a DDL project; prepare the report from inside it.")
+        if "holds" in optional:
+            validated_holds(optional["holds"], root)
+        if "queue" in optional and optional["queue"] is not True:
+            raise ValueError("queue is true when given: the question waits to be asked in a batch.")
+        original = None
+        if "replaces" in optional:
+            if optional.get("queue") is not True:
+                raise ValueError("replaces goes with queue: true: it asks an open queued question again.")
+            original = validated_replaces(optional["replaces"], project, optional.get("holds"), optional.get("provisional"),
+                                          data["decision"], [o["label"] for o in report_options(language, data.get("options"))])
+        if "provisional" in optional:
+            if multi:
+                raise ValueError("a provisional report takes one answer: its first option is the one gone ahead with.")
+            validated_provisional(optional["provisional"], optional.get("holds"), optional.get("queue"), root, project,
+                                  original)
     record = {"version": REPORT_VERSION, "runtime": runtime, "language": language,
               "nonce": secrets.token_hex(NONCE_BYTES), "createdAt": created,
               **{key: data[key] for key in REPORT_LINE_KEYS},
               "options": report_options(language, data.get("options")), "multiSelect": multi,
               "detailHash": hashlib.sha256(detail.encode("utf-8")).hexdigest(), "grant": grant, "confirm": confirm,
-              "projectKey": project}
+              "projectKey": project, **optional}
     record["id"] = review_hash(record)[:ID_HEX_LENGTH]
     directory = report_directory() / record["id"]
     question, request = report_question(record, directory / "report.md")
@@ -1700,6 +1936,18 @@ def prepare_report(runtime, data):
     (directory / "report.md").write_bytes(text)
     record.update(question=question, nativeRequest=request, reportHash=hashlib.sha256(text).hexdigest())
     (directory / "report.json").write_text(review_json(record) + "\n", encoding="utf-8")
+    if "queue" in optional:  # open until its answer: Stop names it while it is not asked, its holds stay held, and
+        ident = "R-" + record["id"]  # a provisional one keeps every exit waiting
+        old = open_markers(project).get(original) if "replaces" in optional else None
+        if old:  # asked again: the original's marker, taken over
+            body = dict(old, current=ident, ids=old["ids"] + [ident], updatedAt=utc_stamp(created))
+        else:
+            body = {"id": ident, "current": ident, "ids": [ident], "holds": optional.get("holds"),
+                    "provisional": "provisional" in optional,
+                    "snapshot": optional["provisional"]["snapshot"] if "provisional" in optional else None,
+                    "decision": record["decision"], "options": [option["label"] for option in record["options"]],
+                    "createdAt": utc_stamp(created)}
+        write_marker(project, body)
     return {"reportId": "R-" + record["id"], "report": str(directory / "report.md"), "question": question,
             "nativeRequest": request}
 
@@ -1709,16 +1957,18 @@ def report_head(record, question):
     when the report carries them; the detail follows."""
     block = grant_block(record["language"], record["grant"]) + "\n\n" if record["grant"] else ""
     block += confirm_block(record["language"], record["confirm"]) + "\n\n" if record["confirm"] else ""
+    block += hold_block(record["language"], record) + "\n\n" if record.get("holds") else ""
     return question + "\n\n" + block
 
 
 def load_report(report_id, runtime=None):
     """The prepared report record; ValueError when it, its question, or report.md was changed or is foreign.
 
-    `runtime` None accepts either host's report (the Run subcommands read it outside a hook)."""
-    directory = report_directory() / report_id
+    `runtime` None accepts either host's report (the Run subcommands read it outside a hook). Reading creates
+    nothing: not even the state directory."""
+    directory = pathlib.Path(state_base()) / "reports" / report_id
     record = json.loads((directory / "report.json").read_text(encoding="utf-8"))
-    core = {key: record[key] for key in REPORT_CORE_KEYS}
+    core = report_core(record)
     if record.get("id") != report_id or review_hash(core)[:ID_HEX_LENGTH] != report_id \
             or record.get("runtime") != (runtime or record.get("runtime")):
         raise ValueError("the prepared report was changed or belongs to another runtime.")
@@ -1860,18 +2110,21 @@ def approved_git_review(runtime, payload):
     return record
 
 
-def approved_report(runtime, payload):
+def approved_report(runtime, payload, ident=None):
     """The prepared report whose grant or confirmations the human approved, proved like a Git review: from the
     question and its answer. ValueError says what is missing.
 
     The latest human input must be the submitted choice (never an idle timeout, a receipt or typed text) of
     the first option of the unchanged prepared question, for a report that carries a grant or confirmations, is
     not older than the session's epoch, and whose grant has not expired. The proof records a grant and the
-    confirmations; it permits nothing."""
+    confirmations; it permits nothing. With `ident`, a question asked in a batch of queued questions (Claude) is
+    proved from its own answer in that batch's submission."""
     proof = native_git_choice(runtime, payload.get("transcript_path"))
+    if not proof and ident and runtime == "claude":
+        proof = native_batch_choice(payload.get("transcript_path"), ident)
     if not proof:
         raise ValueError("no submitted native answer to a prepared report question is recorded.")
-    request, answer = proof
+    request, answer = proof[:2]
     questions = request.get("questions", []) if isinstance(request, dict) else []
     if len(questions) != 1:
         raise ValueError("a grant needs one whole-plan native question.")
@@ -1879,7 +2132,7 @@ def approved_report(runtime, payload):
     if not ident or ident[0] != "R":
         raise ValueError("the choice is not for a prepared report.")
     record = load_report(ident[1], runtime)
-    if request != record["nativeRequest"]:
+    if request != record["nativeRequest"] or len(proof) > 2 and record.get("queue") is not True:
         raise ValueError("the question does not match the prepared report.")
     if not (record["grant"] or record["confirm"]) or record["multiSelect"]:
         raise ValueError("the report carries no grant and no confirmation.")
@@ -1892,6 +2145,44 @@ def approved_report(runtime, payload):
     if record["confirm"]:
         validated_confirm(record["confirm"], stored=True)
     return record
+
+
+def native_batch_choice(path, ident):
+    """({"questions": [the question]}, its answer, "batch") for the question `ident` (kind, hex) of the latest real
+    submitted Claude batch of questions, or None: the walk and its rules are native_git_choice's, for a result
+    that answers 2 to 4 questions."""
+    stats, answers, request_id = {"lines": 0, "parsed": 0}, None, None
+    low, high = BATCH_QUESTIONS
+    try:
+        for entry in iter_entries_reversed(path, stats):
+            if entry.get("isSidechain"):
+                continue
+            if entry.get("isCompactSummary") or entry.get("type") == "compacted":
+                return None
+            if entry.get("type") == "assistant":
+                if answers is None:
+                    continue
+                for block in entry_blocks(entry):
+                    if block.get("type") == "tool_use" and block.get("id") == request_id:
+                        if block.get("name") != "AskUserQuestion":
+                            return None
+                        questions = block.get("input", {}).get("questions")
+                        for question in questions if isinstance(questions, list) else []:
+                            text = question.get("question") if isinstance(question, dict) else None
+                            if isinstance(text, str) and question_id(text) == tuple(ident) and text in answers:
+                                return {"questions": [question]}, answers[text], "batch"
+                        return None
+            elif is_human_prompt_claude(entry):
+                if answers is not None or not is_dialog_answer_claude(entry):
+                    return None
+                result = entry.get("toolUseResult", {}).get("answers", {})
+                refs = [b.get("tool_use_id") for b in entry_blocks(entry) if b.get("type") == "tool_result"]
+                if not isinstance(result, dict) or not low <= len(result) <= high or len(refs) != 1 or not refs[0]:
+                    return None
+                answers, request_id = result, refs[0]
+    except (OSError, ValueError, TypeError, KeyError, IndexError, AttributeError):
+        return None
+    return None
 
 
 def matches_created_commit(op, cwd, oid):
@@ -2119,8 +2410,20 @@ def claude_pending_signal(entry):
         for block in blocks:
             if not ident and block.get("type") == "tool_result":
                 ident = prepared_output(block.get("content"))
+        if ident and queued_preparation(ident):
+            return False, None  # prepared for a later batch: asking it makes the STOP pending
         return ident is not None, ident
     return False, None
+
+
+def queued_preparation(ident):
+    """True when a prepared ID names a decision report prepared with `queue: true` (its ID binds that key)."""
+    if ident[0] != "R":
+        return False
+    try:
+        return load_report(ident[1]).get("queue") is True
+    except (OSError, ValueError, TypeError, KeyError, AttributeError):
+        return False
 
 
 def scan_claude(path):
@@ -2175,6 +2478,8 @@ def codex_pending_signal(kind, ptype, payload):
         return ident is not None, ident
     if kind == "response_item" and ptype in ("function_call_output", "custom_tool_call_output"):
         ident = prepared_output(payload.get("output"))
+        if ident and queued_preparation(ident):
+            return False, None  # prepared for a later question: asking it makes the STOP pending
         return ident is not None, ident
     return False, None
 
@@ -2350,8 +2655,20 @@ def project_status(argv) -> int:
     if decision["ddl"]:
         print("DDL project: yes ({}:{})".format(decision["source"], decision["line"]))
         try:  # one more line per recorded grant; a project without one prints exactly the line above
-            for record in grant_records(project_key(ledger_root(decision))):
+            key = project_key(ledger_root(decision))
+            for record in grant_records(key):
                 print("Grant: " + grant_summary(record, "en"))
+            markers = sorted(open_markers(key).values(), key=lambda record: str(record.get("createdAt")))
+            for label, wanted in (("Provisional", True), ("Queued", None)):  # open questions, oldest first
+                for record in markers:
+                    if wanted and not record.get("provisional"):
+                        continue
+                    started = iso_seconds(record.get("createdAt"))
+                    age = "{} min".format(int((time.time() - started) // 60)) if started else "?"
+                    extra = ", snapshot {}".format(record["snapshot"]) if record.get("snapshot") else ""
+                    again = ", asked again from {}".format(record["id"]) if record["id"] != record["current"] else ""
+                    print("{}: {} (Run {}{}, open {}{})".format(label, record["current"],
+                                                               (record.get("holds") or {}).get("run") or "-", extra, age, again))
         except Exception:
             pass
     else:
@@ -2594,7 +2911,7 @@ def proved_confirmation(runtime, payload, root, ident, approved_at=None):
 def proved_report(runtime, payload, root, ident):
     """(report record, project key) of the report the latest submitted answer approved, when that is `ident` and it
     was prepared in the project rooted at `root`; ValueError otherwise."""
-    record = approved_report(runtime, payload)
+    record = approved_report(runtime, payload, tuple(ident.split("-")) if isinstance(ident, str) else None)
     key = project_key(root)
     if "R-" + record["id"] != ident:
         raise ValueError("the latest submitted answer is for another question.")
@@ -3963,6 +4280,7 @@ def edit_grant(paths, deletes, cwd, place, grants, note):
         if parts is None or not parts or place.protected(compared):
             host = True
             continue
+        note.setdefault("touched", []).append(os.path.realpath(os.path.join(cwd, path)))  # for a held question
         hit = next((record["id"] for record in grants
                     if any(glob_matches(glob, parts) for glob in record["grant"]["paths"])), None)
         if hit is None:
@@ -3973,8 +4291,12 @@ def edit_grant(paths, deletes, cwd, place, grants, note):
     return None if host else allowed(note, ids, ["edit"])
 
 
-def shell_grant(command, cwd, place, grants, note):
-    """The grant's answer to a shell command (the protocol's Run Operation step 1 and Formats), or None."""
+def shell_grant(command, cwd, place, grants, note, held=False):
+    """The grant's answer to a shell command (the protocol's Run Operation step 1 and Formats), or None.
+
+    `note` also gets `touched`, the compared parts of every path inside the root its class forms name, and
+    `untouched` when a form names what no path shows (a unittest module). `held` (a question holds items) skips
+    the validation commands' exact-text answer, so that what the command names is known."""
     if not isinstance(command, str) or not command.strip():
         return None
     names, root = ", ".join(record["id"] for record in grants), place.root
@@ -3983,7 +4305,8 @@ def shell_grant(command, cwd, place, grants, note):
     if not place.usable(os.path.realpath(cwd)):
         return None  # a command class, a gate subcommand: only from a working directory inside the root
     check = granting(grants, "check")
-    if check and command_lines(command) in validation_commands(place.project, root) and not exit_word(command):
+    if check and not held and command_lines(command) in validation_commands(place.project, root) \
+            and not exit_word(command):
         return allowed(note, [check], ["check"])  # the human approved that exact text, `$` and subshells included
     spelled, files = gate_spellings(), []
     head = heredoc_head(command)
@@ -4084,6 +4407,8 @@ def shell_grant(command, cwd, place, grants, note):
             classes, words, strict, guarded, modules = form
             if not all(module_inside(name, cwds, place) for name in modules):
                 host = True
+            if modules:
+                note["untouched"] = True
             if classes == "gate":
                 kinds.append("gate")
                 ids.append(grants[0]["id"])
@@ -4098,6 +4423,15 @@ def shell_grant(command, cwd, place, grants, note):
                     if path is None or not (place.locate(path)[0] is not None or
                                             temporary and inside(path, place.temporary)):
                         host = True
+            if held:
+                # Beside a hold, every word the form names may be a path (an output file, a directory), from every
+                # working directory a segment may run in; `...` names its directory and all below it.
+                operands = [name for w in words for name in named(w) if name] + list(strict)
+                note.setdefault("touched", []).extend(
+                    path for word in operands for path in resolved(word[:-3] or "." if word.endswith("...") else word)
+                    if path)
+                note["named"] = note.get("named", 0) + len(operands)
+                note["cwds"] = list(cwds)
             if guarded:
                 for word in [name for w in words for name in named(w)] + strict:
                     if word and any(path is None or place.locate(path)[1] is not None and
@@ -4114,8 +4448,9 @@ def shell_grant(command, cwd, place, grants, note):
     return allowed(note, ids, kinds)
 
 
-def grant_decision(runtime, payload, project, note):
-    """The active grants' answer to a call while no STOP is pending: an allow, a deny, or None (the host's)."""
+def grant_decision(runtime, payload, project, note, held=False):
+    """The active grants' answer to a call while no STOP is pending (or beside a held question, `held`): an allow,
+    a deny, or None (the host's)."""
     edit = edit_targets(runtime, payload)
     shell = payload.get("tool_name") in SHELL_TOOLS.get(runtime, set())
     if edit is None and not shell or shell and not ordinary_shell(payload):
@@ -4126,7 +4461,7 @@ def grant_decision(runtime, payload, project, note):
     cwd, place = call_cwd(payload), Place(project, project_root(project))
     if edit is not None:
         return edit_grant(edit[0], edit[1], cwd, place, grants, note)
-    return shell_grant(shell_command(payload.get("tool_input")), cwd, place, grants, note)
+    return shell_grant(shell_command(payload.get("tool_input")), cwd, place, grants, note, held)
 
 
 # --- events -----------------------------------------------------------------------------------
@@ -4153,6 +4488,228 @@ def pending_scan(runtime, payload):
     else:
         state = True if (state is None and marker) else state
     return state, (pending if state is True else None)
+
+
+def question_texts(runtime, request):
+    """The text of every question in a native request (Claude `question`, Codex `title`), in order."""
+    if isinstance(request, str):
+        try:
+            request = json.loads(request)
+        except ValueError:
+            return []
+    questions = request.get("questions") if isinstance(request, dict) else None
+    key = "question" if runtime == "claude" else "title"
+    return [q.get(key) if isinstance(q, dict) and isinstance(q.get(key), str) else None
+            for q in questions] if isinstance(questions, list) else []
+
+
+def pending_signals(runtime, path):
+    """The prepared IDs that keep the STOP pending in the record, since the last human input, as a set of
+    (kind, hex); None when anything else keeps it pending too (an ID this state directory did not prepare, a
+    question without one, a +++DDL_REPORT that no asked prepared question follows) or the record cannot be read.
+    Every question of a batch counts. A +++DDL_REPORT before an asked prepared question (the Approval operation
+    writes the report, then asks) belongs to that question."""
+    stats, found, asked = {"lines": 0, "parsed": 0}, set(), False  # walking back: `asked` is later in the turn
+    try:
+        for entry in iter_entries_reversed(path, stats):
+            if runtime == "claude":
+                if entry.get("isSidechain"):
+                    continue
+                if is_human_prompt_claude(entry):
+                    break
+                idents, question = [], False
+                if entry.get("type") == "assistant":
+                    for block in entry_blocks(entry):
+                        if block.get("type") == "tool_use" and block.get("name") in QUESTION_TOOLS["claude"]:
+                            idents += [question_id(text) for text in question_texts("claude", block.get("input"))]
+                    question = bool(idents)
+                    closes = question or has_report(claude_text(entry))
+                else:
+                    closes, ident = claude_pending_signal(entry)
+                    idents = [ident] if ident else []
+            else:
+                payload = entry.get("payload")
+                if not isinstance(payload, dict):
+                    continue
+                kind, ptype = entry.get("type"), payload.get("type")
+                if kind == "event_msg" and ptype == "task_started":
+                    break
+                if kind == "event_msg" and ptype == "item_completed":
+                    item = payload.get("item")
+                    if isinstance(item, dict) and item.get("type") == "UserMessage":
+                        break
+                    continue
+                if kind == "response_item" and ptype == "function_call" and payload.get("name") in QUESTION_TOOLS["codex"]:
+                    idents = [question_id(text) for text in question_texts("codex", payload.get("arguments"))]
+                    question = closes = bool(idents)
+                else:
+                    closes, ident = codex_pending_signal(kind, ptype, payload)
+                    idents, question = [ident] if ident else [], False
+            if not closes:
+                continue
+            if not idents:
+                if not asked:
+                    return None  # a report that no asked prepared question follows: a total stop
+                continue
+            if not all(ident and known_preparation(ident) for ident in idents):
+                return None
+            found.update(idents)
+            asked = asked or question
+    except OSError:
+        return None
+    return found or None
+
+
+def held_scope(runtime, payload, project):
+    """{"ids", "globs"} while every question that keeps the STOP pending names the items it holds: the pending IDs,
+    and the owner globs (`files` of the Run's run.json) of those items and of every item that depends on one; None
+    for a total stop (a question without `holds`, a Git review, a +++DDL_REPORT, a STOP only the marker shows)."""
+    path = payload.get("transcript_path")
+    if not isinstance(path, str) or not path:
+        return None
+    signals = pending_signals(runtime, path)  # None also when only the marker shows the STOP
+    if not signals or any(kind != "R" for kind, _ in signals):
+        return None
+    root, held = ledger_root(project), {}
+    try:
+        for _, hexid in sorted(signals):
+            holds = load_report(hexid, runtime).get("holds")
+            if not holds:
+                return None
+            held.setdefault(holds["run"], set()).update(holds["items"])
+        globs = set()
+        for run_id, names in held.items():
+            items = run_record(root, run_id)
+            for name in held_closure(items, names):
+                globs.update(items.get(name, {}).get("files", []))
+    except (OSError, ValueError, TypeError, KeyError, AttributeError):
+        return None
+    return {"ids": ["R-" + hexid for _, hexid in sorted(signals)], "globs": sorted(globs)}
+
+
+def comparable(path, place):
+    """A path as owner paths are compared: NFC, and without case where the file system ignores case."""
+    import unicodedata
+    return place.fold(unicodedata.normalize("NFC", path))
+
+
+def owner_specs(root, globs, place):
+    """(paths, patterns) of owner globs, resolved for comparing: each literal path, lexical and through its links;
+    each glob's literal directory prefix, both ways, with the rest of the glob; and each existing match, resolved.
+    A leading `./` and a trailing `/` are dropped; all in comparable form. Third, the (device, inode) of every
+    existing owner file (the files of an owner directory included), so that a hard link to one is held too."""
+    import glob as globbing
+    import unicodedata
+    paths, patterns = set(), set()
+    for raw in globs:
+        text = unicodedata.normalize("NFC", str(raw))
+        while text.startswith("./"):
+            text = text[2:]
+        text = text.rstrip("/")
+        segments = [segment for segment in text.split("/") if segment not in ("", ".")]
+        cut = next((i for i, segment in enumerate(segments) if any(char in segment for char in "*?[")), len(segments))
+        lexical = os.path.normpath(os.path.join(root, *segments[:cut]))
+        bases = {lexical, os.path.realpath(lexical)}
+        if cut == len(segments):
+            paths.update(bases)
+            continue
+        rest = "/".join(segments[cut:])
+        patterns.update((base, rest) for base in bases)
+        for match in globbing.glob(os.path.join(globbing.escape(root), *segments), recursive=True)[:OWNER_MATCHES]:
+            paths.add(os.path.realpath(match))
+    inodes, counted = set(), 0
+    for path in sorted(paths):
+        for top, _, files in os.walk(path) if os.path.isdir(path) else [(os.path.dirname(path), [], [os.path.basename(path)])]:
+            for name in files:
+                counted += 1
+                if counted > OWNER_MATCHES:
+                    break
+                try:
+                    info = os.stat(os.path.join(top, name))
+                except OSError:
+                    continue
+                inodes.add((info.st_dev, info.st_ino))
+    return ({comparable(path, place) for path in paths},
+            {(comparable(base, place), comparable(rest, place)) for base, rest in patterns}, inodes)
+
+
+def held_target(path, specs, place, contains=True):
+    """True when the resolved `path` is a held owner path, lies under one, matches a held glob below its prefix, or
+    (`contains`: an operand that is a directory) holds one of them."""
+    target, (paths, patterns, inodes) = comparable(path, place), specs
+    try:
+        info = os.stat(path)
+        if (info.st_dev, info.st_ino) in inodes:
+            return True  # a hard link to an owner file
+    except OSError:
+        pass
+    for owner in paths:
+        if target == owner or target.startswith(owner + os.sep) or contains and owner.startswith(target + os.sep):
+            return True
+    for base, rest in patterns:
+        if target == base or contains and base.startswith(target + os.sep):
+            return True
+        if target.startswith(base + os.sep):
+            parts = target[len(base) + 1:].split(os.sep)
+            if any(glob_matches(rest, parts[:k]) for k in range(1, len(parts) + 1)) or contains and os.path.isdir(path):
+                return True
+    return False
+
+
+def held_owner_globs(root, key, scope_globs):
+    """The owner globs a call beside a hold must stay clear of: the held items' (and their dependents'), and those of
+    every queued question that holds items and is not answered yet (a provisional one goes ahead instead)."""
+    globs = set(scope_globs)
+    for record in open_markers(key).values():
+        if record.get("holds") and not record.get("provisional"):
+            items = run_record(root, record["holds"]["run"])
+            for name in held_closure(items, record["holds"]["items"]):
+                globs.update(items.get(name, {}).get("files", []))
+    return sorted(globs)
+
+
+def held_answer(runtime, payload, project, note):
+    """The allow for a call that may go on beside the held questions pending, or None (today's STOP denial).
+
+    Only a call an active grant allows as an edit, a test or a check, that asks for nothing outside the sandbox, is
+    no exit and no question, names at least one path, and whose every path operand, target and working directory
+    stays clear of the held owners (resolved through links, NFC, without case where the file system ignores it).
+    Any failure here is None: under a pending STOP an error never allows."""
+    try:
+        return held_allow(runtime, payload, project, note)
+    except Exception:
+        return None
+
+
+def held_allow(runtime, payload, project, note):
+    if escalated(payload) or payload.get("tool_name") in QUESTION_TOOLS.get(runtime, set()):
+        return None
+    scope = held_scope(runtime, payload, project)
+    if scope is None:
+        return None
+    shell = payload.get("tool_name") in SHELL_TOOLS.get(runtime, set())
+    if shell:
+        command = shell_command(payload.get("tool_input"))
+        if not isinstance(command, str) or visible_git_write(command) or exit_word(command):
+            return None
+    if ledger_guard(runtime, payload, project) is not None:
+        return None
+    scratch = {}
+    answer = grant_decision(runtime, payload, project, scratch, held=True)
+    allowed = scratch.get("allowed") or {}
+    if verdict(answer) != "allow" or not set(str(allowed.get("kind")).split(",")) <= HELD_KINDS \
+            or scratch.get("untouched") or shell and not scratch.get("named") or not scratch.get("touched"):
+        return None
+    root = ledger_root(project)
+    place = Place(project, project_root(project))
+    specs = owner_specs(place.root, held_owner_globs(root, project_key(root), scope["globs"]), place)
+    if any(held_target(path, specs, place) for path in scratch["touched"]) \
+            or any(held_target(cwd, specs, place, contains=False) for cwd in scratch.get("cwds", [])):
+        return None
+    note["allowed"], note["held"] = allowed, scope["ids"]
+    return permission("allow", HELD_ALLOW.format(allowed["id"] if not allowed.get("grants") else
+                                                 ", ".join(allowed["grants"]), allowed["kind"].replace(",", ", "),
+                                                 ", ".join(scope["ids"])))
 
 
 def pending_state(runtime, payload) -> bool | None:
@@ -4183,6 +4740,9 @@ def question_guard(runtime, payload, state, pending, note):
     kind, prepared_id = ident
     label = kind + "-" + prepared_id
     note.update(rule="question", id=label)
+    if runtime == "claude" and kind == "R" and len(question_texts(runtime, request)) > 1 \
+            and queued_preparation(ident):
+        return batch_guard(runtime, payload, request, note)  # several queued questions in one call
     try:
         if kind == "R":
             record = load_report(prepared_id, runtime)
@@ -4197,10 +4757,68 @@ def question_guard(runtime, payload, state, pending, note):
         return deny(PREDATES.format(label))
     if request != expected:
         return deny((GIT_QUESTION_MISMATCH if kind == "G" else ASK_UNCHANGED).format(label))
+    if kind == "R" and settled_replacement(label, record):
+        return deny(SETTLED_REPLACEMENT.format(label, record["replaces"]))
     del note["rule"]
-    note["asked"] = {"id": label, "options": option_labels(expected), "grant": kind == "R" and bool(record["grant"]),
-                     "confirm": kind == "R" and bool(record["confirm"])}
+    note["asked"] = asked_entry(label, expected, record if kind == "R" else None)
     return None  # the prepared question; the host's own policy still applies
+
+
+def settled_replacement(label, record):
+    """True for a report that asks a queued question again (`replaces`) whose marker is gone: the question was
+    answered meanwhile, so this asking would decide it a second time."""
+    if not record.get("replaces"):
+        return False
+    try:
+        markers = open_markers(record.get("projectKey"))
+    except Exception:
+        return True
+    return not any(label in marker["ids"] for marker in markers.values())
+
+
+def asked_entry(label, request, record):
+    """What the session keeps of an asked question until its answer: its ID, its option labels, whether its first
+    option records a grant or confirmations, and (only for one) that it is provisional."""
+    entry = {"id": label, "options": option_labels(request), "grant": bool(record and record["grant"]),
+             "confirm": bool(record and record["confirm"])}
+    if record and record.get("provisional"):
+        entry["provisional"] = True
+    if record and record.get("queue"):
+        entry["queued"] = True
+    return entry
+
+
+def batch_guard(runtime, payload, request, note):
+    """Several prepared questions in one native call (Claude): 2 to 4, each the unchanged question of a report
+    prepared with `queue: true`, all different, none older than the session's epoch. `note` gets them all as
+    `asked`; anything else is denied, naming the first question that is not such a one."""
+    low, high = BATCH_QUESTIONS
+    questions = request.get("questions") if isinstance(request, dict) else None
+    entries = []
+    if not isinstance(request, dict) or set(request) != {"questions"} or not isinstance(questions, list) \
+            or not low <= len(questions) <= high:
+        return deny(BATCH_UNCHANGED.format(note["id"]))
+    for question in questions:
+        text = question.get("question") if isinstance(question, dict) else None
+        ident = question_id(text) if isinstance(text, str) else None
+        label = "-".join(ident) if ident else "?"
+        if not ident or ident[0] != "R" or label in [entry["id"] for entry in entries]:
+            return deny(BATCH_UNCHANGED.format(label))
+        try:
+            record = load_report(ident[1], runtime)
+            stale = predates_epoch(payload.get("session_id"), record["createdAt"])
+        except (OSError, ValueError, TypeError, KeyError, AttributeError):
+            return deny(NOT_PREPARED.format(label))
+        if stale:
+            return deny(PREDATES.format(label))
+        if record.get("queue") is not True or [question] != record["nativeRequest"]["questions"]:
+            return deny(BATCH_UNCHANGED.format(label))
+        if settled_replacement(label, record):
+            return deny(SETTLED_REPLACEMENT.format(label, record["replaces"]))
+        entries.append(asked_entry(label, {"questions": [question]}, record))
+    del note["rule"]
+    note["asked"] = entries
+    return None
 
 
 def asked_marker(session_id):
@@ -4280,15 +4898,38 @@ def armed_close_claude(path, ident):
                 return None
         elif entry.get("type") == "assistant":
             for block in blocks:
-                if block.get("type") == "tool_use" and block.get("name") in QUESTION_TOOLS["claude"] \
-                        and question_id(asked_question("claude", block.get("input"))) == ident:
+                if block.get("type") != "tool_use" or block.get("name") not in QUESTION_TOOLS["claude"]:
+                    continue
+                texts = question_texts("claude", block.get("input"))
+                batch = len(texts) > 1 and ident in [question_id(text) for text in texts if text]
+                if batch or question_id(asked_question("claude", block.get("input"))) == ident:
                     result = results.get(block.get("id"))
                     if result is None:
                         return None
-                    close = claude_question_close(result)
+                    if batch:  # one of several questions: its own answer in the shared result
+                        text = next(text for text in texts if text and question_id(text) == ident)
+                        close = claude_batch_close(result, text)
+                    else:
+                        close = claude_question_close(result)
                     return {"toolUseId": block.get("id"), "label": close[0], "timeout": close[1],
                             "ts": result.get("timestamp")} if close else False
     return None
+
+
+def claude_batch_close(entry, text):
+    """(label, timed out) for one question `text` of a batch, from the tool result that closes the batch; None when
+    the result carries no submitted answer to it (claude_question_close says the same of a single question)."""
+    result = entry.get("toolUseResult")
+    answers = result.get("answers") if isinstance(result, dict) else None
+    if not isinstance(answers, dict):
+        return None
+    label = answers.get(text)
+    label = label if isinstance(label, str) and label.strip() else None
+    if result.get("afkTimeoutMs") is not None:
+        return label, True
+    if label is None or not is_dialog_answer_claude(entry):
+        return None
+    return label, False
 
 
 def armed_close_codex(path, ident):
@@ -4335,6 +4976,8 @@ def note_answer(runtime, payload, root, armed, close):
         ledger_event(root, runtime, session, "answered", ts=stamp, nulls=("choice",), id=ident,
                      toolUseId=close["toolUseId"], choice=choice, label=label if choice is not None else None,
                      timeout=close["timeout"])
+    if (armed.get("provisional") or armed.get("queued")) and not close["timeout"] and not armed.get("answered"):
+        settle_provisional(root, runtime, session, ident, choice, close["toolUseId"], stamp)  # once: Codex's reply did
     if choice != 0 or close["timeout"]:
         return
     for flag, prove, store, where, reader, done in (
@@ -4354,6 +4997,24 @@ def note_answer(runtime, payload, root, armed, close):
             continue
         if written:
             ledger_event(root, runtime, session, done, id=ident, toolUseId=close["toolUseId"])
+
+
+def settle_provisional(root, runtime, session, ident, choice, tool_use_id, ts=None):
+    """The proven answer of a queued question, to any asking of it: its marker goes (one per original, whichever
+    asking was answered). For a provisional one, its first option confirms what went ahead (`provisional-confirmed`)
+    and any other answer overturns it (`provisional-overturned`, and the lead restores), one line per asking."""
+    key = project_key(root)
+    for original, record in open_markers(key).items():
+        if ident not in record["ids"]:
+            continue
+        try:
+            os.unlink(os.path.join(grant_store(), key, "queued", original + ".json"))
+        except OSError:
+            pass
+        if record.get("provisional"):
+            for name in record["ids"]:  # every asking of it is answered by this one
+                ledger_event(root, runtime, session, "provisional-confirmed" if choice == 0 else "provisional-overturned",
+                             ts=ts, id=name, toolUseId=tool_use_id, by=ident if name != ident else None)
 
 
 def observe_answers(runtime, payload, root):
@@ -4409,11 +5070,14 @@ def tool_note(runtime, payload, project, decision, note):
     elif decided == "allow":
         allowed_event(root, runtime, session, note, call)
     elif asked:
-        ledger_event(root, runtime, session, "asked", id=asked["id"], **call)
+        entries = asked if isinstance(asked, list) else [asked]  # a batch asks several at once
+        for entry in entries:
+            ledger_event(root, runtime, session, "asked", id=entry["id"], **call)
         # Behind the questions that have not closed: a record that lags must not cost an earlier question its
         # answer. Asked again, a question takes its new call's place.
-        waiting = [entry for entry in armed_questions(session) if entry["id"] != asked["id"]]
-        arm(session, waiting + [dict(asked, toolUseId=call["toolUseId"])])
+        ids = [entry["id"] for entry in entries]
+        waiting = [entry for entry in armed_questions(session) if entry["id"] not in ids]
+        arm(session, waiting + [dict(entry, toolUseId=call["toolUseId"]) for entry in entries])
     if isinstance(decision, dict) and "systemMessage" in decision:
         ledger_event(root, runtime, session, "warn", rule=note.get("rule"), **call)
 
@@ -4450,8 +5114,264 @@ def tool_decision(runtime, payload, project, note):
     return decision
 
 
+def leaves_machine(command, cwd=None):
+    """True for a shell command that may carry something off this machine: in command position (the first word of a
+    segment, past assignments and known wrappers such as env, xargs or nohup) a transfer program or network client,
+    Git with a subcommand that is an exit or not shipped with Git (it may be an alias) or a `-c` setting beyond the
+    safe ones, the gate (by its real path, from every directory a `cd` before it reaches) with `remote`, `service` or
+    `measure`, inline code, a shell's `-c`, or a publisher; and any command that cannot be read literally (a glob in
+    an argument is read). Words are read as the shell reads them; a quoted here-document's body is data, and a
+    command that only reads leaves nothing. A word anywhere else is an argument, never a program."""
+    head = heredoc_head(command)
+    text = head if head is not None else command
+    for spelling, path in gate_spellings().items():
+        if spelling in text:
+            text = text.replace(spelling, shlex.quote(path) if path else "unknown")
+    if shell_is_read_only(command)[0]:
+        return False
+    if visible_git_write(command) or not literal_shell(re.sub(r"[*?]", "x", text)):
+        return True
+    parts = split_segments(text)
+    if parts is None:
+        return True
+    cwds = [cwd or os.getcwd()]
+    for raw in parts[0]:
+        if not raw.strip():
+            continue
+        try:
+            tokens = strip_redirect_tokens(shlex.split(raw))
+        except ValueError:
+            return True
+        if tokens[:1] == ["cd"]:
+            cwds = unique(cwds + [os.path.realpath(os.path.join(where, tokens[1])) for where in cwds if len(tokens) == 2])
+            continue
+        if tokens and segment_leaves(tokens, cwds):
+            return True
+    return False
+
+
+def command_position(tokens):
+    """The index of the program a segment runs, past variable assignments and the wrappers that run the rest
+    (env, command, exec, nohup, nice, time, timeout, stdbuf, sudo, doas, xargs) with their options; None when
+    a wrapper's options cannot be read."""
+    i = 0
+    while i < len(tokens):
+        word = tokens[i]
+        if ASSIGNMENT.match(word) and "=" in word:
+            i += 1
+            continue
+        name = word.rsplit("/", 1)[-1]
+        if name not in WRAPPERS:
+            return i
+        i += 1
+        while i < len(tokens) and (tokens[i].startswith("-") or ASSIGNMENT.match(tokens[i]) and "=" in tokens[i]
+                                   or name == "timeout" and re.fullmatch(r"[0-9.]+[smhd]?", tokens[i])):
+            if tokens[i] in WRAPPER_VALUES.get(name, ()):
+                i += 1  # an option that takes the next word
+            i += 1
+    return None
+
+
+def segment_leaves(tokens, cwds):
+    """leaves_machine for one segment's words, read from the program in command position."""
+    at = command_position(tokens)
+    if at is None:
+        return True
+    program, args = tokens[at], tokens[at + 1:]
+    name = program.rsplit("/", 1)[-1]
+    if any(char in program for char in "*?["):
+        return True  # a glob in command position: any program at all
+    if name in TRANSFERS or name in NETWORK_CLIENTS or name == "osascript" or name.startswith("git-") and (
+            name[4:] in GIT_EXITS or name[4:] not in LOCAL_GIT):
+        return True
+    if name == "open" and any("://" in arg for arg in args):
+        return True
+    if name == "find" and set(args) & {"-exec", "-execdir", "-ok", "-okdir"}:
+        return True
+    flags = []
+    for arg in args:
+        if not arg.startswith("-") or arg == "--":
+            break
+        flags.append(arg)
+    short = [flag for flag in flags if not flag.startswith("--")]
+    if name in SHELLS and any("c" in flag[1:] for flag in short):
+        return True  # a script in a string: anything at all
+    if PYTHON.fullmatch(name) or name.startswith("python"):
+        if any("c" in flag[1:] for flag in short) or args[len(flags):len(flags) + 2] == ["-m", "http.server"]:
+            return True  # code given inline, or a server
+        rest = args[len(flags):]
+        if rest[:1] == ["-m"]:
+            return False
+        return bool(rest) and len(rest) > 1 and rest[1] in RESOURCE_WORDS and any(is_gate_file(rest[0], where) for where in cwds)
+    if name in ("node", "deno", "ruby", "perl", "php") and set(flags) & {"-e", "-E", "--eval", "-r", "-p"}:
+        return True
+    if name == "git":
+        return git_leaves(args) or git_subcommand(args) in GIT_EXITS or bool(
+            set(args) & GIT_EXIT_FLAGS.get(git_subcommand(args) or "", set()))
+    if name == "aws" and ("s3api" in args or "s3" in args and set(args) & AWS_TRANSFERS) or \
+            name == "gsutil" and set(args) & GSUTIL_TRANSFERS:
+        return True
+    if (name, tuple(args[:1])) in PUBLISHERS:
+        return True
+    return bool(args) and args[0] in RESOURCE_WORDS and any(is_gate_file(program, where) for where in cwds)
+
+
+def git_subcommand(args):
+    """The subcommand of a Git invocation's arguments (past its global options), or None."""
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg in ("-c", "--config-env", "-C", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--super-prefix"):
+            i += 2
+        elif arg.startswith("-"):
+            i += 1
+        else:
+            return arg
+    return None
+
+
+def git_leaves(args):
+    """True for a Git invocation (its arguments) that may leave the machine beyond what exit_word reads: a `-c`
+    setting other than the safe ones (an alias, a pager, an ssh command), or a subcommand Git does not ship locally
+    (it may be an alias)."""
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg in ("-c", "--config-env") or arg.startswith(("-c", "--config-env=")):
+            setting = args[i + 1] if arg in ("-c", "--config-env") and i + 1 < len(args) else arg.partition("=")[2] \
+                if arg.startswith("--config-env=") else arg[2:]
+            if setting not in SAFE_GIT_CONFIG:
+                return True
+            i += 2 if arg in ("-c", "--config-env") else 1
+            continue
+        if arg in ("-C", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--super-prefix"):
+            i += 2
+            continue
+        if arg.startswith("-"):
+            i += 1
+            continue
+        return arg not in LOCAL_GIT
+    return False
+
+
+def is_gate_file(word, cwd):
+    """True when `word`, resolved from `cwd`, is this gate (any launcher of it) or tools/ddl_run.py beside it."""
+    path = os.path.realpath(os.path.join(cwd, word))
+    gates = gate_files()
+    runs = {os.path.realpath(os.path.join(os.path.dirname(gate), "ddl_run.py")) for gate in gates}
+    return path in gates or path in runs
+
+
+def provisional_guard(runtime, payload, project, note):
+    """A deny for a call that may leave this machine while a provisional question of the project is unanswered:
+    what was decided provisionally never leaves it. A shell command that leaves_machine reads as an exit, every tool
+    of an MCP server or connector (no name tells what it sends), and the host's outward tools; a notification to the
+    human is none. None otherwise; with no open provisional question nothing else is read. An error while it is open
+    denies."""
+    tool = payload.get("tool_name")
+    shell = tool in SHELL_TOOLS.get(runtime, set())
+    mcp = isinstance(tool, str) and tool.startswith(("mcp__", "mcp."))
+    if not shell and not mcp and tool not in OUTWARD_TOOLS:
+        return None
+    try:
+        pending = sorted(provisional_markers(project_key(ledger_root(project))))
+    except Exception:
+        pending = ["(unreadable)"]
+    if not pending:
+        return None
+    try:
+        if shell:
+            command = shell_command(payload.get("tool_input"))
+            validation = isinstance(command, str) and command_lines(command) in validation_commands(
+                project, project_root(project)) and not exit_word(command)  # the human approved that exact text
+            leaves = not isinstance(command, str) or not validation and leaves_machine(command, call_cwd(payload))
+        else:
+            leaves = True  # a connector's tool, whatever its name, or the host's own way out
+    except Exception:
+        leaves = True
+    if not leaves:
+        return None
+    note.update(rule="provisional", id=pending[0])
+    return deny(PROVISIONAL_EXIT.format(", ".join(pending)))
+
+
+def shell_touches(command, cwd):
+    """[(word, resolved path)] of what a literal shell command names: every word and option value of every segment
+    and every redirect target, resolved from every directory a `cd` before it reaches; None when it cannot be read
+    literally (then nothing is known it names)."""
+    head = heredoc_head(command)
+    text = head if head is not None else command
+    if not literal_shell(text):
+        return None
+    parts = split_segments(text)
+    if parts is None:
+        return None
+    cwds, found = [cwd], []
+    for raw in parts[0]:
+        try:
+            tokens = shlex.split(raw)
+        except ValueError:
+            return None
+        if tokens[:1] == ["cd"] and len(tokens) == 2:
+            cwds = unique(cwds + [os.path.realpath(os.path.join(where, tokens[1])) for where in cwds])
+            continue
+        words, i = [], 0
+        while i < len(tokens):
+            match = re.fullmatch(r"(?:\d*|&)>>?(.*)|\d*<(.*)", tokens[i])
+            if match:  # a redirect: its target is the rest of the word, or the next word
+                target = match[1] if match[1] is not None else match[2]
+                if not target and i + 1 < len(tokens):
+                    i += 1
+                    target = tokens[i]
+                if target and not target.startswith("&"):
+                    words.append(target)
+            else:
+                words += [name for name in named(tokens[i]) if name]
+            i += 1
+        found += [(word, os.path.realpath(os.path.join(where, word))) for word in words for where in cwds]
+    return found
+
+
+def queued_guard(runtime, payload, project, note):
+    """A deny for an edit of a file that a queued question, not answered yet, holds (its items' owner files and those
+    of the items depending on them; a provisional question goes ahead instead). None otherwise, and on any error."""
+    try:
+        edit = edit_targets(runtime, payload)
+        shell = payload.get("tool_name") in SHELL_TOOLS.get(runtime, set())
+        if not (edit and edit[0]) and not shell:
+            return None
+        root = ledger_root(project)
+        markers = {record["current"]: record for record in open_markers(project_key(root)).values()
+                   if record.get("holds") and not record.get("provisional")}
+        if not markers:
+            return None
+        place, cwd = Place(project, project_root(project)), call_cwd(payload)
+        if edit and edit[0]:
+            targets = [(target, os.path.realpath(os.path.join(cwd, target))) for target in edit[0]]
+        else:  # what a command names: its words and option values, its redirect targets; reads touch nothing
+            command = shell_command(payload.get("tool_input"))
+            if not isinstance(command, str) or shell_is_read_only(command)[0]:
+                return None
+            targets = shell_touches(command, cwd) or []
+        for ident, record in sorted(markers.items()):
+            items = run_record(root, record["holds"]["run"])
+            globs = [glob for name in held_closure(items, record["holds"]["items"])
+                     for glob in items.get(name, {}).get("files", [])]
+            specs = owner_specs(place.root, globs, place)
+            for given, target in targets:
+                if held_target(target, specs, place):
+                    note.update(rule="queued", id=ident)
+                    return deny(QUEUED_HOLD.format(ident, given))
+    except Exception:
+        return None
+    return None
+
+
 def decide_call(runtime, payload, project, note):
     """tool_decision's answer before the sandbox check."""
+    provisional = provisional_guard(runtime, payload, project, note)
+    if provisional is not None:
+        return provisional
     git_review = git_review_guard(runtime, payload, note)
     try:
         state, pending = pending_scan(runtime, payload)
@@ -4467,6 +5387,9 @@ def decide_call(runtime, payload, project, note):
     if state is True:
         mutating, segment = is_mutating(runtime, payload.get("tool_name"), payload.get("tool_input"))
         if mutating and not gate_preparation(runtime, payload):
+            held = held_answer(runtime, payload, project, note)
+            if held is not None:
+                return held
             note.update(rule="stop", id=pending["id"] if pending else None)
             reason = WAITING_REASON.format(pending["id"], pending["report"]) if pending else DENY_REASON
             return deny(reason + (" Shell segment is not read-only: `{}`.".format(segment) if segment else ""))
@@ -4484,6 +5407,9 @@ def decide_call(runtime, payload, project, note):
     if ledger is not None:
         note["rule"] = "ledger"
         return ledger
+    queued = queued_guard(runtime, payload, project, note)
+    if queued is not None:
+        return queued
     if state is None:
         warned = session_file(payload.get("session_id"), ".warned")
         if warned.exists():
@@ -4555,6 +5481,14 @@ def handle_stop(runtime, payload):
         observe_answers(runtime, payload, root)
     except Exception:
         pass
+    try:  # a queued question not asked yet is named once per turn's end; it never blocks
+        asked = {entry["id"] for entry in armed_questions(payload.get("session_id"))}
+        unasked = sorted(record["current"] for record in open_markers(project_key(ledger_root(project))).values()
+                         if not set(record["ids"]) & asked)
+        if unasked:
+            return {"systemMessage": QUEUED_NOTICE.format(", ".join(unasked))}
+    except Exception:
+        pass
     return None
 
 
@@ -4570,6 +5504,8 @@ def prompt_note(runtime, payload, project, answered):
     choice = labels.index(reply[2]) if reply[2] in labels else None
     ledger_event(root, runtime, session, "answered", nulls=("choice",), id=label, toolUseId=reply[0], choice=choice,
                  label=reply[2] if choice is not None else None, timeout=False)  # free text never enters the ledger
+    if any(entry["id"] == label and (entry.get("provisional") or entry.get("queued")) for entry in armed_questions(session)):
+        settle_provisional(root, runtime, session, label, choice, reply[0])
     if choice != 0:
         disarm(session)  # any other reply moved the epoch, as typed text does
         return
@@ -4762,7 +5698,12 @@ def main(argv) -> int:
                 raise ValueError("the input is not JSON ({}).".format(exc)) from None
             result = prepare_report(runtime, data)
             emit(result)
-            cli_event(runtime, "prepared", id=result["reportId"])
+            # A queued, held or provisional report says so in its line; any other keeps the line it had.
+            extra = {} if not isinstance(data, dict) else {
+                key: value for key, value in (("queued", data.get("queue")), ("holds", data.get("holds")),
+                                              ("provisional", True if data.get("provisional") else None))
+                if value is not None}
+            cli_event(runtime, "prepared", id=result["reportId"], **extra)
             return 0
         except Exception as exc:
             print("DDL STOP: " + str(exc), file=sys.stderr)

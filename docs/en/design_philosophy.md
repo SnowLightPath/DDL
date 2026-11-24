@@ -132,6 +132,8 @@ A grant is the scope, budget and expiry that a `/realize` plan names for its wor
 
 Agents work on this machine; a remote machine only runs what it is handed. A grant names machines and services by the names of a resource table that each user keeps, whose format DDL defines, and the gate refuses a name the table does not declare or data a resource does not take. The handover gives a machine only the tracked files, or a named snapshot's files, without protected or secret-shaped ones, as one commit without history in a throwaway copy, and the gate brings back only the output lines, file hashes and exit status. No agent, key, conversation record or approval goes to a remote machine, and what comes back is data, never instructions. No grant covers a resource the table marks to confirm each run (for example a paid cluster or a cloud service): each run needs a confirmation the human gave for that exact command or prompt, and a confirmation is used once. Such a service, and any write to a service, goes only through the gate's `service`, which checks the confirmation; a plugin the agent calls directly is outside the gate, and there the rule binds as an instruction.
 
+A question may name the Run's items it holds. While every pending question does, the gate lets only the in-grant edits, and the tests and checks that name their paths, go on outside those items and the items that depend on them. A question can also be queued without making a STOP pending, and the lead asks the queued questions together when the human is back or no unheld work is left. A provisional question lets the lead go ahead on the recommended option after a snapshot, though the recommendation itself is no approval. Until the answer comes, the gate denies the calls that leave this machine, and the lead undoes an overturned choice from the snapshot with the gate's `restore`. The final report of a Run lists the questions it still waits on, marked provisional, waiting or exit.
+
 When a decision is needed, the agent recommends a course for the whole review and shows the compatible actions and their impacts as a short numbered list. Material risks and unknowns stay visible; detailed evidence is available separately.
 
 One native interaction offers **Approve all**, **Select a subset or revise**, and **Hold**, with optional free text. Approve all covers exactly the displayed, ready recommendations and stated resolutions in the current batch. The agent applies that approved scope without asking again for each item, file, section, language, or state. Future STOPs, outward actions not explicitly named in the reviewed choice, and undisclosed Binding Decision changes remain unapproved.
@@ -173,6 +175,9 @@ What matters is updating documents after the work (Reflect), before the commit t
 | Asking about work inside the grant | Approval turns into a formality, and the work waits on a question that changes nothing |
 | Confirming a reviewed exit twice | The human sees the same contents again; the Git review is the one confirmation |
 | A grant without an expiry, or widened silently | The approval outlives or outgrows the plan it was given for |
+| Going ahead provisionally on what cannot be undone | An overturned answer cannot be taken back; a provisional choice needs a snapshot, and nothing leaves the machine until it is answered |
+| Stacking one provisional choice on another | One overturned answer would undo both; the gate refuses a provisional question over items another one holds |
+| Asking a question that stops all work while the human is away | Everything waits on one answer; a question names the items it holds, and the rest of the grant's work goes on |
 
 ## Summary
 
