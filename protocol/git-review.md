@@ -20,6 +20,7 @@ python3 <gate> prepare-git-review --runtime <host>
 |---|---|---|
 | `commit` | `git commit` on a named branch with `--cleanup=verbatim` and `-m <message>` or `-F <UTF-8 file>`; in a second git directory, `git --git-dir=<dir> --work-tree=<dir> commit …` (`-C <path>` may precede), its own repository | Forced, mirror, deletion, wildcard, multi-target, in-progress merge/rebase/cherry-pick/revert, intent-to-add, stdin message, alternate executable, dynamic and compound write forms |
 | `pin` | A superproject commit with `"pin": {"submodule": <path>, "from": <number, from 1, of an earlier push of that submodule>}`: the staged tree but that gitlink, the commit the push sent; before it `submodule update --remote`, the submodule's `fetch`/`checkout` and `add <path>` pass | A later, non-push or other repository's `from`, another gitlink |
+| `project` | A push of an edition with `"project": {"from": <number of an earlier commit here>, "include": <its include list>, "files": <its overlay directory>, "message": <exact, ending in the `Built-by: public-edition` trailer>, "author": {"name", "email"}, "base": <the target's last published ref, null at first>}`: the review shows the edition built from that commit's staged tree (the listed paths, the overlay over them) and its diff against `base`, the target's head; the push passes only when its commit holds that projection of the commit made, has the target's head as its one parent and the reviewed message, author and committer | A later or non-commit `from`, a second git directory's, `..` or an absolute path, a `pin` beside it, a moved target |
 | `push` | `git push <remote> <branch or refspec>` with one configured remote and one branch or refspec; `--no-follow-tags` when follow-tags is enabled; `--recurse-submodules=no` when configuration could push submodules | The same list, a `--git-dir` form, and a push whose source commit, resolved remote or destination differs from the reviewed one |
 
 Run Git in the shell tool's working directory for the intended repository; read commands need no review.
@@ -34,7 +35,7 @@ Run Git in the shell tool's working directory for the intended repository; read 
 
 ## Formats
 
-- Input JSON keys: `language` (the user's language for the report), `operations` (in execution order), each with `cwd` (the repository), `command` (the literal Git form) and, for a pinned commit, `pin`.
+- Input JSON keys: `language` (the user's language for the report), `operations` (in execution order), each with `cwd` (the repository), `command` (the literal Git form) and, for a pinned commit, `pin`, for an edition's push, `project`.
 - Output JSON keys: `reviewId`, `report` (the report file), `question` (its five lines: Approval Formats, built from the reviewed operations), `nativeRequest` (the host's request, passed unchanged).
 - The review ID `G-<id>`: 16 hexadecimal characters.
 - The review directory `<state dir>/git-reviews/<id>/`: `report.md`, `review.json`, one `<n>.patch` per commit.

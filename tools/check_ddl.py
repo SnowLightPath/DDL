@@ -103,10 +103,11 @@ FORMATS = {
     "approval": ("+++DDL_REPORT", *REPORT_LABELS, "Outcome:", "approve all", "subset", "hold",
                  "approved in advance (<date>)", "prepare-report", "reportId", "R-<id>",
                  "<state dir>/reports/<id>/report.md", "nativeRequest", "Full report", "全文", "R1–R12", "`holds`",
-                 "`queue: true`", "`provisional`", "`replaces: <R-id>`"),
+                 "`queue: true`", "`provisional`", "`replaces: <R-id>`",
+                 "`Promote`", "上げる候補", "Promotion candidates"),
     "close": ("nothing remains", "left: <item> — <reason>"),
     "git-review": ("language", "operations", "cwd", "command", "reviewId", "report", "question", "nativeRequest",
-                   "G-<id>", "`pin`"),
+                   "G-<id>", "`pin`", "`project`"),
     "parallel-work": ("{scope}", "{scopes}", "command-phase", "role-{scope}"),
     "notebook": ("| Decision | Why it binds | Source |",
                  "Unbound: <topic> — options A / B (delegated to /realize | awaiting choice)",
@@ -157,12 +158,12 @@ CONCERNS = {"start": START_CONCERNS, "parallel-work": PARALLEL_CONCERNS, "approv
 # the generated tree; file names are the files of the installed skill directory, the host's implementations
 # folded into them (start in SKILL.md, the others in the operation of the same name).
 BUDGET_PATHS = (
-    ("validate", 20888, ("SKILL.md", "approval.md")),
-    ("draft", 29795, ("notebook.md",)),
-    ("realize-plan", 55078, ("parallel-work.md", "run.md")),
-    ("realize-close", 71082, ("close.md", "git-review.md")),
+    ("validate", 21386, ("SKILL.md", "approval.md")),
+    ("draft", 30293, ("notebook.md",)),
+    ("realize-plan", 55576, ("parallel-work.md", "run.md")),
+    ("realize-close", 72544, ("close.md", "git-review.md")),
 )
-EXECUTION_LIMIT = 71082
+EXECUTION_LIMIT = 72544
 FILE_LIMITS = {"run.md": 15880}  # a generated file's own limit, the host's implementation folded in
 AUTHOR_ONLY = ("command-authoring",)  # operations read by authors only: outside the execution total
 # The folded implementations in the generated skill (P9 on dist): the file, the H2 section and the H3 sections.
