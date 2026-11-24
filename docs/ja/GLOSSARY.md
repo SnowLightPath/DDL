@@ -210,6 +210,15 @@
 | `close` item | `close` の項目 |  | Run の項目の種類。リードのコミットと push を表す。依存が済むまで、Run の途中の push は断られる |
 | the commit to undo them to | 戻す先のコミット |  | push しない Close の報告がコミットの一覧とともに示す |
 | end / lift（STOP を） | 終わらせる |  | 許諾は STOP を終わらせない。待機中の質問が止める項目を名指ししているあいだだけ、許諾の内のほかの作業が進む |
+| Principles of a Run（§3.7 の見出し） | Run の原則 |  |  |
+| head count | 人数 |  | 「人数ではなく直列の部分を減らす」 |
+| integrator | 統合する役 |  | integration は「統合」の行に従う |
+| utilization | 稼働率 |  | 目標にはしない |
+| Flow（アンチパターンの分野） | 流し方 |  | 数の行のラベル `Flow`（`稼働`）とは別 |
+| expected utility | 期待効用 |  |  |
+| interruption / resumption | 割り込み / 再開 |  |  |
+| preprint / extrapolate | プレプリント / 外挿 |  |  |
+| named teammate（Claude の） | 名前つきの teammate |  | teammate は英字のまま |
 | stagger（ワーカーの開始を） | 間を空けて始める |  | 一斉に始めないこと。`runner` の `--stagger`（既定は 5 秒） |
 | promised behavior | 保証した振る舞い |  | contract の行の「使わない訳」に当たる語を避ける |
 | check（照らし合わせる） | 照らす / 確かめる |  | 名詞の checks は「検査」 |

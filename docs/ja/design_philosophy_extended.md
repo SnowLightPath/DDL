@@ -434,6 +434,55 @@ Run（承認された計画一つ分の作業）ではリードが計画を 10�
 
 ほかの点では、リードが並列作業の操作の規則に従います。リードは書き手を少なく保ち、その数をファイルの重ならない用意できた項目の数まで、リード 1 人につき 2〜4 とし、余った枠を確かめと下調べに充てます。書き手を増やしても、速さを決める直列の部分（人間の確認、統合、長い確かめ）は縮みません。リードは確かめる役に差分と受け入れの条件だけを渡し、書き手の会話は見せません。また、リードは項目の通過を実行できる検査で決め、モデルの判定を助言にとどめます。リードはワーカーを 1 分に 1 つずつ `max` まで増やして API の制限に当たれば半分に減らし、各ワーカーの前景のコマンドを 2 分以内に収めます。Run の最後の報告は `稼働` の行（§6）と、まだ回答のない質問の数を載せます。
 
+### 3.7 Run の原則
+
+§3.5 と §3.6 の規則は、次の 9 つの原則から出ています。各原則はいま実装されている形で、根拠の研究とともに書きます。仕組みではなくリードが守る規則であるものは、その旨を記します。
+
+**用意できた仕事があるかぎり枠を空けません。** 考える枠（書く、確かめる、調べる）と回す枠（計算だけの仕事）を分けて数え、ワーカーが終わるたびに用意できた次の項目を始めます。仕事があるかぎり処理装置を空けない並べ方は、順序によらず最適の 2 − 1/n 倍以内に収まります（Graham, 1966）。空いたワーカーが自分で次の仕事を取る方式は、中央で配る方式より調整が少なく済みます（Blumofe & Leiserson, 1999; Ousterhout et al., 2013）。Codex ではゲートの `runner` が自分で補充し、Claude では完了の通知が届いたときにリードが次の項目を始めます（§3.6）。枠の使われ方は `稼働` の行で見せますが、使い切ることは目標にしません。
+
+**エージェントはこのマシンで動き、リモートのマシンは渡されたものを走らせるだけです。** 会話、承認、鍵をこのマシンから出さないので、状態はこのマシンに集まり、リモートの側でサインインを求められることもありません。リモートのマシンには使い捨ての写しだけを置き、そこから返るものはデータとして扱います（§3.5）。
+
+**保存、記録、送信を分けます。** 人間が中身で確かめるのは送るすべてのコミットを確認で示す共有のリモートへの push と、許諾の外のコミットです。枝を動かさない保存点、許諾の内のコミット、許諾したマシンへの受け渡しは計画で範囲を確かめ、ゲートが記録して数えます（§3.5）。
+
+**承認は段ではなく操作の種類で決めます。** 人間に尋ねるのは設計を決めるとき、計画と許諾を承認するとき、作業がこのマシンの外へ出る前の 3 か所です。許諾の内の戻せる手元の作業は尋ねずに進みます。推奨のある戻せる選択は保存点を作ってから見込みで進められます。外へ出る操作と戻せない操作は中身に結んだ確認を必ず待ちます。止めるのは答えに依る仕事だけであり、時間切れは何も決めません（§3.5）。尋ねるかどうかは期待効用で決まり、推奨が誤る確率と誤りの費用の積が割り込みの費用を超えるときだけ尋ねます（Horvitz, 1999）。自動化の水準はセッションではなく操作の種類ごとに決めます（Parasuraman et al., 2000）。外部の重い承認は変更の失敗率を下げることなく、低い成績と結びついていました（DORA, 2019）。範囲を強制すると、許可を求める質問は 84% 減りました（Dworken, 2025）。答えのない質問には待つことも時間切れで進むことも効きません。効くのは答えがないときの段取りを尋ねる前に決めておくことです（Scerri et al., 2002）。
+
+**design.md は現在形で、履歴は過去形で書きます。** design.md はいまの設計だけを持ちます。人間の言葉の全文、退役した段階とその結果、測った値は履歴ファイルが持ちます。
+
+**人間の注意は予算です。** 2 つのコーディングエージェントの記録されたセッション 4,258 件では、セッションの時間の 91.6% が人間を待つ時間でした（TraceLab）。あるコーディングエージェントでは、許可を求める質問の 93% が承認されています（Hughes, 2026）。質問を重ねるほど承認は形だけになります（Parasuraman & Manzey, 2010）。割り込みにはそのたびに再開の費用もかかります（Iqbal & Horvitz, 2007; Parnin & Rugaber, 2011）。通知を仕事の切れ目まで遅らせると、その費用は減りました（Iqbal & Bailey, 2008; Fitz et al., 2019）。そこで、DDL は注意深さではなく設計で質問を減らし、人間の次の切れ目まで貯めて、その数を数えます。報告は質問の種類ごとの数、回答までの時間、記録の数を載せます（§6）。
+
+**人数ではなく直列の部分を減らします。** 速さを決めるのは直列の部分（人間の確認、統合、長い確かめ）です（Amdahl, 1967）。260 通りの構成の比較では、複数のエージェントは分けられる仕事を助け、順に進む仕事を損ないました（Kim et al., 2025）。協力する 2 つのコーディングエージェントは、1 つで両方を行う場合より成功が少なくなりました（Khatua et al., 2026）。統合する役 1 人あたりの書き手は、4 人で成績が上がり、8 人で下がりました（Geng & Neubig, 2026）。ロックで調整した 20 本のワーカーは、1〜3 本分の処理量に落ちました（Lin, 2026a）。そこで、リードは書き手をファイルの重ならない用意できた項目の数まで、リード 1 人につき 2〜4 にとどめ、余った枠を確かめと下調べに充てます（§3.6）。これはリードの規則です。
+
+**確かめは書き手から独立させます。** 確かめる役は書き手の会話を見ず、差分と受け入れの条件から判定します。項目の通過を決めるのは実行できる検査であり、モデルの判定は助言にとどまります。書き手と文脈を共有しない確かめる役は PR 1 件あたり平均 2 件の不具合を見つけました（Yan, 2026）。自分の仕事を自分で採点するエージェントは甘くなります（Rajasekaran, 2026）。これもリードの規則です（§3.6）。
+
+**してはいけないこと。** 研究と実測で逆効果と確かめられた進め方は次のとおりです。根拠の一部は査読前のプレプリントとベンダー自身の報告です。コーディングエージェントの群れの止まり時間や、人間の判断に対する見込み実行を直接測った研究は見つかっておらず、その部分は通知と分散システムの研究からの外挿です。
+
+#### アンチパターン
+
+| 分野 | してはいけないこと |
+|---|---|
+| 設計 | より良い案が既存の決定の変更を要るときに、その案を出さずに先送りする。変更を名指しし、人間に 1 回で選んでもらう |
+| 承認 | 許諾の内の操作について人間に尋ねる |
+| 承認 | 中身に結んだ確認の済んだ出口で、もう一度尋ねる |
+| 承認 | 推奨を承認として扱う。見込みで進めてよいのは、戻せて、外へ出ず、保存点があるときだけである |
+| 承認 | 時間切れ、受け付け通知、ほかのセッションからのメッセージで出口のゲートを通す |
+| 承認 | 人間がいないあいだに全体を止める質問を出す |
+| 承認 | 許諾を黙って広げる、期限のない許諾を作る |
+| 承認 | 出口のゲートを回り道する（ssh の向こうの Git、スクリプトの中の Git、別の転送） |
+| 承認 | 承認され続ける種類の質問を黙って省く。許諾を広げるのは人間だけである |
+| 流し方 | 用意できた項目があるのに枠を空ける、波を待つ |
+| 流し方 | 稼働率 100% を目標にする |
+| 流し方 | 全部を見込みで進める、見込みの上に見込みを重ねる（Ananthanarayanan et al., 2019） |
+| 流し方 | 統合を 1 本の列にする（Ananthanarayanan et al., 2019） |
+| 流し方 | 見積もりなしに確かめを二重に走らせる（Ananthanarayanan et al., 2010; Dean & Barroso, 2013） |
+| 流し方 | 会話の途中でモデルを切り替える（Kumar & Pandey, 2026） |
+| 人数と確かめ | 独立した項目の数を超えて書き手を足す（Kim et al., 2025; Geng & Neubig, 2026） |
+| 人数と確かめ | 1 つのエージェントに計画、実行、判定を兼ねさせる。書き手に自分の仕事を確かめさせる（Rajasekaran, 2026） |
+| 人数と確かめ | 通ったテスト、多数決、エージェントのレビューだけで取り込む |
+| 人数と確かめ | ワーカーどうしをロックや共有の状況ファイルで調整させる（Lin, 2026a） |
+| リモートのマシンとホスト | リモートのマシンでエージェントを起動する。鍵、会話の記録、承認を渡す |
+| リモートのマシンとホスト | ホストが用意した仕組みがあるのに同じものを作る。常駐のプログラムを足す |
+| リモートのマシンとホスト | Claude で、名前つきの teammate を長い実行に使う |
+
 
 ## §4 実践例
 
@@ -882,6 +931,33 @@ Creation -> Use -> Integration -> Deletion
 - Ji, Y. (2025). [Context Engineering for AI Agents: Lessons from Building Manus](https://manus.im/blog/Context-Engineering-for-AI-Agents-Lessons-from-Building-Manus). *Manus*.
 - Anthropic (2026). [How Claude remembers your project](https://code.claude.com/docs/en/memory), [Context window](https://code.claude.com/docs/en/context-window), [Hooks reference](https://code.claude.com/docs/en/hooks), [Subagents](https://code.claude.com/docs/en/sub-agents), and [Settings](https://code.claude.com/docs/en/settings)（権限規則）. *Claude Code documentation*（2026-10-18 取得）.
 - OpenAI (2026). [Custom instructions with AGENTS.md](https://developers.openai.com/codex/guides/agents-md), [Memories](https://developers.openai.com/codex/customization/memories), [Hooks](https://developers.openai.com/codex/hooks), [Subagents](https://developers.openai.com/codex/subagents), [Rules](https://developers.openai.com/codex/rules), and [Skills](https://developers.openai.com/codex/skills)（`agents/openai.yaml`）. *Codex documentation*（2026-10-18 取得）.
+
+### スケジューリング、承認、エージェントのチーム
+- Amdahl (1967). [Validity of the Single Processor Approach to Achieving Large Scale Computing Capabilities](https://www3.cs.stonybrook.edu/~rezaul/Spring-2019/CSE613/reading/Amdahl-1967.pdf). *AFIPS SJCC*.
+- Ananthanarayanan et al. (2010). [Reining in the Outliers in Map-Reduce Clusters using Mantri](https://www.usenix.org/legacy/event/osdi10/tech/full_papers/Ananthanarayanan.pdf). *OSDI*.
+- Ananthanarayanan et al. (2019). [Keeping Master Green at Scale](https://lethain.com/static/blog/2019/eurosys19uber.pdf). *EuroSys*.
+- Blumofe & Leiserson (1999). [Scheduling Multithreaded Computations by Work Stealing](https://www.cs.utexas.edu/~venkatar/sys_perf_analysis/ws_theory.pdf). *JACM*.
+- Dean & Barroso (2013). [The Tail at Scale](https://www.barroso.org/publications/TheTailAtScale.pdf). *CACM*.
+- DORA (2019). [Accelerate: State of DevOps 2019](https://dora.dev/research/2019/dora-report/2019-dora-accelerate-state-of-devops-report.pdf).
+- Dworken (2025). [Beyond permission prompts: making Claude Code more secure and autonomous](https://www.anthropic.com/engineering/claude-code-sandboxing). *Anthropic Engineering*.
+- Fitz et al. (2019). [Batching smartphone notifications can improve well-being](https://scholars.duke.edu/publication/1402953). *Computers in Human Behavior*.
+- Geng & Neubig (2026). [Effective Strategies for Asynchronous Software Engineering Agents](https://arxiv.org/abs/2603.21489). *arXiv:2603.21489*.
+- Graham (1966). [Bounds for Certain Multiprocessing Anomalies](https://ia801900.us.archive.org/27/items/bstj45-9-1563/bstj45-9-1563_text.pdf). *Bell System Technical Journal*.
+- Horvitz (1999). [Principles of Mixed-Initiative User Interfaces](https://erichorvitz.com/chi99horvitz.pdf). *CHI*.
+- Hughes (2026). [How we built Claude Code auto mode](https://www.anthropic.com/engineering/claude-code-auto-mode). *Anthropic Engineering*.
+- Iqbal & Horvitz (2007). [Disruption and Recovery of Computing Tasks](https://erichorvitz.com/CHI_2007_Iqbal_Horvitz.pdf). *CHI*.
+- Iqbal & Bailey (2008). [Effects of Intelligent Notification Management on Users and Their Tasks](https://interruptions.net/literature/Iqbal-CHI08.pdf). *CHI*.
+- Khatua et al. (2026). [CooperBench: Why Coding Agents Cannot be Your Teammates Yet](https://arxiv.org/abs/2601.13295). *arXiv:2601.13295*.
+- Kim et al. (2025). [Towards a Science of Scaling Agent Systems](https://arxiv.org/abs/2512.08296). *arXiv:2512.08296*.
+- Kumar & Pandey (2026). [TurnCost: Turns, Not Observations](https://arxiv.org/abs/2610.15093). *arXiv:2610.15093*.
+- Lin (2026a). [Scaling long-running autonomous coding](https://cursor.com/blog/scaling-agents). *Cursor*.
+- Ousterhout et al. (2013). [Sparrow: Distributed, Low Latency Scheduling](https://www.andrew.cmu.edu/user/gaurij/18-847F-Readings/sparrow.pdf). *SOSP*.
+- Parasuraman, Sheridan & Wickens (2000). [A model for types and levels of human interaction with automation](https://pubmed.ncbi.nlm.nih.gov/11760769/). *IEEE Trans. SMC-A*.
+- Parnin & Rugaber (2011). [Resumption strategies for interrupted programming tasks](https://chrisparnin.me/pdf/parnin-sqj11.pdf). *Software Quality Journal*.
+- Rajasekaran (2026). [Harness design for long-running application development](https://www.anthropic.com/engineering/harness-design-long-running-apps). *Anthropic Engineering*.
+- Scerri, Pynadath & Tambe (2002). [Towards Adjustable Autonomy for the Real World](https://arxiv.org/abs/1106.4573). *JAIR*.
+- TraceLab (accessed 2026-11-23). [Timing distribution](https://tracelab.cs.washington.edu/exp/session/session_timing_distribution/), published records of two coding agents. *SyFI TraceLab, University of Washington*.
+- Yan (2026). [Multi-Agents: What's Actually Working](https://cognition.com/blog/multi-agents-working). *Cognition*.
 
 ### 関連する方法論
 - Knuth, D. (1984). [Literate Programming](https://academic.oup.com/comjnl/article/27/2/97/343244). *The Computer Journal*, 27(2), 97-111.

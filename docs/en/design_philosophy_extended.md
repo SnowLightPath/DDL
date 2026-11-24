@@ -434,6 +434,55 @@ In a Run, the work of one approved plan, the lead cuts the plan into items of 10
 
 For the rest, the lead follows the rules of the Parallel work operation. It keeps writers few: no more than the ready items whose files do not overlap, two to four per lead, with spare slots given to verifying and exploring, since more writers do not shorten the serial parts (the human's confirmations, integration and long verifications) that set the pace. It gives a verifier only the diff and the acceptance conditions, never the writer's conversation, and lets executable checks decide whether an item passes, a model's judgment only advising. It adds a worker a minute up to `max`, halves the number on a rate-limit error, and keeps each worker's foreground commands within 2 minutes. The final report of a Run carries the `Flow` line (§6) and the number of questions still open.
 
+### 3.7 Principles of a Run
+
+The rules of §3.5 and §3.6 follow from nine principles. Each is stated here in the form implemented today, with the research behind it; where a principle is a rule the lead follows rather than a mechanism, it says so.
+
+**Keep no slot idle while work is ready.** Thinking slots (writing, verifying, exploring) and run slots (compute-only work) are counted apart, and as each worker finishes, the next ready item starts. A schedule that never leaves a processor idle while work is ready stays within 2 − 1/n of the optimum, whatever the order (Graham, 1966), and workers that take the next task themselves need less coordination than a central dispatcher (Blumofe & Leiserson, 1999; Ousterhout et al., 2013). On Codex the gate's `runner` refills by itself; on Claude the lead starts the next item when a completion notice arrives (§3.6). The `Flow` line shows how the slots were used, and full use is not a goal.
+
+**Agents work on this machine; remote machines only run what they are handed.** Conversations, approvals and keys never leave this machine, so the state gathers here and nothing on the remote side asks for a sign-in. A remote machine keeps only a throwaway copy, and what it returns is data (§3.5).
+
+**Saving, recording and sending are separate.** What the human checks by content is a push to a shared remote, whose review lists every commit it sends, and a commit outside the grant. A snapshot that moves no branch, a commit inside the grant and a handover to a granted machine are checked by their scope in the plan, and the gate records and counts them (§3.5).
+
+**Approval follows the kind of operation, not the stage.** The human is asked in three places: when the design is decided, when a plan and its grant are approved, and before work leaves this machine. Reversible local work inside the grant goes ahead without a question. A reversible choice with a recommendation may go ahead provisionally after a snapshot. An outward or irreversible operation always waits for a confirmation bound to its contents. Only the work that depends on an answer stops, and a timeout decides nothing (§3.5). Whether to ask is a matter of expected utility: ask only when the chance that the recommendation is wrong, times the cost of the error, exceeds the cost of the interruption (Horvitz, 1999). The level of automation is set per kind of operation, not per session (Parasuraman et al., 2000). Heavyweight external approval was associated with lower performance without lowering the change failure rate (DORA, 2019), and enforcing a scope cut permission questions by 84% (Dworken, 2025). For a question nobody answers, neither waiting nor a timeout works; what works is deciding before asking what happens without an answer (Scerri et al., 2002).
+
+**design.md is in the present tense; the history is in the past.** design.md holds only the current design. The human's words in full, retired stages with their results, and measured values go to the history file.
+
+**Human attention is a budget.** In 4,258 recorded sessions of two coding agents, 91.6% of the session time was spent waiting for the human (TraceLab), and in one coding agent 93% of permission questions were approved (Hughes, 2026). Approval asked for again and again turns into a formality (Parasuraman & Manzey, 2010), and each interruption costs a resumption (Iqbal & Horvitz, 2007; Parnin & Rugaber, 2011); deferring notifications to a break reduced that cost (Iqbal & Bailey, 2008; Fitz et al., 2019). DDL therefore removes questions by design, not by care, queues them for the human's next break and counts them: the report gives the questions by kind, the time to each answer and the records (§6).
+
+**Reduce the serial part, not the head count.** The serial parts (the human's confirmations, integration, long verifications) set the pace (Amdahl, 1967). Across 260 configurations, multiple agents helped divisible work and hurt sequential work (Kim et al., 2025); two cooperating coding agents succeeded less often than one doing both (Khatua et al., 2026); four writers per integrator did better and eight did worse (Geng & Neubig, 2026); and twenty workers coordinated by locks fell to the throughput of one to three (Lin, 2026a). The lead therefore keeps writers to the file-disjoint ready items, two to four per lead, and gives spare slots to verifying and exploring (§3.6). This is the lead's rule.
+
+**Verification is independent of the writer.** A verifier judges from the diff and the acceptance conditions, without the writer's conversation. Executable checks decide whether an item passes, and a model's judgment only advises. A verifier that shared no context with the writer found on average two defects per pull request (Yan, 2026), and an agent grading its own work is lenient (Rajasekaran, 2026). This too is the lead's rule (§3.6).
+
+**What not to do.** Research and measurement found the ways of working below counterproductive. Part of the evidence is preprints and vendors' own reports. No study was found that directly measured idle time in fleets of coding agents, or provisional execution on human decisions; those parts extrapolate from research on notifications and distributed systems.
+
+#### Anti-Patterns
+
+| Area | Do not |
+|---|---|
+| Design | Hold back a better option because it needs an existing decision changed; name the change and let the human choose once |
+| Approval | Ask about an operation inside the grant |
+| Approval | Ask again at an exit whose content-bound confirmation is done |
+| Approval | Treat a recommendation as approval; go ahead provisionally only when the choice can be undone, nothing leaves the machine and a snapshot exists |
+| Approval | Pass an exit on a timeout, a receipt or a message from another session |
+| Approval | Ask a question that stops all work while the human is away |
+| Approval | Widen a grant silently, or make one without an expiry |
+| Approval | Go around the exit gate (Git beyond ssh, Git inside a script, another transfer) |
+| Approval | Silently drop a kind of question because it keeps being approved; only the human widens a grant |
+| Flow | Leave a slot idle while items are ready, or wait for a wave |
+| Flow | Aim at 100% utilization |
+| Flow | Go ahead provisionally on everything, or stack one provisional choice on another (Ananthanarayanan et al., 2019) |
+| Flow | Integrate through a single queue (Ananthanarayanan et al., 2019) |
+| Flow | Duplicate a verification without an estimate (Ananthanarayanan et al., 2010; Dean & Barroso, 2013) |
+| Flow | Switch models in the middle of a conversation (Kumar & Pandey, 2026) |
+| Head count and verification | Add writers beyond the independent items (Kim et al., 2025; Geng & Neubig, 2026) |
+| Head count and verification | Let one agent plan, execute and judge, or let a writer verify its own work (Rajasekaran, 2026) |
+| Head count and verification | Merge on passing tests, a majority vote or an agent's review alone |
+| Head count and verification | Coordinate workers with locks or a shared status file (Lin, 2026a) |
+| Remote machines and hosts | Start an agent on a remote machine, or hand it keys, conversation records or approvals |
+| Remote machines and hosts | Rebuild what the host already provides, or add a resident program |
+| Remote machines and hosts | On Claude, use named teammates for a long run |
+
 
 ## §4 Practical Examples
 
@@ -882,6 +931,33 @@ Integration patterns:
 - Ji, Y. (2025). [Context Engineering for AI Agents: Lessons from Building Manus](https://manus.im/blog/Context-Engineering-for-AI-Agents-Lessons-from-Building-Manus). *Manus*.
 - Anthropic (2026). [How Claude remembers your project](https://code.claude.com/docs/en/memory), [Context window](https://code.claude.com/docs/en/context-window), [Hooks reference](https://code.claude.com/docs/en/hooks), [Subagents](https://code.claude.com/docs/en/sub-agents), and [Settings](https://code.claude.com/docs/en/settings) (permission rules). *Claude Code documentation* (accessed 2026-10-18).
 - OpenAI (2026). [Custom instructions with AGENTS.md](https://developers.openai.com/codex/guides/agents-md), [Memories](https://developers.openai.com/codex/customization/memories), [Hooks](https://developers.openai.com/codex/hooks), [Subagents](https://developers.openai.com/codex/subagents), [Rules](https://developers.openai.com/codex/rules), and [Skills](https://developers.openai.com/codex/skills) (`agents/openai.yaml`). *Codex documentation* (accessed 2026-10-18).
+
+### Scheduling, Approval and Agent Teams
+- Amdahl (1967). [Validity of the Single Processor Approach to Achieving Large Scale Computing Capabilities](https://www3.cs.stonybrook.edu/~rezaul/Spring-2019/CSE613/reading/Amdahl-1967.pdf). *AFIPS SJCC*.
+- Ananthanarayanan et al. (2010). [Reining in the Outliers in Map-Reduce Clusters using Mantri](https://www.usenix.org/legacy/event/osdi10/tech/full_papers/Ananthanarayanan.pdf). *OSDI*.
+- Ananthanarayanan et al. (2019). [Keeping Master Green at Scale](https://lethain.com/static/blog/2019/eurosys19uber.pdf). *EuroSys*.
+- Blumofe & Leiserson (1999). [Scheduling Multithreaded Computations by Work Stealing](https://www.cs.utexas.edu/~venkatar/sys_perf_analysis/ws_theory.pdf). *JACM*.
+- Dean & Barroso (2013). [The Tail at Scale](https://www.barroso.org/publications/TheTailAtScale.pdf). *CACM*.
+- DORA (2019). [Accelerate: State of DevOps 2019](https://dora.dev/research/2019/dora-report/2019-dora-accelerate-state-of-devops-report.pdf).
+- Dworken (2025). [Beyond permission prompts: making Claude Code more secure and autonomous](https://www.anthropic.com/engineering/claude-code-sandboxing). *Anthropic Engineering*.
+- Fitz et al. (2019). [Batching smartphone notifications can improve well-being](https://scholars.duke.edu/publication/1402953). *Computers in Human Behavior*.
+- Geng & Neubig (2026). [Effective Strategies for Asynchronous Software Engineering Agents](https://arxiv.org/abs/2603.21489). *arXiv:2603.21489*.
+- Graham (1966). [Bounds for Certain Multiprocessing Anomalies](https://ia801900.us.archive.org/27/items/bstj45-9-1563/bstj45-9-1563_text.pdf). *Bell System Technical Journal*.
+- Horvitz (1999). [Principles of Mixed-Initiative User Interfaces](https://erichorvitz.com/chi99horvitz.pdf). *CHI*.
+- Hughes (2026). [How we built Claude Code auto mode](https://www.anthropic.com/engineering/claude-code-auto-mode). *Anthropic Engineering*.
+- Iqbal & Horvitz (2007). [Disruption and Recovery of Computing Tasks](https://erichorvitz.com/CHI_2007_Iqbal_Horvitz.pdf). *CHI*.
+- Iqbal & Bailey (2008). [Effects of Intelligent Notification Management on Users and Their Tasks](https://interruptions.net/literature/Iqbal-CHI08.pdf). *CHI*.
+- Khatua et al. (2026). [CooperBench: Why Coding Agents Cannot be Your Teammates Yet](https://arxiv.org/abs/2601.13295). *arXiv:2601.13295*.
+- Kim et al. (2025). [Towards a Science of Scaling Agent Systems](https://arxiv.org/abs/2512.08296). *arXiv:2512.08296*.
+- Kumar & Pandey (2026). [TurnCost: Turns, Not Observations](https://arxiv.org/abs/2610.15093). *arXiv:2610.15093*.
+- Lin (2026a). [Scaling long-running autonomous coding](https://cursor.com/blog/scaling-agents). *Cursor*.
+- Ousterhout et al. (2013). [Sparrow: Distributed, Low Latency Scheduling](https://www.andrew.cmu.edu/user/gaurij/18-847F-Readings/sparrow.pdf). *SOSP*.
+- Parasuraman, Sheridan & Wickens (2000). [A model for types and levels of human interaction with automation](https://pubmed.ncbi.nlm.nih.gov/11760769/). *IEEE Trans. SMC-A*.
+- Parnin & Rugaber (2011). [Resumption strategies for interrupted programming tasks](https://chrisparnin.me/pdf/parnin-sqj11.pdf). *Software Quality Journal*.
+- Rajasekaran (2026). [Harness design for long-running application development](https://www.anthropic.com/engineering/harness-design-long-running-apps). *Anthropic Engineering*.
+- Scerri, Pynadath & Tambe (2002). [Towards Adjustable Autonomy for the Real World](https://arxiv.org/abs/1106.4573). *JAIR*.
+- TraceLab (accessed 2026-11-23). [Timing distribution](https://tracelab.cs.washington.edu/exp/session/session_timing_distribution/), published records of two coding agents. *SyFI TraceLab, University of Washington*.
+- Yan (2026). [Multi-Agents: What's Actually Working](https://cognition.com/blog/multi-agents-working). *Cognition*.
 
 ### Related Methodologies
 - Knuth, D. (1984). [Literate Programming](https://academic.oup.com/comjnl/article/27/2/97/343244). *The Computer Journal*, 27(2), 97-111.

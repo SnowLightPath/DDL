@@ -146,6 +146,18 @@ A report of completed or read-only work needs no approval by itself. If a next s
 
 Native approval UI depends on the host and mode. When it is unavailable or not permitted, the agent states the limitation and stops instead of automatically substituting typed choices. A request receipt is not the human's answer.
 
+When the work runs long and in parallel, DDL holds to these principles, each in the form implemented today (the [detailed guide](./design_philosophy_extended.md#37-principles-of-a-run) gives the research behind them):
+
+- **Keep no slot idle while work is ready.** As each worker finishes, the next ready item starts: on Codex the gate's `runner` refills, on Claude the lead does when a completion notice arrives. How the slots were used is shown, and full use is not a goal.
+- **Agents work on this machine; remote machines only run what they are handed.** Conversations, approvals and keys stay here, and a remote machine keeps only a throwaway copy.
+- **Saving, recording and sending are separate.** The human checks by content a push, whose review lists every commit it sends, and a commit outside the grant. Snapshots, commits inside the grant and handovers are checked by scope in the plan, and the gate records them.
+- **Approval follows the kind of operation, not the stage.** The human is asked when the design is decided, when a plan and its grant are approved, and before work leaves this machine. Only the work that depends on an answer stops, and a timeout decides nothing.
+- **design.md is in the present tense; the history is in the past.**
+- **Human attention is a budget.** Questions are removed by design, not by care, and counted.
+- **Reduce the serial part, not the head count.** The lead keeps writers to the independent items and gives spare slots to verifying and exploring.
+- **Verification is independent of the writer.** The lead gives a verifier only the diff and the acceptance conditions, never the writer's conversation, and executable checks decide.
+- **What not to do** is listed under Anti-Patterns below.
+
 ## Stay Flexible
 
 DDL is not a strict procedure.
@@ -178,6 +190,11 @@ What matters is updating documents after the work (Reflect), before the commit t
 | Going ahead provisionally on what cannot be undone | An overturned answer cannot be taken back; a provisional choice needs a snapshot, and nothing leaves the machine until it is answered |
 | Stacking one provisional choice on another | One overturned answer would undo both; the gate refuses a provisional question over items another one holds |
 | Asking a question that stops all work while the human is away | Everything waits on one answer; a question names the items it holds, and the rest of the grant's work goes on |
+| Leaving a slot idle while items are ready, or waiting for a wave | The work waits for nothing it depends on; refilling as each worker finishes keeps the slots in use |
+| Aiming at full utilization | The goal is no idle slot while work is ready, not slots that are always full |
+| Adding writers beyond the independent items | More writers do not shorten the serial parts, and their errors multiply |
+| Letting a writer verify its own work | A verifier that shares the writer's context is lenient; executable checks decide |
+| Going around the exit gate (Git beyond ssh, Git inside a script, another transfer) | What leaves the machine skips the human's one confirmation |
 
 ## Summary
 
@@ -185,9 +202,9 @@ DDL uses temporary notes to help Human and LLM share purposes and designs across
 
 Ultimately, code becomes the source of truth. Delete DDL documents when no longer needed.
 
-Saving, recording and sending are separate. A snapshot saves the work tree as a commit under `refs/ddl/snapshots/` and moves no branch, index or file, so DDL puts no question before one; inside a grant the gate allows it, and outside one, as in a standalone command, the host's own permission policy decides the call. A commit on a branch and a push are what the human checks by content, in one Git review.
+Saving, recording and sending are separate. A snapshot saves the work tree as a commit under `refs/ddl/snapshots/` and moves no branch, index or file, so DDL puts no question before one; inside a grant the gate allows it, and outside one, as in a standalone command, the host's own permission policy decides the call. A push, and a commit no grant covers, are what the human checks by content, in one Git review; with `commit` in the grant, the gate records the local commits inside it without a question.
 
-Before recording or sending changes with Git, the agent shows the final diff, exact message, and destination in a review file. One submitted native choice covers the compatible ready set; its question names the review ID and that file, so the question alone is enough to decide. The hook checks ordinary commit/push calls against that review even when STOP is open; an earlier implementation approval or a normal reply is insufficient. Changed contents require a new review. A call that matches the answered review is allowed by the hook, so the host does not ask a second time; the user's own ask rules still apply, and on Codex that allow, given through PermissionRequest, is not yet checked in a live run. This guard covers calls reaching the hook, with the runtime limits documented separately. The Close stage brings design.md and the documents up to date before that review, so one commit ends the work and no further command follows.
+Before recording or sending changes with Git, the agent shows the final diff, exact message, and destination in a review file. One submitted native choice covers the compatible ready set; its question names the review ID and that file, so the question alone is enough to decide. The hook checks ordinary commit/push calls (a commit inside the grant aside) against that review even when STOP is open; an earlier implementation approval or a normal reply is insufficient. Changed contents require a new review. A call that matches the answered review is allowed by the hook, so the host does not ask a second time; the user's own ask rules still apply, and on Codex that allow, given through PermissionRequest, is not yet checked in a live run. This guard covers calls reaching the hook, with the runtime limits documented separately. The Close stage brings design.md and the documents up to date before that review, so one commit ends the work and no further command follows.
 
 **Tool-Assisted Option:** [Claude](../../hosts/claude/) (`/draft`, `/realize`, `/reflect` + support commands) | [OpenAI Codex](../../hosts/codex/) (`$draft`, `$realize`, `$reflect` + support skills)
 
