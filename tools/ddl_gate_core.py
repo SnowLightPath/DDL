@@ -306,7 +306,9 @@ LANGUAGE_CODE = _Pattern("LANGUAGE_CODE", r"[A-Za-z]{2,8}(?:[-_][A-Za-z0-9]{1,8}
 MIN_OPTIONS, MAX_OPTIONS = 2, 4  # the bounds of one native Claude question's options
 REPORT_VERSION = 3  # the report.json schema; a change of fields bumps it (2: grant and projectKey; 3: confirm)
 REPORT_INPUT_KEYS = {"language", "decision", "recommendation", "consequence", "detail", "options", "multiSelect",
-                     "grant", "confirm", "holds", "queue", "provisional", "replaces"}
+                     "grant", "confirm", "holds", "queue", "provisional", "replaces", "kind", "gate"}
+REPORT_KINDS = ("plan", "gate", "confirm", "decision", "draft")  # a question's kind, when the input names it
+PROMOTE_LABELS = {"ja": "上げる候補", "en": "Promote"}
 REPORT_LINE_KEYS = ("decision", "recommendation", "consequence")
 # The fields the report ID hashes; report.json adds id, question, nativeRequest and reportHash.
 # `grant` and `confirm` are None for a report without them; `projectKey` is None outside a DDL project.
@@ -768,7 +770,7 @@ def display_remote(url):
     return url
 
 
-def push_snapshot(cwd, args, commits=(), record=None):
+def push_snapshot(cwd, args, commits=(), record=None, project=None):
     flags = []
     while args and args[0] in ("--no-follow-tags", "--recurse-submodules=no"):
         flags.append(args[0]);args = args[1:]
@@ -798,6 +800,14 @@ def push_snapshot(cwd, args, commits=(), record=None):
         raise ValueError("the destination must be one explicit branch ref.")
     if not source or source.startswith("+") or any(c in source + destination for c in "*?[]"):
         raise ValueError("wildcards, deletion, and forced refspecs are not ordinary branch reviews.")
+    if project is not None:  # a preparation: the edition built from an earlier commit operation
+        return edition_push(cwd, repo, remote, urls, source, destination, project)
+    if record is not None:
+        edition = next((op for op in record["operations"] if op["kind"] == "push" and op.get("project")
+                        and op["repo"] == repo and op["remote"] == remote and op["destination"] == destination), None)
+        if edition is not None:
+            verify_edition(cwd, record, edition, source)
+            return edition, b""
     dependent = next((c for c in commits if c["repo"] == repo and source in
                       ("HEAD", c["branch"], c["branch"].removeprefix("refs/heads/"))), None)
     oid = None if dependent else git_text(cwd, "rev-parse", "--verify", source + "^{commit}")
@@ -828,6 +838,221 @@ def push_snapshot(cwd, args, commits=(), record=None):
             "source": source, "destination": destination, "commit": oid,
             "fromCommit": review_hash(dependent) if dependent else None, "sends": sends, "remoteHead": head,
             "remoteBase": None if head else base}, b""
+
+
+EDITION_KEYS = {"from", "include", "files", "message", "author", "base"}
+EDITION_MARKER = "\n\nBuilt-by: public-edition\n"  # how every edition message ends (edition.py)
+
+
+def edition_spec(spec, operations):
+    """The checked `project` of a push request: {from, include, files, message, author, base}; `from` names an
+    earlier commit operation of the review (by its number) in the same repository; `base` null for a first publish.
+    ValueError otherwise."""
+    if not isinstance(spec, dict) or set(spec) != EDITION_KEYS:
+        raise ValueError("project is {from, include, files, message, author, base}: the number of an earlier commit "
+                         "operation, the include list and overlay directory inside that commit, the edition's exact "
+                         "message and author, and the target's last published ref (null for a first publish).")
+    if type(spec["from"]) is not int or not 1 <= spec["from"] <= len(operations) \
+            or operations[spec["from"] - 1]["kind"] != "commit":
+        raise ValueError("project.from names an earlier commit operation of this review by its number.")
+    source = operations[spec["from"] - 1]
+    if source.get("gitDir"):
+        raise ValueError("project.from names a commit of the project's own repository, not of a second Git directory.")
+    for key in ("include", "files"):
+        edition_path(spec[key], "project." + key)
+    author = spec["author"]
+    if not isinstance(author, dict) or set(author) != {"name", "email"} or not all(
+            isinstance(author[key], str) and author[key].strip() == author[key] and author[key]
+            and not re.search(r"[<>\n]", author[key]) for key in ("name", "email")):
+        raise ValueError("project.author is {name, email}, each one line without < or >.")
+    if not isinstance(spec["message"], str) or not spec["message"].endswith(EDITION_MARKER) \
+            or not spec["message"][:-len(EDITION_MARKER)].strip():
+        raise ValueError("project.message is the edition commit's exact message, which ends with "
+                         "\"\\n\\nBuilt-by: public-edition\\n\".")
+    if spec["base"] is not None and (not isinstance(spec["base"], str) or not one_line(spec["base"])
+                                     or spec["base"].startswith("-")):
+        raise ValueError("project.base names the target's last published commit, a ref such as public-edition/main "
+                         "(null for a first publish).")
+    return dict(spec)
+
+
+def edition_path(path, label):
+    """A repository-relative path as an edition names it: no absolute path, no `.`, `..` or empty part."""
+    if not isinstance(path, str) or not path or path.startswith("/") or "\\" in path \
+            or any(part in ("", ".", "..") for part in path.split("/")):
+        raise ValueError("{} is a repository-relative path without `.` or `..` parts.".format(label))
+    return path
+
+
+def edition_entries(listing, read_blob, spec):
+    """The edition's entries [(mode, type, oid, path)], sorted by path, from a commit's listing, exactly as
+    edition.py projects it: each path of the include list (lines trimmed; blank and `#` lines skipped; a `./` prefix
+    and a trailing `/` dropped), a file, a directory's whole subtree or a submodule's gitlink; then every record under
+    the overlay directory (symbolic links and modes as they are) at its path relative to it, replacing an included
+    one. Nothing under the include list's own directory. ValueError for an empty, absolute, `.` or `..` line, one in
+    that directory or missing from the tree, an empty list, an overlay into that directory, or a file/directory
+    conflict between an overlay and what is included."""
+    config = spec["include"].rpartition("/")[0]
+    under = lambda path, prefix: bool(prefix) and (path == prefix or path.startswith(prefix + "/"))
+    by_path = {entry[3]: entry for entry in listing}
+    if spec["include"] not in by_path or by_path[spec["include"]][1] != "blob":
+        raise ValueError("project.include names no file of the commit.")
+    final = {}
+    for n, line in enumerate(read_blob(by_path[spec["include"]][2]).decode("utf-8", "replace").splitlines(), 1):
+        text = line.strip()
+        if not text or text.startswith("#"):
+            continue
+        entry = text
+        while entry.startswith("./"):
+            entry = entry[2:]
+        entry = entry.rstrip("/")
+        if not entry or entry.startswith("/") or any(part in ("", ".", "..") for part in entry.split("/")):
+            raise ValueError("include line {}: {} is not a repository-relative path.".format(n, json.dumps(text)))
+        if under(entry, config):
+            raise ValueError("include line {}: {} is in the include list's own directory.".format(n, json.dumps(text)))
+        records = [item for item in listing if under(item[3], entry)]
+        if not records:
+            raise ValueError("include line {}: {} is not in the commit.".format(n, json.dumps(entry)))
+        for item in records:
+            final[item[3]] = item
+    if not final:
+        raise ValueError("the include list names no path.")
+    included = dict(final)
+    prefix = spec["files"].rstrip("/") + "/"
+    for mode, kind, oid, path in listing:
+        if not path.startswith(prefix):
+            continue
+        rel = path[len(prefix):]
+        if under(rel, config):
+            raise ValueError("{} would place a file in the include list's own directory.".format(json.dumps(path)))
+        parts = rel.split("/")
+        if any("/".join(parts[:i]) in included for i in range(1, len(parts))):
+            raise ValueError("{} sits below an included file.".format(json.dumps(path)))
+        if any(other.startswith(rel + "/") for other in included):
+            raise ValueError("{} would replace an included directory.".format(json.dumps(path)))
+        final[rel] = (mode, kind, oid, rel)
+    return [final[path] for path in sorted(final)]
+
+
+def index_listing(cwd, pin=None):
+    """[(mode, type, oid, path)] of the index at `cwd` (stage 0 only), a pinned gitlink's oid read as its marker."""
+    found = []
+    for item in git_read(cwd, "ls-files", "-s", "-z").split(b"\0"):
+        if not item:
+            continue
+        head, _, path = item.decode("utf-8", "surrogateescape").partition("\t")
+        mode, oid, stage = head.split(" ")
+        if stage != "0":
+            raise ValueError("the index of project.from's repository has unmerged paths.")
+        kind = "commit" if mode == "160000" else "blob"
+        if pin and mode == "160000" and path == pin["submodule"]:
+            oid = "pinned:{}".format(pin["from"])
+        found.append((mode, kind, oid, path))
+    return found
+
+
+def tree_listing(cwd, treeish):
+    """[(mode, type, oid, path)] of every file, symbolic link and gitlink of a commit or tree."""
+    found = []
+    for item in git_read(cwd, "ls-tree", "-r", "-z", "--full-tree", treeish).split(b"\0"):
+        if item:
+            head, _, path = item.decode("utf-8", "surrogateescape").partition("\t")
+            mode, kind, oid = head.split(" ")
+            found.append((mode, kind, oid, path))
+    return found
+
+
+def edition_tree(cwd, entries):
+    """The tree object of `entries`, written through a temporary index (only at a preparation)."""
+    import tempfile
+    with tempfile.TemporaryDirectory(prefix="ddl-edition-") as tmp:
+        env = dict(os.environ, GIT_INDEX_FILE=os.path.join(tmp, "index"))
+        for args, data in ((["read-tree", "--empty"], None),
+                           (["update-index", "-z", "--index-info"], b"".join(
+                               "{} {} {}\t".format(mode, kind, oid).encode() + path.encode("utf-8", "surrogateescape") +
+                               b"\0" for mode, kind, oid, path in entries)), (["write-tree"], None)):
+            proc = subprocess.run(["git", "--no-pager", "-C", str(cwd), *args], input=data, capture_output=True,
+                                  env=env, timeout=20)
+            if proc.returncode:
+                raise ValueError("the edition's tree cannot be written ({}).".format(args[0]))
+        return proc.stdout.decode().strip()
+
+
+def edition_push(cwd, repo, remote, urls, source, destination, project):
+    """(operation, patch) of the edition push at a preparation: what operation `from` stages, projected; the
+    target's head read from the remote and equal to `base`; the projected diff against it as the patch."""
+    spec, source_op = project
+    if source_op["repo"] != repo:
+        raise ValueError("project.from names a commit of the repository the edition is pushed from.")
+    listing = index_listing(source_op["repo"], source_op.get("pin"))
+    entries = edition_entries(listing, lambda oid: git_read(repo, "cat-file", "blob", oid), spec)
+    head, _ = remote_refs(cwd, remote, destination)
+    branch = destination[len("refs/heads/"):]
+    if spec["base"] is None:
+        if head is not None:
+            raise ValueError("project.base is null (a first publish), but the target has {} already.".format(branch))
+        base = None
+    else:
+        base = git_text(cwd, "rev-parse", "--verify", "--quiet", spec["base"] + "^{commit}", optional=True)
+        if base is None or base != head:
+            raise ValueError("project.base is not the target's head now ({} names {}, the remote's {} {}); fetch it "
+                             "first.".format(spec["base"], (base or "nothing")[:12], branch, (head or "is new")[:12]))
+    staged = {path: oid for _, _, oid, path in index_listing(source_op["repo"])}  # the pinned gitlink as staged now
+    tree = edition_tree(cwd, [(mode, kind, staged[path] if oid.startswith("pinned:") else oid, path)
+                              for mode, kind, oid, path in entries])
+    empty = git_text(cwd, "hash-object", "-t", "tree", os.devnull)
+    patch = git_read(cwd, "diff", "--binary", "--no-ext-diff", "--no-textconv", "--no-renames",
+                     (base + "^{tree}") if base else empty, tree)
+    names = git_read(cwd, "diff", "--name-status", "-z", "--no-renames", (base + "^{tree}") if base else empty, tree)
+    fields = [field.decode("utf-8", "surrogateescape") for field in names.split(b"\0") if field]
+    changes = [[status, path] for status, path in zip(fields[0::2], fields[1::2])]
+    edition = {key: spec[key] for key in sorted(EDITION_KEYS)}
+    edition.update(baseCommit=base, tree=review_hash(entries), changes=changes,
+                   patchHash=hashlib.sha256(patch).hexdigest(), pinned=bool(source_op.get("pin")))
+    return {"kind": "push", "repo": repo, "cwd": str(cwd), "remote": remote,
+            "urlHash": review_hash(urls), "displayUrl": display_remote(urls[0]),
+            "source": source, "destination": destination, "commit": None, "fromCommit": None,
+            "sends": [{"commit": None, "subject": None}], "remoteHead": head, "remoteBase": None if head else [],
+            "project": edition}, patch
+
+
+def verify_edition(cwd, record, op, source):
+    """At the edition push: its source commit must hold exactly the projection of operation `from`'s actual commit
+    (the commit the review created: its parent, message and tree), have the target's head now (read with
+    ls-remote, as the review recorded it) as its one parent (none for a first publish), and carry the reviewed
+    message, with the reviewed author as both author and committer. ValueError with the reason otherwise."""
+    global _git_review_deadline
+    spec = op["project"]
+    source_op = record["operations"][spec["from"] - 1]
+    made = git_text(source_op["repo"], "rev-parse", "--verify", source_op["branch"] + "^{commit}")
+    if not matches_created_commit(source_op, source_op["repo"], made, pin_accept(record, source_op.get("pin"))):
+        raise ValueError("operation {}'s branch does not end at the commit the review created.".format(spec["from"]))
+    projected = edition_entries(tree_listing(source_op["repo"], made),
+                                lambda oid: git_read(source_op["repo"], "cat-file", "blob", oid), spec)
+    tip = git_text(cwd, "rev-parse", "--verify", source + "^{commit}")
+    if tree_listing(cwd, tip) != projected:
+        raise ValueError("the edition's tree is not the projection of operation {}'s commit.".format(spec["from"]))
+    started = time.monotonic()
+    found = ls_remote(cwd, op["remote"], [], [op["destination"]], LS_REMOTE_PIN_SECONDS)
+    if _git_review_deadline:  # the network read does not count against the hook's own Git budget
+        _git_review_deadline += time.monotonic() - started
+    head = next((oid for oid, ref in found if ref == op["destination"]), None)
+    if head != op["remoteHead"]:
+        raise ValueError("the target's {} moved since the review; prepare it again.".format(
+            op["destination"][len("refs/heads/"):]))
+    data = git_read(cwd, "cat-file", "commit", tip)
+    header, _, message = data.partition(b"\n\n")
+    lines = header.decode("utf-8", "replace").splitlines()
+    parents = [line.split(" ", 1)[1] for line in lines if line.startswith("parent ")]
+    people = {role: re.sub(r" \d+ [+-]\d{4}$", "", next((line[len(role) + 1:] for line in lines
+                                                          if line.startswith(role + " ")), "")) for role in ("author", "committer")}
+    if parents != ([head] if head else []):
+        raise ValueError("the edition commit's parent is not the target's head.")
+    if message.decode("utf-8", "replace") != spec["message"]:
+        raise ValueError("the edition commit's message is not the reviewed one.")
+    expected = "{} <{}>".format(spec["author"]["name"], spec["author"]["email"])
+    if people["author"] != expected or people["committer"] != expected:
+        raise ValueError("the edition commit's author and committer are not the reviewed author.")
 
 
 def push_target(cwd, remote):
@@ -914,7 +1139,7 @@ def commit_patch(cwd, oid):
     return message, patch
 
 
-def snapshot_operation(request, commits=(), record=None, pin=None, live=False):
+def snapshot_operation(request, commits=(), record=None, pin=None, live=False, project=None):
     """(operation, patch) of one review request: at a preparation (`record` None), or at the commit or push the review
     `record` approved. `pin` reads a commit as the pinned one (commit_snapshot), its gitlink judged by the record."""
     if not isinstance(request, dict) or not isinstance(request.get("command"), str):
@@ -924,7 +1149,7 @@ def snapshot_operation(request, commits=(), record=None, pin=None, live=False):
         raise ValueError("pin goes with a commit of the superproject.")
     if kind == "commit":  # at a preparation a pinned gitlink is unknown yet; at a commit the record judges it
         return commit_snapshot(cwd, args, ctx, pin, None if record is None else pin_accept(record, pin, live))
-    return push_snapshot(cwd, args, commits, record)
+    return push_snapshot(cwd, args, commits, record, project)
 
 
 def pin_accept(record, pin, live=False):
@@ -1187,12 +1412,17 @@ def review_report(record, directory):
                "initial": "最初のコミット", "message": "コミットメッセージ", "files": "変更するファイル", "diff": "差分を確認する",
                "remote": "送信先", "destination": "送信先ブランチ", "source": "送信するコミット",
                "dependent": "この確認案の変更内容とメッセージで作成するコミット",
-               "sends": "送るコミット（{} 件）:", "pin": "サブモジュール {}: 操作 {} が送るコミット"} if ja else
+               "sends": "送るコミット（{} 件）:", "pin": "サブモジュール {}: 操作 {} が送るコミット",
+               "edition": "操作 {} から作る公開版", "author": "作成者", "edition_base": "公開先の直近のコミット",
+               "edition_pin": "サブモジュールは操作 {} の固定するコミットになる"} if ja else
               {"heading": "Git review", "commit": "Commit", "push": "Push", "branch": "Branch", "base": "Base",
                "initial": "initial commit", "message": "Message", "files": "Files", "diff": "Full diff",
                "remote": "Remote", "destination": "Destination", "source": "Commit",
                "dependent": "the commit created from this same reviewed set",
-               "sends": "Commits sent ({}):", "pin": "Submodule {}: the commit operation {} pushes"})
+               "sends": "Commits sent ({}):", "pin": "Submodule {}: the commit operation {} pushes",
+               "edition": "the edition built from operation {}", "author": "Author",
+               "edition_base": "Target's last published commit",
+               "edition_pin": "its submodule is the commit operation {} pins"})
     lines = ["# " + labels["heading"] + " G-" + record["id"], "", question["title"], ""]
     for i, op in enumerate(record["operations"], 1):
         where = "{} ({})".format(op["workTree"], op["gitDir"]) if op.get("gitDir") else op["repo"]
@@ -1203,6 +1433,20 @@ def review_report(record, directory):
             lines += ["- {} {}".format(status, json.dumps(path, ensure_ascii=False)) for status, path in op["files"]]
             if op.get("pin"):
                 lines += ["", labels["pin"].format(json.dumps(op["pin"]["submodule"], ensure_ascii=False), op["pin"]["from"])]
+            lines += ["", "[" + labels["diff"] + "](<" + str(directory / (str(i) + ".patch")) + ">)", ""]
+        elif op.get("project"):
+            edition = op["project"]
+            lines += [labels["remote"] + ": {} ({})".format(op["remote"], op["displayUrl"]),
+                      labels["destination"] + ": " + op["destination"],
+                      labels["source"] + ": " + labels["edition"].format(edition["from"]),
+                      labels["edition_base"] + ": " + ("{} ({})".format(edition["base"], edition["baseCommit"])
+                                                       if edition["base"] else labels["initial"]),
+                      labels["author"] + ": {} <{}>".format(edition["author"]["name"], edition["author"]["email"]), "",
+                      labels["message"] + ":", "", *["> " + line for line in edition["message"].splitlines()], "",
+                      labels["files"] + ":", ""]
+            lines += ["- {} {}".format(status, json.dumps(path, ensure_ascii=False)) for status, path in edition["changes"]]
+            if edition.get("pinned"):
+                lines += ["", labels["edition_pin"].format(edition["from"])]
             lines += ["", "[" + labels["diff"] + "](<" + str(directory / (str(i) + ".patch")) + ">)", ""]
         else:
             lines += [labels["remote"] + ": {} ({})".format(op["remote"], op["displayUrl"]),
@@ -1245,7 +1489,15 @@ def prepare_git_review(runtime, data):
                                  "an earlier push operation of this review (1 for the first operation).")
             if not 1 <= pin["from"] <= len(operations) or operations[pin["from"] - 1]["kind"] != "push":
                 raise ValueError("pin.from names an earlier push operation of this review by its number.")
-        op, patch = snapshot_operation(request, commits, None, pin)
+        project = request.get("project") if isinstance(request, dict) else None
+        if project is not None:
+            if pin is not None:
+                raise ValueError("a push with project carries no pin.")
+            spec = edition_spec(project, operations)
+            project = (spec, operations[spec["from"] - 1])
+        op, patch = snapshot_operation(request, commits, None, pin, project=project)
+        if project is not None and op["kind"] != "push":
+            raise ValueError("project goes with a push operation.")
         if pin:
             push = operations[pin["from"] - 1]
             url = submodule_url(op["repo"], pin["submodule"])
@@ -1575,6 +1827,9 @@ def report_question(record, path):
     if record["grant"]:
         label = GRANT_LABELS["ja" if is_japanese(record["language"]) else "en"][0]
         question += "\n" + label + ": " + grant_line(record["language"], record["grant"])
+        if (record.get("promote") or {}).get("line"):
+            label = PROMOTE_LABELS["ja" if is_japanese(record["language"]) else "en"]
+            question += "\n" + label + ": " + record["promote"]["line"]
     if record["confirm"]:
         label = CONFIRM_LABELS["ja" if is_japanese(record["language"]) else "en"]
         question += "\n" + label + ": " + confirm_line(record["language"], record["confirm"])
@@ -2286,6 +2541,12 @@ def prepare_report(runtime, data):
         if project is None:
             raise ValueError("a confirmation belongs to a DDL project; prepare the report from inside the project.")
         confirm = confirm_resources(confirm)
+    if data.get("kind") is not None and data["kind"] not in REPORT_KINDS:
+        raise ValueError("kind is one of {}.".format(", ".join(REPORT_KINDS)))
+    if data.get("gate") is not None and not isinstance(data["gate"], bool):
+        raise ValueError("gate is true or false: whether the report asks a design.md human gate.")
+    marks = {key: data[key] for key in ("kind", "gate") if data.get(key) is not None}
+    promote = plan_promotion(language) if grant is not None else None
     optional = {key: data[key] for key in REPORT_OPTIONAL_KEYS if data.get(key) is not None}
     if optional:
         root = cwd_ledger()[0]
@@ -2311,7 +2572,7 @@ def prepare_report(runtime, data):
               **{key: data[key] for key in REPORT_LINE_KEYS},
               "options": report_options(language, data.get("options")), "multiSelect": multi,
               "detailHash": hashlib.sha256(detail.encode("utf-8")).hexdigest(), "grant": grant, "confirm": confirm,
-              "projectKey": project, **optional}
+              "projectKey": project, **optional, **marks, **({"promote": promote} if promote else {})}
     record["id"] = review_hash(record)[:ID_HEX_LENGTH]
     directory = report_directory() / record["id"]
     question, request = report_question(record, directory / "report.md")
@@ -2337,10 +2598,28 @@ def prepare_report(runtime, data):
             "nativeRequest": request}
 
 
+def plan_promotion(language):
+    """For a plan (a report with a grant): what ddl_run.promotion reads in the project's ledger, {block, line}, or
+    None when it names no candidate. A preparation is a subcommand: it may load ddl_run, which no hook event does."""
+    root = cwd_ledger()[0]
+    if not root:
+        return None
+    try:
+        found = run_module().promotion(root, "ja" if is_japanese(language) else "en")
+    except Exception:  # the candidates inform the plan; an unreadable ledger leaves them out
+        return None
+    if not isinstance(found, dict):
+        return None
+    block = [line for line in found.get("block") or [] if isinstance(line, str)]
+    line = found.get("line") if isinstance(found.get("line"), str) and one_line(found.get("line")) else None
+    return {"block": block, "line": line} if block or line else None
+
+
 def report_head(record, question):
     """What the gate writes at the top of report.md: the question, the grant's block and the confirmations' block
     when the report carries them; the detail follows."""
     block = grant_block(record["language"], record["grant"]) + "\n\n" if record["grant"] else ""
+    block += "\n".join(record["promote"]["block"]) + "\n\n" if (record.get("promote") or {}).get("block") else ""
     block += confirm_block(record["language"], record["confirm"]) + "\n\n" if record["confirm"] else ""
     block += hold_block(record["language"], record) + "\n\n" if record.get("holds") else ""
     return question + "\n\n" + block
@@ -2495,6 +2774,11 @@ def approved_git_review(runtime, payload):
             data = b"" if op.get("pin") and not path.exists() else path.read_bytes()
             if hashlib.sha256(data).hexdigest() != op["patchHash"]:
                 raise ValueError("the reviewed diff was changed after preparation.")
+        elif op.get("project"):
+            path = directory / (str(i) + ".patch")
+            data = path.read_bytes() if path.exists() else b""
+            if hashlib.sha256(data).hexdigest() != op["project"]["patchHash"]:
+                raise ValueError("the edition's reviewed diff was changed after preparation.")
     for key, detail in (record.get("sent") or {}).items():
         if hashlib.sha256((directory / (key + ".patch")).read_bytes()).hexdigest() != detail["patchHash"]:
             raise ValueError("the diff of a commit the push sends was changed after preparation.")

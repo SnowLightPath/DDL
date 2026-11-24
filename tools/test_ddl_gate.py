@@ -5366,6 +5366,62 @@ class PushReviewTest(GitReviewTest):
                                     GIT_COMMITTER_EMAIL="f@x.invalid"))
             pushed = self.commit("to pin after " + runtime + "\n", "To pin again")
 
+    def test_an_edition_of_a_pinned_superproject_shows_the_pin_and_carries_it(self):
+        top, allow = self.superproject()
+        env = dict(allow, GIT_AUTHOR_NAME="f", GIT_AUTHOR_EMAIL="f@x.invalid", GIT_COMMITTER_NAME="f",
+                   GIT_COMMITTER_EMAIL="f@x.invalid")
+        run = lambda *args, cwd=top: subprocess.run(["git", "-C", str(cwd), *args], check=True, env=env,
+                                                    capture_output=True, text=True).stdout.strip()
+        for path, text in ((".public-edition/include", "ddl\n"), (".public-edition/files/README.md", "Edition\n")):
+            (top / path).parent.mkdir(parents=True, exist_ok=True)
+            (top / path).write_text(text)
+        run("add", "-A")
+        run("commit", "-q", "-m", "edition config")
+        target = pathlib.Path(self.tmp) / "edition.git"
+        subprocess.run(["git", "init", "--bare", "-q", "-b", "main", str(target)], check=True, env=self.git_env)
+        run("remote", "add", "public-edition", str(target))
+        message = pathlib.Path(self.tmp) / "pin.txt"
+        message.write_text("Pin ddl\n")
+        pin_commit = "git -C {} commit --cleanup=verbatim -F {}".format(shlex.quote(str(top)), shlex.quote(str(message)))
+        edition_push = "git -C {} push public-edition public:refs/heads/main".format(shlex.quote(str(top)))
+        author = {"name": "Edition", "email": "edition@example.invalid"}
+        edition_message = "First edition\n\nBuilt-by: public-edition\n"
+        pushed = self.commit("pinned edition\n", "To pin")
+        ops = [{"cwd": str(self.repo), "command": "git push origin main"},
+               {"cwd": str(top), "command": pin_commit, "pin": {"submodule": "ddl", "from": 1}},
+               {"cwd": str(top), "command": edition_push, "project": {
+                   "from": 2, "include": ".public-edition/include", "files": ".public-edition/files",
+                   "message": edition_message, "author": author, "base": None}}]
+        review = json.loads(self.run_gate("prepare-git-review", "claude", {"language": "en", "operations": ops}).stdout)
+        report = pathlib.Path(review["report"]).read_text()
+        self.assertIn("its submodule is the commit operation 2 pins", report)
+        self.assertIn("Target's last published commit: initial commit", report)
+        self.record("claude", review)
+        self.pushed("claude", self.check("claude", "git push origin main"))
+        self.git("push", "-q", "origin", "main")
+        run("fetch", "-q", cwd=top / "ddl")
+        run("checkout", "-q", pushed, cwd=top / "ddl")
+        run("add", "ddl")
+        self.passed("claude", self.check("claude", pin_commit))
+        run("commit", "-q", "--cleanup=verbatim", "-F", str(message))
+        made = run("rev-parse", "HEAD")
+        index = pathlib.Path(self.tmp) / "edition.index"
+        listing = [line for line in run("ls-tree", "-r", "--full-tree", made).splitlines()
+                   if line.endswith("\tddl") or "\t.public-edition/files/" in line]
+        data = "".join(line.replace(".public-edition/files/", "") + "\0" for line in listing).encode()
+        ienv = dict(env, GIT_INDEX_FILE=str(index))
+        subprocess.run(["git", "-C", str(top), "read-tree", "--empty"], check=True, env=ienv)
+        subprocess.run(["git", "-C", str(top), "update-index", "-z", "--index-info"], input=data, check=True, env=ienv)
+        tree = subprocess.run(["git", "-C", str(top), "write-tree"], capture_output=True, text=True, check=True,
+                              env=ienv).stdout.strip()
+        built = subprocess.run(["git", "-C", str(top), "commit-tree", tree, "-F", "-"], input=edition_message,
+                               capture_output=True, text=True, check=True,
+                               env=dict(env, GIT_AUTHOR_NAME="Edition", GIT_AUTHOR_EMAIL="edition@example.invalid",
+                                        GIT_COMMITTER_NAME="Edition", GIT_COMMITTER_EMAIL="edition@example.invalid")).stdout.strip()
+        run("branch", "-f", "public", built)
+        self.assertEqual(run("rev-parse", "public:ddl"), pushed)
+        self.passed("claude", self.check("claude", edition_push))
+
     def test_a_pinned_commit_waits_for_its_push_on_the_remote(self):
         top, allow = self.superproject()
         message = pathlib.Path(self.tmp) / "pin.txt"
@@ -7124,6 +7180,246 @@ class FailOpenTest(GateTest):
         self.assert_fail_open(proc)
         self.assertNotIn("permissionDecision", proc.stdout)
 
+
+
+class PromotionTest(GrantFlowTest):
+    """A plan's preparation shows what ddl_run.promotion names: its block in the report file, its line after the
+    grant line; a report's optional kind and gate are kept in its record."""
+
+    def prepare_here(self, language="ja", **fields):
+        """prepare_report in this process, in the project, with the test's own state and store."""
+        data = dict(PrepareReportTest.BASE, language=language, grant=grant(), **fields)
+        previous = os.getcwd()
+        os.chdir(self.cwd)
+        try:
+            with mock.patch.dict(os.environ, {"DDL_GATE_STATE_DIR": self.state, "DDL_GATE_GRANT_DIR": self.grants}):
+                return ddl_gate.prepare_report("claude", data)
+        finally:
+            os.chdir(previous)
+
+    def test_a_plan_shows_its_promotion_candidates(self):
+        found = {"block": ["## 上げる候補", "", "- commit（7 回続けて承認）: 許諾の命令 `commit`"], "line": "commit（7 回続けて承認）"}
+        with mock.patch.object(ddl_run, "promotion", return_value=found) as called:
+            out = self.prepare_here()
+        self.assertEqual(called.call_args[0], (os.path.realpath(self.root), "ja"))
+        lines = out["question"].splitlines()
+        grant_at = next(i for i, line in enumerate(lines) if line.startswith("許諾: "))
+        self.assertEqual(lines[grant_at + 1], "上げる候補: commit（7 回続けて承認）")
+        text = pathlib.Path(out["report"]).read_text(encoding="utf-8")
+        self.assertLess(text.index("```\n範囲"), text.index("## 上げる候補"))
+        self.assertLess(text.index("## 上げる候補"), text.index(PrepareReportTest.BASE["detail"].splitlines()[0]))
+        self.assertEqual(json.loads((pathlib.Path(out["report"]).parent / "report.json").read_text())["promote"], found)
+        with mock.patch.object(ddl_run, "promotion", return_value={"block": ["Demotion candidates", "- commit"], "line": None}):
+            out = self.prepare_here(language="en")
+        self.assertFalse(any(line.startswith("Promote: ") for line in out["question"].splitlines()))
+        self.assertIn("Demotion candidates", pathlib.Path(out["report"]).read_text(encoding="utf-8"))
+        # Nothing named, or the ledger cannot be read: no line, no block, no key.
+        for answer in ({"block": [], "line": None}, OSError("unreadable")):
+            with mock.patch.object(ddl_run, "promotion", side_effect=[answer] if isinstance(answer, Exception) else None,
+                                   return_value=answer):
+                out = self.prepare_here()
+            self.assertNotIn("上げる候補", out["question"])
+            self.assertNotIn("promote", json.loads((pathlib.Path(out["report"]).parent / "report.json").read_text()))
+        # A report without a grant asks nothing of the ledger.
+        with mock.patch.object(ddl_run, "promotion") as called:
+            previous = os.getcwd()
+            os.chdir(self.cwd)
+            try:
+                with mock.patch.dict(os.environ, {"DDL_GATE_STATE_DIR": self.state, "DDL_GATE_GRANT_DIR": self.grants}):
+                    ddl_gate.prepare_report("claude", dict(PrepareReportTest.BASE))
+            finally:
+                os.chdir(previous)
+        called.assert_not_called()
+
+    def test_a_fresh_project_names_no_candidate(self):
+        out = self.prepared("claude")
+        self.assertNotIn("上げる候補", out["question"])
+
+    def test_kind_and_gate_are_kept(self):
+        for runtime in ("claude", "codex"):
+            out = self.prepare_report(runtime, cwd=self.cwd, kind="gate", gate=True)
+            record = json.loads((pathlib.Path(out["report"]).parent / "report.json").read_text())
+            self.assertEqual((record["kind"], record["gate"]), ("gate", True))
+            plain = self.prepare_report(runtime, cwd=self.cwd)
+            record = json.loads((pathlib.Path(plain["report"]).parent / "report.json").read_text())
+            self.assertNotIn("kind", record)
+            for fields, reason in (({"kind": "other"}, "kind is one of plan, gate, confirm, decision, draft"),
+                                   ({"gate": "yes"}, "gate is true or false")):
+                proc = self.subcommand(["prepare-report", "--runtime", runtime], dict(PrepareReportTest.BASE, **fields),
+                                       self.cwd)
+                self.assertEqual(proc.returncode, 2)
+                self.assertIn(reason, proc.stderr)
+
+
+class EditionPushTest(GitReviewTest):
+    """A push that carries `project`: the public edition built from an earlier commit operation of the same review."""
+
+    MESSAGE = "Publish the edition\n\nBuilt-by: public-edition\n"
+    AUTHOR = {"name": "Edition", "email": "edition@example.invalid"}
+
+    def setUp(self):
+        super().setUp()
+        for path, text in ((".public-edition/include", "# what the edition holds\n./docs/\ntools/a.py\n\n"),
+                           (".public-edition/files/README.md", "Public readme\n"), ("docs/guide.md", "Guide\n"),
+                           ("docs/deep/x.md", "x\n"), ("tools/a.py", "a = 1\n"), ("private/notes.md", "private\n")):
+            (self.repo / path).parent.mkdir(parents=True, exist_ok=True)
+            (self.repo / path).write_text(text)
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", "sources")
+        self.target = pathlib.Path(self.tmp) / "public.git"
+        subprocess.run(["git", "init", "--bare", "-q", "-b", "main", str(self.target)], check=True, env=self.git_env)
+        self.git("remote", "add", "public-edition", str(self.target))
+        self.first = self.edition_commit(self.git("rev-parse", "HEAD"), None, "First\n\nBuilt-by: public-edition\n")
+        self.git("push", "-q", "public-edition", self.first + ":refs/heads/main")
+        self.git("fetch", "-q", "public-edition")
+        (self.repo / "docs" / "guide.md").write_text("Guide, revised\n")
+        self.git("add", "docs/guide.md")
+        self.push = "git push public-edition public:refs/heads/main"
+
+    def project(self, **changes):
+        return dict({"from": 1, "include": ".public-edition/include", "files": ".public-edition/files",
+                     "message": self.MESSAGE, "author": self.AUTHOR, "base": "public-edition/main"}, **changes)
+
+    def ops(self, **changes):
+        return [{"cwd": str(self.repo), "command": self.command},
+                {"cwd": str(self.repo), "command": self.push, "project": self.project(**changes)}]
+
+    def edition_tree(self, commit, drop=(), add=()):
+        """The projection of `commit` as edition.py builds it, written as a tree (with changes for the refusals)."""
+        entries = []
+        for line in self.git("ls-tree", "-r", "--full-tree", commit).splitlines():
+            head, path = line.split("\t", 1)
+            if path in drop:
+                continue
+            if path.startswith(("docs/", "tools/a.py")):
+                entries.append((head, path))
+            elif path.startswith(".public-edition/files/"):
+                entries.append((head, path[len(".public-edition/files/"):]))
+        entries += list(add)
+        index = pathlib.Path(self.tmp) / "edition.index"
+        env = dict(self.git_env, GIT_INDEX_FILE=str(index))
+        subprocess.run(["git", "-C", str(self.repo), "read-tree", "--empty"], check=True, env=env)
+        data = "".join("{}\t{}\0".format(head, path) for head, path in entries).encode()
+        subprocess.run(["git", "-C", str(self.repo), "update-index", "-z", "--index-info"], input=data, check=True, env=env)
+        tree = subprocess.run(["git", "-C", str(self.repo), "write-tree"], capture_output=True, text=True, check=True,
+                              env=env).stdout.strip()
+        index.unlink()
+        return tree
+
+    def edition_commit(self, commit, parent, message, author=None, committer=None, tree=None):
+        author, committer = author or self.AUTHOR, committer or author or self.AUTHOR
+        env = dict(self.git_env, GIT_AUTHOR_NAME=author["name"], GIT_AUTHOR_EMAIL=author["email"],
+                   GIT_COMMITTER_NAME=committer["name"], GIT_COMMITTER_EMAIL=committer["email"])
+        return subprocess.run(["git", "-C", str(self.repo), "commit-tree", tree or self.edition_tree(commit),
+                               *(["-p", parent] if parent else []), "-F", "-"], input=message, capture_output=True,
+                              text=True, check=True, env=env).stdout.strip()
+
+    def built(self, change=None):
+        """The reviewed commit made, then the edition branch `public` built from it; `change(made)` gives what differs
+        for a refusal."""
+        self.git("commit", "-q", "--cleanup=verbatim", "-F", str(self.message))
+        made = self.git("rev-parse", "HEAD")
+        changes = change(made) if change else {}
+        edition = self.edition_commit(made, changes.get("parent", self.first), changes.get("message", self.MESSAGE),
+                                      changes.get("author"), changes.get("committer"), changes.get("tree"))
+        self.git("branch", "-f", "public", edition)
+        return made
+
+    def test_the_edition_built_from_the_reviewed_commit_is_pushed(self):
+        for runtime in ("claude", "codex"):
+            with self.subTest(runtime=runtime):
+                review = self.run_gate("prepare-git-review", runtime, {"language": "en", "operations": self.ops()})
+                review = json.loads(review.stdout)
+                report = pathlib.Path(review["report"]).read_text(encoding="utf-8")
+                self.assertIn("Commit: the edition built from operation 1", report)
+                self.assertIn('- M "docs/guide.md"', report)
+                self.assertNotIn("private/notes.md", report)
+                self.assertIn("Author: Edition <edition@example.invalid>", report)
+                patch = (pathlib.Path(review["report"]).parent / "2.patch").read_text()
+                self.assertIn("+" + (self.repo / "docs" / "guide.md").read_text(), patch)
+                self.record(runtime, review)
+                self.blocked(self.check(runtime, self.push))  # nothing built yet
+                self.passed(runtime, self.check(runtime))  # the reviewed commit
+                made = self.built()
+                self.passed(runtime, self.check(runtime, self.push))
+                self.git("push", "-q", "public-edition", "public:refs/heads/main")
+                self.git("fetch", "-q", "public-edition")
+                self.assertEqual(self.git("rev-parse", "public^"), self.first)
+                self.assertEqual(self.git("rev-parse", "public^{tree}"), self.edition_tree(made))
+                self.first = self.git("rev-parse", "public")
+                (self.repo / "docs" / "guide.md").write_text("Guide, again " + runtime + "\n")
+                self.git("add", "docs/guide.md")
+
+    def test_an_edition_that_differs_is_refused(self):
+        other = {"name": "Other", "email": "other@example.invalid"}
+        projection, parent, message, people = ("is not the projection", "parent is not the target's head",
+                                               "message is not the reviewed one", "author and committer are not")
+        cases = {"a file more": (lambda made: dict(tree=self.edition_tree(made, add=[(
+                     "100644 blob " + self.git("rev-parse", made + ":private/notes.md"), "private/notes.md")])), projection),
+                 "a file less": (lambda made: dict(tree=self.edition_tree(made, drop=("tools/a.py",))), projection),
+                 "another parent": (lambda made: dict(parent=made), parent),
+                 "no parent": (lambda made: dict(parent=None), parent),
+                 "another message": (lambda made: dict(message="Other\n\nBuilt-by: public-edition\n"), message),
+                 "another author": (lambda made: dict(author=other), people),
+                 "another committer": (lambda made: dict(committer=other), people)}
+        for label, (change, reason) in cases.items():
+            for runtime in ("claude", "codex"):
+                with self.subTest(label=label, runtime=runtime):
+                    review = json.loads(self.run_gate("prepare-git-review", runtime,
+                                                      {"language": "en", "operations": self.ops()}).stdout)
+                    self.record(runtime, review)
+                    self.passed(runtime, self.check(runtime))
+                    self.built(change)
+                    self.assertIn(reason, self.blocked(self.check(runtime, self.push)))
+                    self.git("reset", "-q", "--soft", "HEAD~1")
+
+    def test_an_edition_operand_that_cannot_be_reviewed_is_refused(self):
+        def refused(operations, reason):
+            for runtime in ("claude", "codex"):
+                proc = self.subcommand(["prepare-git-review", "--runtime", runtime], {"language": "en", "operations": operations})
+                self.assertEqual(proc.returncode, 2, operations)
+                self.assertIn(reason, proc.stderr)
+
+        refused(self.ops(**{"from": 2}), "project.from names an earlier commit operation")
+        refused([{"cwd": str(self.repo), "command": "git push origin main"}, self.ops(**{"from": 1})[1]],
+                "project.from names an earlier commit operation")
+        refused(self.ops(exclude=["docs"]), "project is {from, include, files, message, author, base}")
+        refused(self.ops(message="No marker\n"), "ends with")
+        refused(self.ops(base=None), "a first publish), but the target has main already")
+        self.git("update-ref", "refs/remotes/public-edition/main", self.git("rev-parse", "HEAD"))
+        refused(self.ops(), "project.base is not the target's head now")
+        self.git("fetch", "-q", "public-edition")
+        for line, reason in (("../outside", "is not a repository-relative path"), ("/etc", "is not a repository-relative path"),
+                             ("docs/./x", "is not a repository-relative path"), (".public-edition/files",
+                                                                                 "the include list's own directory"),
+                             ("missing.md", "is not in the commit")):
+            (self.repo / ".public-edition" / "include").write_text(line + "\n")
+            self.git("add", ".public-edition/include")
+            refused(self.ops(), reason)
+        (self.repo / ".public-edition" / "include").write_text("# nothing\n\n")
+        self.git("add", ".public-edition/include")
+        refused(self.ops(), "the include list names no path")
+        (self.repo / ".public-edition" / "include").write_text("docs\ntools/a.py\n")
+        (self.repo / ".public-edition" / "files" / "docs").mkdir(parents=True)
+        (self.repo / ".public-edition" / "files" / "docs" / "deep").write_text("a file for a directory\n")
+        self.git("add", "-A", ".public-edition")
+        refused(self.ops(), "would replace an included directory")
+
+    def test_a_first_publish_has_no_parent(self):
+        fresh = pathlib.Path(self.tmp) / "fresh.git"
+        subprocess.run(["git", "init", "--bare", "-q", "-b", "main", str(fresh)], check=True, env=self.git_env)
+        self.git("remote", "set-url", "public-edition", str(fresh))
+        review = json.loads(self.run_gate("prepare-git-review", "claude",
+                                          {"language": "en", "operations": self.ops(base=None)}).stdout)
+        self.assertIn("Target's last published commit: initial commit", pathlib.Path(review["report"]).read_text())
+        self.record("claude", review)
+        self.passed("claude", self.check("claude"))
+        self.built(lambda made: {"parent": None})
+        self.passed("claude", self.check("claude", self.push))
+
+
+for _name in [name for name in dir(GitReviewTest) if name.startswith("test_")]:
+    setattr(EditionPushTest, _name, None)  # its own tests only: the inherited ones run in GitReviewTest
 
 
 class PeerMailTest(GrantAnswers):
