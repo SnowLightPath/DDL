@@ -77,25 +77,27 @@ Lead integrates results and performs cross-scope analysis:
   D8: Spent Acceptance Gates — every gate in Acceptance Gates is marked passed and the section remains
   D9: Experience Gap — code handles a state Experience does not describe, or does not deliver an Experience item
   D10: Past Kept — design.md holds a dated event, a finished stage's outcome, or a measurement of a past run outside the lines, marks and cells that Notebook Formats define
+  D11: Design Change — a proposal would add, change or remove a principle or a Binding Decision, or remove or alter an Experience item
 
-### Phase 3: REPORT
+Only the user resolves a Binding Drift (D6): fix the code, or change the Binding Decision. D11 asks with options: apply the proposal, leave it unapplied, or revise it.
 
-+++STOP: always
++++STOP: on D6
++++STOP: on D11
 
-Do NOT modify `design.md` without approval. Only the user resolves a Binding Drift (D6): fix the code, or change the Binding Decision.
+### Phase 3: APPLY
 
-+++Report:
-Decision: apply all current compatible recommendations, select or revise the set, or leave it pending.
-Recommendation: a concise overall reason, then numbered actions with stable IDs, each naming the affected principle, Binding Decision, Direction stage, or section as its `Target` and its material effect.
-Consequence: approve all applies the displayed ready set; subset approval applies only the selected IDs. A Binding Drift still requires an explicit action naming code correction or Binding Decision change, never a silent resolution.
-Review detail: each stable proposal ID, type, target, finding and supporting file/line evidence; what each retirement moves to the history.
-Choices: request one batch approval through Approval; open item selection only when requested, with no per-recommendation reapproval after approve all. With no findings, state that no change needs approval and stop.
+Read the Run operation and its implementation for the current host, then make a snapshot (the gate's `snapshot`) before the first change.
 
-### Phase 4: APPLY
++++DETECT:
+  D12: No Snapshot — the snapshot cannot be made (no gate, no Git repository, or a failure)
 
-**Pre-condition.** Enter this phase only after explicit user approval of its scope at the Phase 3 STOP gate (per Approval). If the actual answer does not authorize this work, return to Phase 3 and re-present the current decision.
+D12 asks with options: apply without a snapshot, or apply nothing.
 
-+++SWARM: 2+ approved changes across scopes
++++STOP: on D12
+
+Apply every proposal inside design.md and its history, and a D6 or D11 proposal only as its answer chose; a finding whose fix lies elsewhere (code) is reported, not applied.
+
++++SWARM: 2+ changes across scopes
 
 ```
   team: reflect-apply
@@ -104,18 +106,26 @@ Choices: request one batch approval through Approval; open item selection only w
   max: 5
   batch: auto
   each: |
-    Apply to {scope} the approved changes listed in this prompt, and nothing else.
+    Apply to {scope} the changes listed in this prompt, and nothing else.
     Report completion to the lead when done.
   collect: lead summarizes what changed
 ```
 
-After applying:
-1. Summarize what changed
-2. When an applied change touched a document that has a language counterpart, name that pair and the reason it still needs syncing; standalone, that work is `/resonate`, and inside the Close stage the Close operation covers it
+### Phase 4: REPORT
+
++++STOP: always
+
+Report what was applied; ask nothing (Approval Exceptions: informational).
+
++++Report:
+Outcome: the applied changes, numbered with stable IDs, each naming the affected principle, Binding Decision, Direction stage, or section as its `Target` and its effect, and the snapshot ref that undoes them.
+Consequence: the changes stand in the working tree, uncommitted; restoring the snapshot undoes them all.
+Review detail: each change's type, target, finding and supporting file/line evidence; what each retirement moved to the history; each finding left unapplied, with its reason; when a change touched a document that has a language counterpart, that pair and the reason it still needs syncing (standalone, that work is `/resonate`; inside the Close stage the Close operation covers it).
+Choices: none; the report asks nothing. With no findings, state that nothing changed.
 
 ## Constraints
 
-+++NEVER: Modify design.md without +++STOP approval
++++NEVER: Apply a change outside design.md and its history, or a Binding Decision, principle or behavior change unasked
 +++NEVER: Hardcode scopes — they come from design.md
 +++NEVER: Skip meta-reflection — can reflect on design.md itself
 +++NEVER: Rewrite a Binding Decision to match drifted code without the user's approval

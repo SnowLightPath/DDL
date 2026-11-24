@@ -25,7 +25,7 @@ Open your project in the **Codex GUI** or Claude and describe the experience you
 |---|---|---|
 | **Draft** | Describe how the result should feel and behave | A design to review before saving |
 | **Realize** | Review the proposed implementation plan | Working code and verification results |
-| **Reflect** | Compare the implementation with the design | Proposed updates to keep them aligned |
+| **Reflect** | Compare the implementation with the design | The design updated to match, with a snapshot that undoes it |
 | **Close** | Approve one Git review of the final diff | design.md and documents reflected, finished stages moved to `design-history.md`, one commit, nothing left to do |
 
 > [!NOTE]
@@ -53,9 +53,10 @@ DDL/
 │   ├── claude/      start.md, approval.md, parallel-work.md, git-review.md, run.md (the five implementations),
 │   │                guidance.md (becomes .claude/CLAUDE.md), settings.json, agents/, README.md
 │   └── codex/       the same five implementations, guidance.md (becomes AGENTS.md),
-│                    hooks.json, config.toml, agents/, rules/, README.md
+│                    hooks.json, config.toml, agents/, README.md
 ├── bin/             install.sh, uninstall.sh, doctor.sh, ddl_setup.py (build, then install)
-├── tools/           build.py (the generator), check_ddl.py, the test suites, ddl_gate.py (the gate's source), fixtures/
+├── tools/           build.py (the generator), check_ddl.py, the test suites, the gate's source (ddl_gate.py, the entry;
+│                    ddl_gate_core.py, its code; ddl_run.py, the Run subcommands), fixtures/
 └── dist/            generated and untracked: claude/.claude/… and codex/… as a project receives them
 ```
 
@@ -80,7 +81,7 @@ At a required STOP, one concise report gives the overall recommendation and list
 
 One native approval interaction covers that set, with optional free text: **approve all current recommendations**, **choose a subset or request changes**, or **hold**. Its question carries five lines in the user's language: what to decide, the recommendation and its reason, the consequence, a confirmation ID, and the absolute path of the report file. The question alone is enough to decide, even where the chat text does not reach the user. Approve-all authorizes exactly the displayed ready actions and recommended resolutions, without another approval per file, item, or section. It does not cover undisplayed or future work, later STOPs, unconfirmed outward actions, or silent changes to Binding Decisions.
 
-A `/realize` or `$realize` plan also names a grant: the scope the work may touch, a budget, and an expiry. Its question shows the grant on one generated line after the five, and the gate records it when the approving option is submitted. In this version the grant is recorded and reported but changes no decision: every STOP and every Git review still asks, and the limit on approve-all above holds. The plan's work is held as a Run in a ledger that the gate writes inside the project, `.ddl/`; the directory ignores itself and is never committed. The gate's `report` command prints four count lines for a session or a Run (the questions asked, the minutes the work waited for the user, the gate's own denials, and the recorded grant), and a count that cannot be derived prints `not measured`, never an estimate. The host guides show how to run it ([Codex](./hosts/codex/README.md#scope), [Claude](./hosts/claude/README.md#scope)).
+A `/realize` or `$realize` plan also names a grant: the scope the work may touch, a budget, and an expiry. Its question shows the grant on one generated line after the five, and the gate records it when the approving option is submitted. Until its expiry the gate allows the calls inside the grant, edits of its paths and commands of its classes (build, test, check, a snapshot, and a run on a granted machine with no exit behind it), so the host asks nothing for them, and denies those outside it. A grant never lifts a STOP, never covers a protected file (such as Git's files, the ledger, an agent's or editor's settings, an instruction file, the notebook) and never covers a commit, a push or any other outward action, and the limit on approve-all above holds. The plan's work is held as a Run in a ledger that the gate writes inside the project, `.ddl/`; the directory ignores itself and is never committed. The gate's `report` command prints four count lines for a session or a Run (the questions asked, the minutes the work waited for the user, the gate's own denials, and the recorded grant), and a count that cannot be derived prints `not measured`, never an estimate. The host guides show how to run it ([Codex](./hosts/codex/README.md#scope), [Claude](./hosts/claude/README.md#scope)).
 
 Subset editing is optional and starts only when requested, using a supported native checklist or grouped form rather than an automatic item-by-item question loop or a forced typed ID list. A request receipt, cancellation, dismissal, unanswered question, or timeout approves nothing. If a permitted, answerable native interface is unavailable, DDL explains the limitation and stops instead of silently substituting typed choices.
 

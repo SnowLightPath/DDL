@@ -17,7 +17,7 @@ The last row of Direction (writer: Notebook):
 | Command | Authority for steps 1–3 | Git review |
 |---|---|---|
 | `/realize` | The approved plan's Close stage authorizes steps 1–3 in the working tree, as it authorizes the implementation | The user sees and approves the result there (hold: Exceptions) |
-| `/commit` | No plan: the findings of steps 1–3 form one batch review (Approval) before being applied (none: Exceptions) | That batch approval is not the Git approval; the Git review follows with the whole change set |
+| `/commit` | No plan: the invocation authorizes steps 1–3 in the working tree (none: Exceptions) | The Git review shows the whole change set, the Close changes included, in one answer |
 
 ## Operation
 
@@ -65,8 +65,8 @@ Approved plan lines; `npm test` passed; no detection fired. Nothing remains.
 | The change set is documentation only | Close runs unchanged: Reflect may find nothing, Docs and Resonate carry the work |
 | The assistant cannot reconstruct the approved scope or the pending state | Report the uncertainty and stop; claim no gate passed, retire no unfinished gate |
 | After the commit | The final report (Formats); `/draft` alone still ends by naming `/realize` |
-| Where the human stops | Plan approval, the human gates in design.md, the Git review; nowhere else. `/reflect`, `/docs` and `/resonate` stay standalone; Close fixes their order and approval inside `/realize` and `/commit` |
+| Where the human stops | Plan approval, the human gates in design.md, the Git review; nowhere else. `/reflect`, `/docs` and `/resonate` stay standalone, applying then reporting; Close fixes their order and authority (Operands) inside `/realize` and `/commit` |
 
 ## Implementation
 
-Step 5 uses the Git review implementation: [{Host}](hosts/{host}/git-review.md). No adapter enforces steps 1–4 or the Reflect edits' content; the gate covers only the pending-STOP denial (Approval) and step 5's commit and push (Git review).
+Step 5 uses the Git review implementation: [{Host}](hosts/{host}/git-review.md). No adapter enforces steps 1–4 or the Reflect edits' content; the gate covers only the pending-STOP denial (Approval), a grant's calls (Run) and step 5's commit and push (Git review).

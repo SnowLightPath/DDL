@@ -62,25 +62,26 @@ Lead integrates results and checks:
   D4: Stale Example — Code example doesn't match current implementation
   D5: Structure Mismatch — A doc lies outside the documentation paths, or lacks the headings, that design.md lists for it
   D6: Wrong Names — Doc uses names that don't exist in codebase
+  D7: Design Change — a fix would change a Binding Decision, a principle or a promised behavior instead of matching the document to the code
 
-### Phase 3: REPORT
+D7 asks with options: apply the fix, leave it unapplied, or revise it.
 
-+++STOP: always
++++STOP: on D7
 
-Do NOT fix without approval.
+### Phase 3: FIX
 
-+++Report:
-Decision: apply all current compatible documentation fixes, select or revise the set, or leave it pending.
-Recommendation: a concise overall reason, then numbered fixes with stable IDs and any material uncertainty or downside.
-Consequence: approve all applies the displayed ready set; subset approval changes only the selected fix IDs.
-Review detail: each stable fix ID, file/line, detection type, finding, and proposed correction.
-Choices: request one batch approval through Approval; open item selection only when requested, with no per-fix or per-file reapproval after approve all. With no findings, state that no fix needs approval and stop.
+Read the Run operation and its implementation for the current host, then make a snapshot (the gate's `snapshot`) before the first fix.
 
-### Phase 4: FIX
++++DETECT:
+  D8: No Snapshot — the snapshot cannot be made (no gate, no Git repository, or a failure)
 
-**Pre-condition.** Enter this phase only after explicit user approval of its scope at the Phase 3 STOP gate (per Approval). If the actual answer does not authorize this work, return to Phase 3 and re-present the current decision.
+D8 asks with options: apply without a snapshot, or apply nothing.
 
-+++SWARM: 2+ approved fixes across different files
++++STOP: on D8
+
+Apply every fix inside the documentation files Phase 0 found, and a D7 fix only as its answer chose.
+
++++SWARM: 2+ fixes across different files
 
 ```
   team: docs-fix
@@ -89,21 +90,33 @@ Choices: request one batch approval through Approval; open item selection only w
   max: 5
   batch: auto
   each: |
-    Apply to the {scope} documentation the approved fixes listed in this prompt, and nothing else.
+    Apply to the {scope} documentation the fixes listed in this prompt, and nothing else.
     Report completion to the lead when done.
   collect: lead verifies all fixes applied correctly
 ```
 
-### Phase 5: VERIFY
+### Phase 4: VERIFY
 
 Re-scan fixed files to confirm:
 
 1. No new Detection Targets introduced
-2. All approved fixes applied correctly
+2. All fixes applied correctly
 3. Summarize final state
+
+### Phase 5: REPORT
+
++++STOP: always
+
+Report what was applied; ask nothing (Approval Exceptions: informational).
+
++++Report:
+Outcome: the applied fixes, numbered with stable IDs, each with its file and correction, and the snapshot ref that undoes them.
+Consequence: the fixes stand in the working tree, uncommitted; restoring the snapshot undoes them all.
+Review detail: each fix ID, file/line, detection type, finding, and correction; each finding left unapplied, with its reason; the final state VERIFY found.
+Choices: none; the report asks nothing. With no findings, state that nothing changed.
 
 ## Constraints
 
-+++NEVER: Modify documentation without +++STOP approval
++++NEVER: Apply a fix outside the documentation files Phase 0 found, or a Binding Decision, principle or behavior change unasked
 +++NEVER: Hardcode scopes or paths — they come from design.md
 +++NEVER: Execute code examples — check conceptually only

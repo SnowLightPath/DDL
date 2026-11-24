@@ -18,8 +18,8 @@ python3 <gate> prepare-git-review --runtime <host>
 
 | Git action | Supported forms | Unsupported forms |
 |---|---|---|
-| `commit` | `git commit` on a named branch with `--cleanup=verbatim` and `-m <message>` or `-F <UTF-8 file>` | Forced, mirror, deletion, wildcard, multi-target, in-progress merge/rebase/cherry-pick/revert, intent-to-add, stdin message, alternate executable, dynamic and compound write forms |
-| `push` | `git push <remote> <branch or refspec>` with one configured remote and one branch or refspec; `--no-follow-tags` when follow-tags is enabled; `--recurse-submodules=no` when configuration could push submodules | The same list, and a push whose source commit, resolved remote or destination differs from the reviewed one |
+| `commit` | `git commit` on a named branch with `--cleanup=verbatim` and `-m <message>` or `-F <UTF-8 file>`; in a second git directory, `git --git-dir=<dir> --work-tree=<dir> commit …` (`-C <path>` may precede), its own repository | Forced, mirror, deletion, wildcard, multi-target, in-progress merge/rebase/cherry-pick/revert, intent-to-add, stdin message, alternate executable, dynamic and compound write forms |
+| `push` | `git push <remote> <branch or refspec>` with one configured remote and one branch or refspec; `--no-follow-tags` when follow-tags is enabled; `--recurse-submodules=no` when configuration could push submodules | The same list, a `--git-dir` form, and a push whose source commit, resolved remote or destination differs from the reviewed one |
 
 Run Git in the shell tool's working directory for the intended repository; read commands need no review.
 
@@ -72,7 +72,7 @@ The helper's input for one commit and its push; one answer records the commit an
 The host's implementation: [{Host}](hosts/{host}/git-review.md), folded into this section in the installed skill. Hook coverage (one script, both hosts):
 
 - Matches request and answer by identifier, compares the complete request (labels, descriptions, selection mode), checks that the question carries this review, and compares the real staged contents, base, message and branch; for a push also source commit, resolved remote and destination branch.
-- Denies a recognized unreviewed commit or push, also under no-prompt permission modes where the implementation says so; Git reads keep working, the native permission policy still applies after the content check, and the hook never grants, rewrites or stages a command.
+- Denies a recognized unreviewed commit or push, also under no-prompt permission modes where the implementation says so, and allows a matched one (not one asking to leave the sandbox), so the host asks nothing more; Git reads keep working, other exits keep the host's own confirmation, the implementation says which of the host's own rules still apply after the allow, and the hook never rewrites or stages a command.
 - Covers recognized calls reaching the hook, not aliases, arbitrary programs, state-changing Git hooks, a concurrent index change or input to an existing process. The review files carry no approval flag: the answer is proved from the current conversation record, and missing or altered detail denies the recognized call.
 - An unprovable review fails closed in a running handler, which verifies within a shorter internal time budget to leave timeout headroom; a host-level failure fails open, like a general STOP failure.
 - An ordinary UserPromptSubmit revokes older preparations at once, even before the transcript flushes; resume and compaction advance the epoch `<session>.git-epoch`. Diagnostics and tests use simulated dispatch, which proves neither the live choice interface nor the hook's trust.

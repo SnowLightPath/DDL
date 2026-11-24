@@ -2,7 +2,7 @@
 
 ## Read when
 
-Read before a `/realize` plan states its grant, on first entry to the approved work, and before the report that ends it; the command supplies the plan, its report ID and the planned work.
+Read before a `/realize` plan states its grant, on first entry to the approved work, before a snapshot and before the report that ends it; the command supplies the plan, its report ID and the planned work.
 
 ## Syntax
 
@@ -18,7 +18,7 @@ Expiry: <timestamp>
 
 | Operand | Belongs to | Values |
 |---|---|---|
-| Scope | grant | Path globs the work may edit (1–32, relative, no `..`); at most 8 each of command classes (`build`, `test`, `check`, `snapshot`, `remote-run`), machines and data handed over |
+| Scope | grant | Path globs the work may edit (1–32, relative, no `..`); at most 8 each of command classes (Formats), machines and data handed over |
 | Budget | grant | Minutes (1–10080) and fix attempts per failing check (0–10) |
 | Expiry | grant | A timestamp with its UTC offset, still ahead when the report is prepared |
 | Kind | item | What the item does (Formats) |
@@ -32,8 +32,10 @@ A Run is one approved plan's work, held as items in a ledger; a grant is the sco
 
 1. **Grant:** State the grant in the plan's short report, not its detail (Syntax), and pass it to each preparation under the input key `grant` ([Approval](approval.md) Formats).
    - The gate records it from the human's submitted answer to the unchanged prepared question; the processor never writes a grant.
-   - A recorded grant ends only at its expiry.
-   - A grant is recorded and reported and authorizes nothing by itself: every STOP and every Git review still applies.
+   - A recorded grant ends only at its expiry; until then it is active, and active grants form a union.
+   - While the conversation record is readable, an active grant authorizes what the gate then allows: a read anywhere; started inside the project root, an edit whose every target matches a path glob, or a shell command of reads, `cd` inside the root and granted classes (Formats).
+   - No glob covers a protected file: one of Git, CI, the ledger, an agent, an editor or direnv, an instruction file, the notebook or its history. The gate leaves it, a deletion, a sandbox escape and anything unclassified to the host.
+   - The gate denies an edit, class or machine outside every active grant (widening one is an exit: ask for a revised plan); a grant never lifts a pending STOP or covers an exit (Git review).
 2. **Start:** On first entry to the approved work, start one Run per approved plan from the plan's report ID (the gate's `run-start`); its items come only from the approved plan.
 3. **Track:** The lead sets an item's status when it changes (the gate's `run-item`); the gate alone writes the ledger. An item's `done` is never a gate pass: gates pass by their marks ([Notebook](notebook.md)).
 4. **Report:** Read the counts before the final report (the gate's `report`, selected by the Run ID; by the session or the conversation record when no Run started) and write the count lines into it; a count that cannot be derived is written `not measured`, never estimated.
@@ -42,6 +44,13 @@ A Run is one approved plan's work, held as items in a ledger; a grant is the sco
 
 - Input key `grant` of the preparation, an object with exactly `paths`, `commands`, `machines`, `handover` (the scope), `budget` (`minutes`, `fixAttempts`) and `expires`; its question takes one selection, the approving option first.
 - Grant labels, in order: `Scope:`, `Budget:`, `Expiry:`; in Japanese `範囲`, `予算`, `期限`.
+- Command classes, literal words and harmless redirects (`<p>`, tests, packages inside the root, other paths also in the temporary directory; only the options listed, a script any arguments; no word naming a protected file):
+  - `build`: `python3 <p>/build.py`; `make` or `make all|build`; `npm run build`; `cargo build`; `go build`.
+  - `test`: `python3 <p>/test_*.py` or `<p>/*_test.py`; `python3 -m unittest` (`-v -q -f -k`; `discover -s -p -t`) or `-m pytest`; `pytest` (`-q -v -x -s -k -m --maxfail`); `npm test`; `cargo test`; `go test`; `make test`.
+  - `check`: `python3 <p>/check_*.py`; `bash -n <file>…`; `git diff --check`; `make check|lint`; a command of the notebook's Validation blocks, matched with each line's whitespace collapsed, never one with an exit word.
+  - `make` also takes `-j` up to 256; `cargo` `--release -p --workspace --all-features --lib --bins --tests`, then `--` and test names; `go` `-v -run -count -race -short -timeout -cover` and `./` packages.
+  - `snapshot`: the gate's `snapshot`, a commit of the work tree at `refs/ddl/snapshots/<run id | adhoc>/<UTC stamp>-<item | snap>`; it moves no branch, index or file; `--git-dir` and `--work-tree` inside the root. Other gate subcommands need no class; the gate is the running one or that under `$HOME`.
+  - `remote-run`: `ssh [-T] [-n] [-o BatchMode=yes] [-o ConnectTimeout=<n>] <machine> <command>` to a machine the grant names; its command literal words (no quote, `\`, `$`, backquote, redirect or input), the first no option, none an exit, `ssh`, `scp` or `rsync`.
 - The question's extra line, label `Grant` (`許諾`): the gate appends it after the report path line of a report that carries a grant.
 - Run ID `N-<id>`: 12 hexadecimal characters.
 - Ledger: `.ddl/events.jsonl` (one event per line) and `.ddl/runs/<run id>/run.json`; the directory ignores itself.
@@ -73,9 +82,9 @@ Grant: R-3f9c0a7d1e2b4c68 (expires 2026-12-23, valid)
 | A `revised plan` | Prepare it again with its grant; the gate records only the approved report's |
 | A `compaction` or a restart | Read the Run from the newest `run.json`, its grant from the `Grant` count line; never start a second Run for one plan |
 | A count is `not measured` (no adapter, an unreadable ledger or conversation record) | Step 4; name the cause once, after the lines |
-| The grant has `expired` | Report it as expired; nothing else changes |
+| The grant has `expired` | Report it as expired; the gate answers for nothing under it |
 | An `older gate` that rejects the key `grant` or lacks the subcommands | Prepare without the key, start no Run, report the limitation |
 
 ## Implementation
 
-The host's implementation, [{Host}](hosts/{host}/run.md), is folded into this section in the installed skill; it names the grant record, the event record, how an answer's time is read and the subcommands. Shared coverage: the gate records the grant, the events and the counts, and writes only in a DDL project. It never emits an allowing decision and denies nothing because of a grant; a failed record changes no decision.
+The host's implementation, [{Host}](hosts/{host}/run.md), is folded into this section in the installed skill. Shared coverage (one decision for both hosts): the gate writes only in a DDL project, and a failed record changes no decision. It denies any recognized write of the ledger files, in any letter case where the file system ignores it, and allows nothing on an internal error.

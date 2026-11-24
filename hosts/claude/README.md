@@ -34,14 +34,14 @@ Review the draft before saving it. Use `/realize` when you are ready to review a
 |---|---|
 | `/draft` | Describe the experience and review the design before saving |
 | `/realize` | Implement an approved plan and close the work with one Git review |
-| `/reflect` | Propose updates that align the design and implementation |
+| `/reflect` | Align the design with the implementation |
 | `/validate` | Run project checks and mechanical acceptance gates |
 | `/resonate` | Reconcile multilingual documents |
-| `/docs` | Review documentation and propose corrections |
-| `/refactoring` | Review code quality and propose refactors |
+| `/docs` | Review and correct documentation |
+| `/refactoring` | Review code quality and refactor |
 | `/commit` | Close the work and commit verified changes; `/commit remote` also proposes a push |
 
-`draft` and `realize` accept a feature; `reflect`, `resonate`, `docs`, and `refactoring` accept a path; `validate` accepts a scope. You do not invoke `ddl-protocol` yourself.
+`/reflect`, `/resonate`, `/docs`, and `/refactoring` take a snapshot, apply their reversible changes inside their own targets, then report what they applied and the snapshot that undoes it; a change to a Binding Decision, a principle or behavior stops for your choice first. `draft` and `realize` accept a feature; `reflect`, `resonate`, `docs`, and `refactoring` accept a path; `validate` accepts a scope. You do not invoke `ddl-protocol` yourself.
 
 ## Scope
 
@@ -53,7 +53,7 @@ The hook acts only in a DDL project: one whose instruction file (`CLAUDE.md`, `.
 
 The agent shows the final staged diff, exact commit message, and any requested push destination in one Git review. Approve the ready set once through the native choices. A ready commit and its push share that approval; files and languages do not get separate questions. Before that review, the Close stage brings `design.md`, its history file, and the documents up to date, so the commit is the last step and no command follows it.
 
-The hook independently checks the actual contents and submitted choice before ordinary `git commit` and `git push` calls. A general reply or an earlier implementation approval supplies no Git permission. Changed contents, message, destination, or an unprovable answer stop the Git action. Git reads remain available. A native permission policy that shows no command prompt does not skip this content check. Inside a DDL project the hook itself asks natively before the reviewed push; DDL installs no separate `git push` permission rule, and the hook's behavior under modes that bypass permissions is unverified.
+The hook independently checks the actual contents and submitted choice before ordinary `git commit` and `git push` calls. A general reply or an earlier implementation approval supplies no Git permission. Changed contents, message, destination, or an unprovable answer stop the Git action. Git reads remain available. A native permission policy that shows no command prompt does not skip this content check. Inside a DDL project the hook allows the reviewed commit and push, so Claude asks nothing more after your answer; DDL installs no `git push` permission rule, and your own `deny` or `ask` rule still applies.
 
 Doctor also audits the exits: `bash DDL/bin/doctor.sh --claude` names each rule in `permissions.allow` of `$HOME/.claude/settings.json` that lets an exit through unasked (a push, a pull request or release command, a transfer to another machine, a branch-moving git command) or that wraps any command. The audit reads the rules as text and runs nothing, and it reads only that file, not project or local settings. A finding is information: the hook's review of `git commit` and `git push` holds either way; narrow or remove a listed rule if you want the host to ask. It is a separate tally and does not change doctor's result; with `--strict` its findings count as not OK.
 
@@ -63,7 +63,7 @@ At a required STOP, the report gives one overall recommendation and a visible nu
 
 Claude asks once: **approve all current recommendations**, **choose a subset or request changes**, or **hold**. An explicit approve-all covers exactly that displayed ready set and its recommended resolutions, without another approval per file, item, or section. It covers no undisplayed or future work, later STOP, unconfirmed outward action, or silent change to a Binding Decision.
 
-A `/realize` plan also names a grant: the scope the work may touch, a budget, and an expiry. The question shows it on one generated line after the five (the line counts the path scopes; the report file spells them out), and the gate records it when you submit the approving option. In this version the grant is recorded and reported but changes no decision: every STOP and every Git review still asks, and the limit on approve-all above holds.
+A `/realize` plan also names a grant: the scope the work may touch, a budget, and an expiry. The question shows it on one generated line after the five (the line counts the path scopes; the report file spells them out), and the gate records it when you submit the approving option. Until its expiry the gate allows the calls inside the grant, an edit of its paths and a command of a granted class (build, test, check, a snapshot, and a run on a granted machine with no exit behind it), so Claude asks nothing for them, and denies an edit, class or machine outside it: widening the scope means a revised plan. A grant never lifts a STOP, never covers a protected file (such as Git's files, the ledger, an agent's or editor's settings, an instruction file, the notebook) and never covers a commit, a push or any other outward action, and the limit on approve-all above holds.
 
 Only a requested subset or revision opens editing, using a supported native checklist or grouped form with optional free text. DDL does not force typed ID lists or automatically ask about every item in separate turns. A synchronous question waits for the actual answer; a cancelled, dismissed, unanswered, or timed-out question approves nothing. If the native interface is unavailable or not permitted for this purpose, DDL explains the limitation and stops without a typed-choice fallback.
 
@@ -91,14 +91,14 @@ Preview with `--dry-run`, or remove DDL's links and settings fragment with `bash
 <details>
 <summary>Maintainer details: this directory, the generated layout, and the protocol</summary>
 
-This directory holds everything that is specific to Claude: the five protocol implementations, the instruction-file template, the adapter files, and this guide. Everything else DDL deploys is host-neutral and lives in `skills/`, `protocol/`, and `tools/ddl_gate.py`.
+This directory holds everything that is specific to Claude: the five protocol implementations, the instruction-file template, the adapter files, and this guide. Everything else DDL deploys is host-neutral and lives in `skills/`, `protocol/`, and the gate's three files in `tools/`.
 
 ```
 hosts/claude/
 ├── start.md           Phase 0 after the entry: paths, hook events, markers
 ├── approval.md        the choice tool, its timeout, mutating tools, permitted calls
 ├── parallel-work.md   type, spawn, background, completion on Claude subagents
-├── git-review.md      the helper path, the native request, the hook's ask for the reviewed push
+├── git-review.md      the helper path, the native request, the hook's decision
 ├── run.md             the grant record, the event record, answer times, the gate's subcommands
 ├── guidance.md        the instruction-file template, deployed as .claude/CLAUDE.md
 ├── settings.json      the adapter: hook wiring, plus spawn depth 1 and attribution off, which stay global in the merged user-level settings
@@ -113,7 +113,7 @@ dist/claude/.claude/              → a project's .claude/
 ├── CLAUDE.md                     from hosts/claude/guidance.md
 ├── settings.json                 from hosts/claude/settings.json
 ├── agents/                       explorer.md and worker.md
-├── hooks/ddl_gate.py             from tools/ddl_gate.py
+├── hooks/                        ddl_gate.py, ddl_gate_core.py, ddl_run.py, from tools/
 └── skills/
     ├── <name>/SKILL.md           the eight commands, from skills/<name>/SKILL.md, byte for byte
     └── ddl-protocol/

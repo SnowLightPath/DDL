@@ -2,7 +2,7 @@
 
 ## Read when
 
-Read before the shared Git review operation for every ordinary commit or push; it names the helper path, `AskUserQuestion` for `nativeRequest` and the hook's push confirmation.
+Read before the shared Git review operation for every ordinary commit or push; it names the helper path, `AskUserQuestion` for `nativeRequest` and the hook's decision.
 
 ## Mapping
 
@@ -11,7 +11,7 @@ Read before the shared Git review operation for every ordinary commit or push; i
 | Prepare | `prepare-git-review --runtime claude` on the gate of approval's Prepare row, the request JSON (Formats) on stdin. |
 | `nativeRequest` | Pass it unchanged as the `AskUserQuestion` arguments (the five lines, header `Git`, labels, descriptions, selection mode) and wait for the submitted answer; a result carrying `afkTimeoutMs` is no submission. |
 | Revocation | A typed message is a `UserPromptSubmit` and revokes; an `AskUserQuestion` answer is not one and keeps the preparation. |
-| Push confirmation | After the matched content review the hook answers an ordinary `git push` with `permissionDecision: ask`, only in a DDL project, so the push is still confirmed natively; no `permissions.ask` rule is installed; a native grant without a matched review is denied; behavior under `bypassPermissions` / `dontAsk` is unverified. |
+| Decision | PreToolUse answers a commit or push that matches the answered review with `permissionDecision: allow`, reason `DDL: matches Git review <G-id>` (none with `dangerouslyDisableSandbox`), and an unmatched one with `deny`. |
 | Attribution | `attribution` in `.claude/settings.json` is empty (`commit` and `pr` empty, `sessionUrl: false`). |
 
 ## Observed
@@ -23,5 +23,5 @@ Read before the shared Git review operation for every ordinary commit or push; i
 
 ## Coverage
 
-- The hook denies a recognized unreviewed `git commit` or `git push` only when the call reaches PreToolUse; the review handler fits the hook's `timeout: 10` (0.04 s per call in the live run, Observed in approval).
-- The hook's `ask` adds no content proof, and a suppressed native prompt does not suppress the hook: the matched review is required either way; the hook reads no `permission_mode` here, so its content denial holds under `bypassPermissions`, `dontAsk` and `acceptEdits` alike.
+- The hook acts only on a call that reaches PreToolUse; the review handler fits the hook's `timeout: 10` (0.04 s per call in the live run, Observed in approval).
+- A suppressed native prompt does not suppress the hook: it reads no `permission_mode` here, so its content denial holds under `bypassPermissions`, `dontAsk` and `acceptEdits` alike. A user's `deny` or `ask` rule still applies after its `allow` (the host's documented order, not observed here).

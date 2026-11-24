@@ -15,8 +15,8 @@ Three modes, one line of output on success:
                         implementations sit in the entry's Host section and the Implementation sections of
                         approval, parallel-work, git-review and run (P9 on the generated files), the command
                         twins and the instruction files pass the source checks, the gate copies equal
-                        tools/ddl_gate.py, the byte budgets per host (P13), and dist/ on disk, when present,
-                        equals the generated trees
+                        tools/ddl_gate.py, tools/ddl_gate_core.py and tools/ddl_run.py, the byte budgets per
+                        host (P13), and dist/ on disk, when present, equals the generated trees
   docs    DOCUMENTS_OK  the philosophy documents, the glossary, the READMEs and the names of earlier layouts
 
 The checks count the units the protocol must define: sections, table rows, operation steps, literals, keywords,
@@ -47,16 +47,21 @@ IMPLEMENTATION_LINK = re.compile(r"hosts/\{host\}/([a-z-]+)\.md")
 # The guidance twins: the instruction-file templates and the invocation prefix of their command table.
 GUIDES = {"claude": ("hosts/claude/guidance.md", "/"), "codex": ("hosts/codex/guidance.md", "$")}
 LOCAL_GUIDE = ".claude/CLAUDE.md"  # this repository's own instruction file, local-only: checked when it exists
-# The runtime artifacts both adapters ship, now under hosts/, and the gate's source.
+# The runtime artifacts both adapters ship, now under hosts/, and the gate's three source files.
 ADAPTER_FILES = ("hosts/claude/settings.json", "hosts/claude/agents/explorer.md", "hosts/claude/agents/worker.md",
                  "hosts/claude/guidance.md", "hosts/codex/config.toml", "hosts/codex/hooks.json",
-                 "hosts/codex/agents/explorer.toml", "hosts/codex/agents/worker.toml", "hosts/codex/rules/ddl.rules",
-                 "hosts/codex/guidance.md", "tools/ddl_gate.py")
+                 "hosts/codex/agents/explorer.toml", "hosts/codex/agents/worker.toml", "hosts/codex/guidance.md",
+                 "tools/ddl_gate.py", "tools/ddl_gate_core.py", "tools/ddl_run.py")
 # The generated layout: keys of build.generate(), relative to dist/.
 DIST_SKILLS = {"claude": "claude/.claude/skills", "codex": "codex/.agents/skills"}
 DIST_PROTOCOL = {host: f"{DIST_SKILLS[host]}/ddl-protocol" for host in HOST_NAMES}
 DIST_GUIDE = {"claude": "claude/.claude/CLAUDE.md", "codex": "codex/AGENTS.md"}
 DIST_GATE = {"claude": "claude/.claude/hooks/ddl_gate.py", "codex": "codex/.codex/hooks/ddl_gate.py"}
+# The gate's three files (the entry, the code it loads, the Run subcommands), each copied into every host's
+# hooks/ beside the others: source -> copy per host.
+GATE_FILES = ("tools/ddl_gate.py", "tools/ddl_gate_core.py", "tools/ddl_run.py")
+DIST_GATE_FILES = {source: {host: f"{PurePosixPath(DIST_GATE[host]).parent}/{PurePosixPath(source).name}"
+                            for host in HOST_NAMES} for source in GATE_FILES}
 DIST_JUNK = ("__pycache__", ".DS_Store")
 ENTRY_H2 = ("Start", "Instruction set", "Pending STOP", "Reading map", "Interruption")
 OPERATION_H2 = ("Read when", "Syntax", "Operands", "Operation", "Formats", "Example", "Exceptions", "Implementation")
@@ -139,8 +144,8 @@ PARALLEL_CONCERNS = ("Team primitive", "type: Explore", "type: general-purpose",
                      "Nesting", "Concurrency", "Fallback")
 APPROVAL_CONCERNS = ("Choice tool", "Subset", "Receipt", "Timeout", "Mutating tools", "Human input boundary", "Prepare",
                      "Hook")
-GIT_CONCERNS = ("Prepare", "nativeRequest", "Revocation", "Push confirmation", "Attribution")
-RUN_CONCERNS = ("Grant record", "Event record", "Answer time", "Subcommands")
+GIT_CONCERNS = ("Prepare", "nativeRequest", "Revocation", "Decision", "Attribution")
+RUN_CONCERNS = ("Grant record", "Decision", "Event record", "Answer time", "Subcommands")
 # Keyed by operation: the same concerns for every host's implementation of it (P9).
 CONCERNS = {"start": START_CONCERNS, "parallel-work": PARALLEL_CONCERNS, "approval": APPROVAL_CONCERNS,
             "git-review": GIT_CONCERNS, "run": RUN_CONCERNS}
@@ -150,11 +155,11 @@ CONCERNS = {"start": START_CONCERNS, "parallel-work": PARALLEL_CONCERNS, "approv
 BUDGET_PATHS = (
     ("validate", 20250, ("SKILL.md", "approval.md")),
     ("draft", 29250, ("notebook.md",)),
-    ("realize-plan", 46000, ("parallel-work.md", "run.md")),
-    ("realize-close", 60500, ("close.md", "git-review.md")),
+    ("realize-plan", 47878, ("parallel-work.md", "run.md")),
+    ("realize-close", 62874, ("close.md", "git-review.md")),
 )
-EXECUTION_LIMIT = 62000
-FILE_LIMITS = {"run.md": 7500}  # a generated file's own limit, the host's implementation folded in
+EXECUTION_LIMIT = 62874
+FILE_LIMITS = {"run.md": 10166}  # a generated file's own limit, the host's implementation folded in
 AUTHOR_ONLY = ("command-authoring",)  # operations read by authors only: outside the execution total
 # The folded implementations in the generated skill (P9 on dist): the file, the H2 section and the H3 sections.
 FOLDED_H3 = ("Mapping", "Observed", "Coverage")
@@ -1168,7 +1173,7 @@ def check_dist():
                 errors.append(f"P12: dist {key}: placeholder {placeholder} not rendered")
     name, template, shared, template_errors = template_shared()
     errors += template_errors
-    gate = (ROOT / "tools/ddl_gate.py").read_bytes() if (ROOT / "tools/ddl_gate.py").is_file() else None
+    gates = {source: (ROOT / source).read_bytes() if (ROOT / source).is_file() else None for source in GATE_FILES}
     guides = {}
     for host in HOST_NAMES:
         errors += check_dist_protocol(host, tree)
@@ -1196,11 +1201,12 @@ def check_dist():
         else:
             guides[host] = decoded(tree[key])
             errors += check_guide(f"dist/{key}", guides[host], GUIDES[host][1])
-        key = DIST_GATE[host]
-        if key not in tree:
-            errors.append(f"dist: missing {key}")
-        elif gate is not None and tree[key] != gate:
-            errors.append(f"dist: {key} differs from tools/ddl_gate.py")
+        for source in GATE_FILES:
+            key = DIST_GATE_FILES[source][host]
+            if key not in tree:
+                errors.append(f"dist: missing {key}")
+            elif gates[source] is not None and tree[key] != gates[source]:
+                errors.append(f"dist: {key} differs from {source}")
     if len(guides) == 2:
         headings = [guide_headings(guides[host]) for host in HOST_NAMES]
         if headings[0] != [h.replace("Skills", "Commands") for h in headings[1]]:
@@ -1267,13 +1273,15 @@ def check_docs():
     if (ROOT / LOCAL_GUIDE).is_file():
         paths.append(ROOT / LOCAL_GUIDE)
     # Names of the trees before the hosts/ layout, before the generated dist/ and before the fold (the installed
-    # protocol's implementations directory) are obsolete in every document (the tokens are split so that this
-    # file does not match a search for them). `codex/` alone stays valid: hosts/codex/ is the host's directory
-    # and dist/codex/ the generated layout; the source `hosts/<host>/` stays valid everywhere.
+    # protocol's implementations directory), and of the retired Codex push rule file, are obsolete in every
+    # document (the tokens are split so that this file does not match a search for them). `codex/` alone stays
+    # valid: hosts/codex/ is the host's directory and dist/codex/ the generated layout; the source
+    # `hosts/<host>/` stays valid everywhere.
     obsolete = ("DESIGN" + ".md", "examples" + "/", ".codex/commands", ".claude/commands",
                 "DDL-PROTOCOL-SKILL", "Codex Runtime Contract", "dog" + "food", "EXECUTE → VALIDATE",
                 "references" + "/", "runtimes" + "/", "-start" + ".md", "examples" + ".md",
-                "claude-code" + "/", "sync_" + "mirrors", "hosts/claude" + "-code", "ddl-protocol/" + "hosts")
+                "claude-code" + "/", "sync_" + "mirrors", "hosts/claude" + "-code", "ddl-protocol/" + "hosts",
+                "ddl" + ".rules")
     obsolete_codex = re.compile(r"(?<!hosts/)(?<!dist/)codex/(\.agents|README|AGENTS)")
     for path in paths:
         try:

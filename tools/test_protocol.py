@@ -36,6 +36,7 @@ import ddl_setup  # noqa: E402
 COMMANDS = ("draft", "realize", "reflect", "validate", "commit", "docs", "refactoring", "resonate")
 HOST_NAMES = check_ddl.HOST_NAMES
 HOST_OPERATIONS = check_ddl.HOST_OPERATIONS
+BUDGET_LIMITS = {name: limit for name, limit, _ in check_ddl.BUDGET_PATHS}  # the reading paths' limits, by name
 INLINE_LINK = re.compile(r"\[[^\]]+\]\(\s*<?([^\s)>]+)>?(?:\s+[^)]*)?\)")
 INLINE_CODE = re.compile(r"`+[^`\n]*`+")
 
@@ -227,17 +228,19 @@ def write_command_authoring(repo, template=TEMPLATE):
 
 
 def write_adapters(repo):
-    """The adapter files under hosts/ and the gate's source, as the shared-contract check and the generator need them."""
+    """The adapter files under hosts/ and the gate's three source files, as the shared-contract check and the
+    generator need them."""
     write(repo / "hosts/claude/settings.json", json.dumps({"hooks": {}}) + "\n")
     write(repo / "hosts/codex/hooks.json", json.dumps({"hooks": {}}) + "\n")
     write(repo / "hosts/codex/config.toml", "[agents]\nmax_concurrent_threads_per_session = 5\n")
-    write(repo / "hosts/codex/rules/ddl.rules", "# fixture rules\n")
     for role in ("explorer", "worker"):
         write(repo / f"hosts/claude/agents/{role}.md", f"---\nname: {role}\n---\n\nThe {role} role.\n")
         write(repo / f"hosts/codex/agents/{role}.toml", f'name = "{role}"\ndescription = "The {role} role."\n')
     for host in HOST_NAMES:
         write(repo / f"hosts/{host}/README.md", f"# {host}\n")
     write(repo / "tools/ddl_gate.py", "# fixture gate\n")
+    write(repo / "tools/ddl_gate_core.py", "# fixture gate core\n")
+    write(repo / "tools/ddl_run.py", "# fixture run\n")
 
 
 GIT_JSON = ('```json\n{"language": "en", "operations": [\n'
@@ -388,7 +391,7 @@ REFERENCE_FIXTURES = {
 def write_protocol_fixture(repo):
     """The whole source tree that passes every source check: protocol/ (the entry and seven operations with {host}
     placeholders), hosts/<host>/ (five link-free implementations, the guidance twin and the adapter files),
-    skills/ (eight commands) and tools/ddl_gate.py. Returns the protocol directory."""
+    skills/ (eight commands) and the gate's three files under tools/. Returns the protocol directory."""
     bundle = repo / check_ddl.PROTOCOL
     write(bundle / "SKILL.md", ENTRY)
     for name, spec in REFERENCE_FIXTURES.items():
@@ -501,7 +504,8 @@ class ProtocolTest(unittest.TestCase):
                 self.assertIn(f"[{title}](SKILL.md#host)", files[f"{protocol}/command-authoring.md"].decode("utf-8"))
                 self.assertIn(f"[{title}](git-review.md#implementation)", files[f"{protocol}/close.md"].decode("utf-8"))
                 self.assertEqual([key for key in files if "/hosts/" in key], [])
-                self.assertEqual(files[check_ddl.DIST_GATE[host]], (self.repo / "tools/ddl_gate.py").read_bytes())
+                for source in check_ddl.GATE_FILES:  # the entry, the code it loads, the Run subcommands
+                    self.assertEqual(files[check_ddl.DIST_GATE_FILES[source][host]], (self.repo / source).read_bytes())
                 self.assertEqual(files[check_ddl.DIST_GUIDE[host]], (self.repo / "hosts" / host / "guidance.md").read_bytes())
         source = (self.repo / "skills/draft/SKILL.md").read_bytes()
         self.assertEqual(files["claude/.claude/skills/draft/SKILL.md"], source)
@@ -604,6 +608,8 @@ class ProtocolTest(unittest.TestCase):
                 self.assertNotIn("hosts/", entry)
                 self.assertFalse((installed / "hosts").exists())
                 self.assertEqual((home / directory / "hooks/ddl_gate.py").read_text(), "# fixture gate\n")
+                self.assertEqual((home / directory / "hooks/ddl_gate_core.py").read_text(), "# fixture gate core\n")
+                self.assertEqual((home / directory / "hooks/ddl_run.py").read_text(), "# fixture run\n")
             args.project = str(project)
             self.assertEqual(ddl_setup.cmd_install(args, ddl_setup.Report()), 0)
             self.assertEqual(ddl_setup.cmd_install(args, ddl_setup.Report()), 0)
@@ -811,23 +817,27 @@ class ProtocolTest(unittest.TestCase):
         with mock.patch.object(check_ddl, "ROOT", self.repo):
             self.assertEqual(check_ddl.check_protocol(), [])
             errors = check_ddl.check_dist()
-            self.assert_check(errors, "P13", "claude validate:", "codex validate:", "bytes exceeds 20250",
-                              "(SKILL.md + approval.md)")
+            self.assert_check(errors, "P13", "claude validate:", "codex validate:",
+                              f"bytes exceeds {BUDGET_LIMITS['validate']}", "(SKILL.md + approval.md)")
             self.assertFalse([e for e in errors if not e.startswith("P13:")], errors)
 
     def test_p13_rejects_oversized_run_on_realize_plan_path(self):
         """run.md is read on the realize-plan path and counts toward the execution total, not before."""
         bundle = write_protocol_fixture(self.repo)
         run = bundle / "run.md"
-        run.write_text(run.read_text(encoding="utf-8") + "\n```\n" + "x" * 62_000 + "\n```\n", encoding="utf-8")
+        run.write_text(run.read_text(encoding="utf-8") + "\n```\n" + "x" * check_ddl.EXECUTION_LIMIT + "\n```\n",
+                       encoding="utf-8")
         build_module("generate")
         with mock.patch.object(check_ddl, "ROOT", self.repo):
             self.assertEqual(check_ddl.check_protocol(), [])
             errors = check_ddl.check_dist()
-            self.assert_check(errors, "P13", "claude realize-plan:", "codex realize-plan:", "bytes exceeds 46000",
+            self.assert_check(errors, "P13", "claude realize-plan:", "codex realize-plan:",
+                              f"bytes exceeds {BUDGET_LIMITS['realize-plan']}",
                               "(SKILL.md + approval.md + notebook.md + parallel-work.md + run.md)",
-                              "claude realize-close:", "codex realize-close:", "bytes exceeds 60500",
-                              "claude execution total:", "codex execution total:", "bytes exceeds 62000")
+                              "claude realize-close:", "codex realize-close:",
+                              f"bytes exceeds {BUDGET_LIMITS['realize-close']}",
+                              "claude execution total:", "codex execution total:",
+                              f"bytes exceeds {check_ddl.EXECUTION_LIMIT}")
             self.assertFalse([e for e in errors if not e.startswith("P13:")], errors)
             self.assertFalse([e for e in errors if " validate:" in e or " draft:" in e], errors)
 
@@ -835,12 +845,13 @@ class ProtocolTest(unittest.TestCase):
         """The generated run.md has a limit of its own, below the cumulative paths it is read on."""
         bundle = write_protocol_fixture(self.repo)
         run = bundle / "run.md"
-        run.write_text(run.read_text(encoding="utf-8") + "\n```\n" + "x" * 7_500 + "\n```\n", encoding="utf-8")
+        limit = check_ddl.FILE_LIMITS["run.md"]
+        run.write_text(run.read_text(encoding="utf-8") + "\n```\n" + "x" * limit + "\n```\n", encoding="utf-8")
         build_module("generate")
         with mock.patch.object(check_ddl, "ROOT", self.repo):
             self.assertEqual(check_ddl.check_protocol(), [])
             errors = check_ddl.check_dist()
-            self.assert_check(errors, "P13", "claude run.md:", "codex run.md:", "bytes exceeds 7500")
+            self.assert_check(errors, "P13", "claude run.md:", "codex run.md:", f"bytes exceeds {limit}")
             self.assertFalse([e for e in errors if not e.startswith("P13:") or " run.md: " not in e], errors)
 
     def test_p9_rejects_folded_entry_without_mapping(self):
@@ -862,10 +873,10 @@ class ProtocolTest(unittest.TestCase):
             self.assertFalse([e for e in errors if not e.startswith("P9: dist claude: SKILL.md: Host:")], errors)
 
     def test_p9_rejects_run_implementation_without_a_concern_row(self):
-        """Each host's run implementation maps the four concerns, in the source and folded into the generated run.md."""
+        """Each host's run implementation maps the five concerns, in the source and folded into the generated run.md."""
         write_protocol_fixture(self.repo)
         build_module("generate")
-        self.assertEqual(len(check_ddl.CONCERNS["run"]), 4)
+        self.assertEqual(len(check_ddl.CONCERNS["run"]), 5)
         for host in HOST_NAMES:
             path = self.repo / "hosts" / host / "run.md"
             original = path.read_text(encoding="utf-8")

@@ -1,27 +1,33 @@
 #!/usr/bin/env python3
 """Install, check, or remove DDL at the user level (bin/install.sh, bin/doctor.sh, bin/uninstall.sh).
 
-DDL is installed into the environment, not into each project: the skills, the agent definitions,
-the gate hook, and the rules file are symlinked from this checkout's generated layout `dist/` into
+DDL is installed into the environment, not into each project: the skills, the agent definitions
+and the gate hook are symlinked from this checkout's generated layout `dist/` into
 `$HOME/.claude/` and `$HOME/.codex/`, and the adapter's settings fragment is merged into
 `$HOME/.claude/settings.json` and `$HOME/.codex/hooks.json`. `install`, `doctor`, and `--project`
-build `dist/` first (`tools/build.py`, from `skills/`, `protocol/`, `hosts/`, and `tools/ddl_gate.py`),
-so a fresh clone works. A project then needs only `design.md` and a short instruction file
-(`dist/claude/.claude/CLAUDE.md` as `.claude/CLAUDE.md`, `dist/codex/AGENTS.md` as `AGENTS.md`; both
-come from `hosts/<host>/guidance.md`).
+build `dist/` first (`tools/build.py`, from `skills/`, `protocol/`, `hosts/`, and the gate's three files
+`tools/ddl_gate.py`, `tools/ddl_gate_core.py` and `tools/ddl_run.py`), so a fresh clone works. The gate
+hook is those three files side by side in each runtime's `hooks/`: `ddl_gate.py` (the entry the settings
+name), `ddl_gate_core.py` (the code it loads) and `ddl_run.py` (its Run subcommands); each is linked,
+checked and removed on its own. A project then needs only `design.md` and a short instruction
+file (`dist/claude/.claude/CLAUDE.md` as `.claude/CLAUDE.md`, `dist/codex/AGENTS.md` as `AGENTS.md`;
+both come from `hosts/<host>/guidance.md`).
 
   install    build dist/, create or repoint the symlinks, and merge the fragment (idempotent; existing
-             settings are kept, DDL's own entries are replaced so a path change takes effect)
-  doctor     build dist/, check every link and merged entry, probe configured push hooks in a
-             temporary home, run the gate's tests, check the Codex native push rule separately,
-             check the gate's grant store, say whether the current directory is a DDL project, and
-             audit the user-level settings for exits (below); prints `N OK, M not OK` and exits 1
-             when M > 0
-  uninstall  remove the links that point at DDL and the merged entries (an entry is removed only
-             when its value is the one DDL wrote); a settings file left empty is removed; no backup
-             is written on uninstall; needs no dist/ (the fragment is generated in memory when its
-             file is absent); the gate's grant store is left in place and named when it holds
-             anything, and removed when it is empty
+             settings are kept, DDL's own entries are replaced so a path change takes effect); a
+             retired link that points into a DDL build (the Codex push rule `rules/ddl.rules`, which
+             DDL no longer installs) is removed and named
+  doctor     build dist/, check every link and merged entry, report a retired link as not OK until
+             install removes it, probe the configured hooks in a temporary home (an unreviewed commit
+             or push is denied; on Claude an edit inside a grant written into that home's store is
+             allowed), run the gate's tests, check the gate's grant store, say whether the current
+             directory is a DDL project, and audit the user-level settings for exits (below); prints
+             `N OK, M not OK` and exits 1 when M > 0
+  uninstall  remove the links that point at DDL, retired ones included, and the merged entries (an
+             entry is removed only when its value is the one DDL wrote); a settings file left empty
+             is removed; no backup is written on uninstall; needs no dist/ (the fragment is generated
+             in memory when its file is absent); the gate's grant store is left in place and named
+             when it holds anything, and removed when it is empty
 
 A settings file that is not what DDL can work with (unreadable, not UTF-8, not valid JSON, not a
 JSON object at its top level, or holding what cannot be written back as JSON: a number out of
@@ -38,7 +44,8 @@ leaves the old file whole; a settings file that is a link stays one.
 Runtimes: `--claude` and `--codex` select one; by default each runtime whose home directory exists
 (`$HOME/.claude`, `$HOME/.codex`) is handled. `install --project DIR` copies the per-project layout
 instead (`dist/claude/.claude/` into `DIR/.claude/`, `dist/codex/` into `DIR/`; an existing
-instruction file is kept). `--dry-run` prints the actions on the home directory without performing
+instruction file is kept, and a retired file that an earlier copy left, recognized by its first line,
+is removed). `--dry-run` prints the actions on the home directory without performing
 them (dist/ is still built: it is this checkout's own build product). `$HOME` is honoured, so a
 temporary home can be used for a rehearsal.
 
@@ -99,12 +106,14 @@ directory such as `.venv/bin/*` (only one over a system directory is a finding).
 The grant store (`$DDL_GATE_GRANT_DIR`, else `$XDG_STATE_HOME/ddl-gate`, else
 `$HOME/.local/state/ddl-gate`) is created by the gate hook when it first needs it, never by
 install. doctor checks that only its owner can enter it; its hook probes and its run of the
-gate's tests get a disposable store, so doctor never writes into the durable one.
+gate's tests get a disposable store, so doctor never writes into the durable one: the grant the
+Claude probe needs is written into the probe's own temporary home.
 
 Standard library only; python3 is the same dependency the gate hook has.
 """
 import argparse
 import ast
+import hashlib
 import itertools
 import json
 import os
@@ -115,21 +124,26 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import warnings
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SKILLS = ["ddl-protocol", "draft", "realize", "reflect", "validate", "commit", "docs", "refactoring", "resonate"]
 GATE_MARK = "ddl_gate.py"
+# The gate's files under each runtime's hooks/: the entry the settings name, the code it loads from beside itself,
+# and the Run subcommands that code imports. Each is linked, checked and removed on its own.
+GATE_FILES = ("ddl_gate.py", "ddl_gate_core.py", "ddl_run.py")
 
 # Every source path points into the generated layout dist/ (tools/build.py), never at skills/, protocol/, or hosts/.
 RUNTIMES = {
     "claude": {
         "home": ".claude",
         "label": "Claude Code",
+        "retired": {},  # home-relative link -> (its former source in dist/, the first line of its former copy)
         "links": {**{f"skills/{n}": f"dist/claude/.claude/skills/{n}" for n in SKILLS},
                   "agents/explorer.md": "dist/claude/.claude/agents/explorer.md",
                   "agents/worker.md": "dist/claude/.claude/agents/worker.md",
-                  "hooks/ddl_gate.py": "dist/claude/.claude/hooks/ddl_gate.py"},
+                  **{f"hooks/{n}": f"dist/claude/.claude/hooks/{n}" for n in GATE_FILES}},
         "settings": "settings.json",
         "fragment": "dist/claude/.claude/settings.json",
         "rewrite": ('"$CLAUDE_PROJECT_DIR"/.claude/hooks/ddl_gate.py', '"$HOME"/.claude/hooks/ddl_gate.py'),
@@ -143,8 +157,9 @@ RUNTIMES = {
         "links": {**{f"skills/{n}": f"dist/codex/.agents/skills/{n}" for n in SKILLS},
                   "agents/explorer.toml": "dist/codex/.codex/agents/explorer.toml",
                   "agents/worker.toml": "dist/codex/.codex/agents/worker.toml",
-                  "hooks/ddl_gate.py": "dist/codex/.codex/hooks/ddl_gate.py",
-                  "rules/ddl.rules": "dist/codex/.codex/rules/ddl.rules"},
+                  **{f"hooks/{n}": f"dist/codex/.codex/hooks/{n}" for n in GATE_FILES}},
+        # The push confirmation rule DDL once linked here; the gate now answers a reviewed push itself.
+        "retired": {"rules/ddl.rules": ("dist/codex/.codex/rules/ddl.rules", "# DDL adapter for Codex: command rules")},
         "settings": "hooks.json",
         "fragment": "dist/codex/.codex/hooks.json",
         "rewrite": ('"$(git rev-parse --show-toplevel 2>/dev/null || pwd)/.codex/hooks/ddl_gate.py"',
@@ -467,6 +482,13 @@ def points_at_ddl(link, rel_source):
     return target.rstrip("/").endswith(rel_source)
 
 
+def retired_links(base, rt):
+    """The links under base that DDL once installed and installs no more, still pointing into a DDL build
+    (a dangling one included). A file of that name that is not such a link is the user's."""
+    return [base / rel for rel, (source, _) in rt["retired"].items()
+            if os.path.islink(base / rel) and points_at_ddl(base / rel, source)]
+
+
 def selected_runtimes(args):
     chosen = [k for k in RUNTIMES if getattr(args, k)]
     if chosen:
@@ -508,6 +530,13 @@ def cmd_install(args, report):
                     link.parent.mkdir(parents=True, exist_ok=True)
                     link.symlink_to(source)
                 report.good(f"link {pretty(link)} -> {source}")
+        for link in retired_links(base, rt):
+            old = os.readlink(link)
+            if not report.dry_run:
+                link.unlink()
+                if is_empty_directory(link.parent):
+                    link.parent.rmdir()
+            report.good(f"remove {pretty(link)} (was {old}; DDL no longer installs it)")
         settings_path = base / rt["settings"]
         fragment = fragment_for(rt)
         settings, problem = user_settings(settings_path)
@@ -557,6 +586,15 @@ def install_project(args, report):
                 if not report.dry_run:
                     shutil.rmtree(stale)
                 report.good(f"remove {stale} (stale implementations, now folded into the skill)")
+        # A retired file an earlier copy left: removed only when its first line is the one DDL's copy began with.
+        for source, first in rt["retired"].values():
+            old = target / pathlib.PurePosixPath(source).relative_to(rt["project_src"])
+            if old.is_file() and not old.is_symlink() and read_text(old).startswith(first):
+                if not report.dry_run:
+                    old.unlink()
+                    if is_empty_directory(old.parent):
+                        old.parent.rmdir()
+                report.good(f"remove {old} (DDL no longer installs it)")
     report.info("project copy done: the hook commands use $CLAUDE_PROJECT_DIR / the repository root; "
                 "trust the folder (Claude Code) or the project and its hooks (Codex)")
     return 0
@@ -595,13 +633,39 @@ def configured_hook_outputs(settings, event, payload, env, cwd):
     return outputs
 
 
+PROBE_GRANT = "R-d0c7d0c7d0c7d0c7"  # the report ID of the grant the Claude probe writes into its temporary store
+PROJECT_KEY_LENGTH = 16  # the gate's own (ddl_gate_core.PROJECT_KEY_LENGTH): hex digits of the root's SHA-256
+
+
+def probe_grant(store, project, host):
+    """Record one active grant for `project` in `store` as the gate keeps it, `<store>/<project key>/grants/<id>.json`
+    (only its owner can enter): an edit of `src/**`, expiring in an hour. The store is the probe's own."""
+    root = os.path.realpath(project)
+    key = hashlib.sha256(root.encode("utf-8", "surrogateescape")).hexdigest()[:PROJECT_KEY_LENGTH]
+    stamp = lambda seconds: time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(seconds))  # noqa: E731
+    now = time.time()
+    record = {"id": PROBE_GRANT, "projectKey": key, "root": root,
+              "grant": {"paths": ["src/**"], "commands": [], "machines": [], "handover": [],
+                        "budget": {"minutes": 60, "fixAttempts": 0}, "expires": stamp(now + 3600)},
+              "approvedAt": stamp(now), "session": "doctor", "host": host}
+    directory = pathlib.Path(store)
+    for part in ("", key, "grants"):
+        directory = directory / part if part else directory
+        directory.mkdir(mode=0o700, exist_ok=True)
+    fd = os.open(directory / (PROBE_GRANT + ".json"), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        fh.write(json.dumps(record) + "\n")
+
+
 def doctor_git_hooks(key, base, settings, report):
-    """Probe unapproved commit/push rejection through installed hooks; execute no payload command."""
+    """Probe through the installed hooks that an unapproved commit or push is denied and, on Claude, that an edit
+    inside a grant recorded in the probe's own store is allowed; execute no payload command."""
     with tempfile.TemporaryDirectory(prefix="ddl-doctor-hooks-") as tmp:
         isolated = pathlib.Path(tmp)
-        gate = isolated / RUNTIMES[key]["home"] / "hooks/ddl_gate.py"
-        gate.parent.mkdir(parents=True)
-        gate.symlink_to(base / "hooks/ddl_gate.py")
+        hooks = isolated / RUNTIMES[key]["home"] / "hooks"
+        hooks.mkdir(parents=True)
+        for name in GATE_FILES:  # as installed: the entry and the modules beside it
+            (hooks / name).symlink_to(base / "hooks" / name)
         # The gate acts only in a DDL project: one below the temporary home with the marker line.
         project = isolated / "project"
         project.mkdir()
@@ -641,33 +705,44 @@ def doctor_git_hooks(key, base, settings, report):
                 (report.good if valid else report.fail)(f"{name} -> {outcome if valid else repr(outputs)}")
             except (OSError, ValueError, TypeError, re.error, subprocess.TimeoutExpired) as exc:
                 report.fail(f"{name} -> {exc}")
-
-
-def doctor_codex_rules(rules, report):
-    if not os.path.exists(rules):
-        report.fail(f"{pretty(rules)} missing; native push rule was not checked")
-        return
-    if not shutil.which("codex"):
-        report.info("codex not on PATH; native push rule was not checked (hook guard is checked separately)")
-        return
-    for command in (["git", "push"], ["git", "-C", "/tmp", "push"]):
+        if key != "claude":  # Codex answers allow only through PermissionRequest; its PreToolUse never allows
+            return
+        # An edit inside a grant: the grant is recorded in the probe's store, after the deny probes ran without one.
+        (project / "src").mkdir()
+        target = project / "src/doctor.txt"
+        target.write_text("a\n", encoding="utf-8")
+        name = (f"{RUNTIMES[key]['label']} installed PreToolUse: Edit src/doctor.txt inside grant {PROBE_GRANT} "
+                "(OPEN transcript, default)")
+        payload = {"session_id": "doctor-grant", "turn_id": "doctor", "transcript_path": str(transcript),
+                   "cwd": str(project), "hook_event_name": "PreToolUse", "permission_mode": "default",
+                   "tool_name": "Edit", "tool_input": {"file_path": str(target), "old_string": "a", "new_string": "b"}}
         try:
-            out = subprocess.run(["codex", "execpolicy", "check", "--rules", str(rules)] + command,
-                                 capture_output=True, text=True, timeout=10)
-            result = json.loads(out.stdout or "{}") if out.returncode == 0 else {}
-            if not isinstance(result, dict):
-                raise ValueError("native policy result is not an object")
-            decision = result.get("decision")
-        except (OSError, subprocess.TimeoutExpired, ValueError):
-            out, decision = None, None
-        name = "codex native execpolicy check: " + " ".join(command)
-        if command == ["git", "push"]:
-            (report.good if decision == "prompt" else report.fail)(
-                f"{name} -> {decision or 'no decision'} (expected prompt)")
-        elif out is None or out.returncode != 0:
-            report.fail(f"{name} -> check failed (independent hook guard is checked separately)")
+            probe_grant(env["DDL_GATE_GRANT_DIR"], project, key)
+            outputs = configured_hook_outputs(settings, "PreToolUse", payload, env, project)
+            specific = [out.get("hookSpecificOutput") for out in outputs]
+            valid = (len(specific) == 1 and isinstance(specific[0], dict)
+                     and specific[0].get("permissionDecision") == "allow"
+                     and str(specific[0].get("permissionDecisionReason", "")).startswith(f"DDL: inside grant {PROBE_GRANT}"))
+            outcome = "allow (inside the grant)"
+            (report.good if valid else report.fail)(f"{name} -> {outcome if valid else repr(outputs)}")
+        except (OSError, ValueError, TypeError, re.error, subprocess.TimeoutExpired) as exc:
+            report.fail(f"{name} -> {exc}")
+
+
+def doctor_retired(rt, base, report):
+    """A link DDL once installed and installs no more (the Codex push rule) is not OK until install removes it;
+    its absence is the check that no DDL rule is installed. A file of that name that is not DDL's link is named."""
+    found = retired_links(base, rt)
+    for link in found:
+        report.fail(f"{pretty(link)} -> {os.readlink(link)}: DDL no longer installs it (run install to remove it)")
+    for rel in rt["retired"]:
+        link = base / rel
+        if link in found:
+            continue
+        if os.path.lexists(link):
+            report.info(f"{pretty(link)} is not DDL's; left in place")
         else:
-            report.info(f"{name} -> {decision or 'no matching rule'}; independent hook guard is checked separately")
+            report.good(f"{pretty(link)} absent (DDL installs no {rt['label']} rule)")
 
 
 # The exit audit. It reads each allowing rule as text, classifies the commands the rule spells out,
@@ -1680,6 +1755,7 @@ def cmd_doctor(args, report):
                 report.fail(f"{pretty(link)} is not a symlink")
             else:
                 report.fail(f"{pretty(link)} missing")
+        doctor_retired(rt, base, report)
         settings_path = base / rt["settings"]
         fragment = fragment_for(rt)
         settings, problem = user_settings(settings_path)
@@ -1696,8 +1772,6 @@ def cmd_doctor(args, report):
             report.info(f"{pretty(settings_path)}: {d} has another value (kept; DDL's is not applied)")
         doctor_git_hooks(key, base, settings, report)
         if key == "codex":
-            rules = base / "rules/ddl.rules"
-            doctor_codex_rules(rules, report)
             config = base / "config.toml"
             if "agents.max_concurrent_threads_per_session" not in toml_scalars(read_text(config)):
                 report.info(f"{pretty(config)} does not set [agents] max_concurrent_threads_per_session (optional; SWARM uses max: 5)")
@@ -1729,6 +1803,10 @@ def cmd_uninstall(args, report):
                 report.good(f"unlink {pretty(link)}")
             elif os.path.lexists(link):
                 report.info(f"{pretty(link)} is not DDL's; left in place")
+        for link in retired_links(base, rt):  # an install from before its retirement left it
+            if not report.dry_run:
+                link.unlink()
+            report.good(f"unlink {pretty(link)}")
         for rel in ("skills", "agents", "hooks", "rules"):
             if is_empty_directory(base / rel) and not report.dry_run:
                 (base / rel).rmdir()

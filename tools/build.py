@@ -11,12 +11,16 @@ Sources (hand-maintained, tracked):
   hosts/<host>/guidance.md          the host's instruction-file template
   hosts/<host>/**                   every other file is an adapter file of that host (settings, agents, hooks, rules);
                                     README.md documents the host and is not deployed
-  tools/ddl_gate.py                 the gate
+  tools/ddl_gate.py                 the gate hook's entry, a launcher
+  tools/ddl_gate_core.py            the gate's code, which the entry loads from beside it
+  tools/ddl_run.py                  the gate's Run subcommands (report, run-start, run-item, snapshot), imported beside it
 
 Generated (dist/, untracked; `python3 tools/build.py`):
   dist/claude/.claude/CLAUDE.md                                hosts/claude/guidance.md
   dist/claude/.claude/<adapter path>                           hosts/claude/<adapter path>, byte for byte
   dist/claude/.claude/hooks/ddl_gate.py                        tools/ddl_gate.py
+  dist/claude/.claude/hooks/ddl_gate_core.py                   tools/ddl_gate_core.py
+  dist/claude/.claude/hooks/ddl_run.py                         tools/ddl_run.py
   dist/claude/.claude/skills/<name>/SKILL.md                   skills/<name>/SKILL.md, byte for byte
   dist/claude/.claude/skills/ddl-protocol/SKILL.md             protocol/SKILL.md with hosts/claude/start.md folded in
                                                                as its `## Host` section, {host} = claude, {Host} = Claude
@@ -27,6 +31,8 @@ Generated (dist/, untracked; `python3 tools/build.py`):
   dist/codex/AGENTS.md                                         hosts/codex/guidance.md
   dist/codex/.codex/<adapter path>                             hosts/codex/<adapter path>, byte for byte
   dist/codex/.codex/hooks/ddl_gate.py                          tools/ddl_gate.py
+  dist/codex/.codex/hooks/ddl_gate_core.py                     tools/ddl_gate_core.py
+  dist/codex/.codex/hooks/ddl_run.py                           tools/ddl_run.py
   dist/codex/.agents/skills/<name>/SKILL.md                    skills/<name>/SKILL.md in the Codex form
   dist/codex/.agents/skills/<name>/agents/openai.yaml          no implicit invocation
   dist/codex/.agents/skills/ddl-protocol/SKILL.md              protocol/SKILL.md folded and rendered for codex / Codex,
@@ -58,10 +64,11 @@ Rules:
   - Symlinks are refused, in the sources and in the generated paths (not followed, not removed).
 
 Errors (exit 1 with a message): a required source is missing (a command, the entry, an operation, an
-implementation, guidance.md, or the gate); a skill has no frontmatter, a frontmatter name different from its
-directory name, or no description; a command has no metadata.short-description; an adapter file collides
-with a generated one (hosts/<host>/hooks/ddl_gate.py); an implementation has a section other than Read when,
-Mapping, Observed and Coverage; a folded operation's last section is not `## Implementation`.
+implementation, guidance.md, or one of the gate's three files); a skill has no frontmatter, a frontmatter name
+different from its directory name, or no description; a command has no metadata.short-description; an adapter
+file collides with a generated one (hosts/<host>/hooks/ddl_gate.py, ddl_gate_core.py or ddl_run.py); an
+implementation has a section other than Read when, Mapping, Observed and Coverage; a folded operation's last
+section is not `## Implementation`.
 
 Usage:
   python3 tools/build.py [REPO] [--check] [--out DIR]
@@ -87,6 +94,9 @@ IMPLEMENTATION_SECTION = "Implementation"
 GUIDANCE = "guidance.md"
 NOT_DEPLOYED = ["README.md"]
 GATE_SOURCE = "tools/ddl_gate.py"
+# The gate's files, each copied byte for byte into <adapter>/hooks/ under its own name: the hook's entry (the
+# launcher the settings name), the code it loads from beside itself, and the Run subcommands that code imports.
+GATE_SOURCES = (GATE_SOURCE, "tools/ddl_gate_core.py", "tools/ddl_run.py")
 HOSTS = {
     "claude": {"Host": "Claude", "adapter": "claude/.claude", "guidance": "claude/.claude/CLAUDE.md",
                "skills": "claude/.claude/skills"},
@@ -205,7 +215,7 @@ def hidden(rel):
 def generate(repo):
     """Every output file, keyed by its path relative to dist/ (posix form)."""
     repo = pathlib.Path(repo)
-    gate = require(repo, GATE_SOURCE)
+    gate = {source: require(repo, source) for source in GATE_SOURCES}
     skills = {name: require(repo, f"skills/{name}/SKILL.md").decode("utf-8") for name in COMMANDS}
     for name, text in skills.items():
         split_frontmatter(name, text, short_description=True)
@@ -244,10 +254,12 @@ def generate(repo):
             if rel.parent == pathlib.Path(".") and rel.name in implementations + [GUIDANCE] + NOT_DEPLOYED:
                 continue
             out[f"{spec['adapter']}/{rel.as_posix()}"] = path.read_bytes()
-        gate_copy = f"{spec['adapter']}/hooks/ddl_gate.py"
-        if gate_copy in out:
-            raise SystemExit(f"hosts/{host}/hooks/ddl_gate.py: collides with the gate copy of {GATE_SOURCE}")
-        out[gate_copy] = gate
+        for source, data in gate.items():
+            name = pathlib.PurePosixPath(source).name
+            gate_copy = f"{spec['adapter']}/hooks/{name}"
+            if gate_copy in out:
+                raise SystemExit(f"hosts/{host}/hooks/{name}: collides with the gate copy of {source}")
+            out[gate_copy] = data
         for name, text in skills.items():
             skill = f"{spec['skills']}/{name}"
             if host == "codex":

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for tools/ddl_gate.py.
+"""Tests for the gate: tools/ddl_gate.py (the entry) and tools/ddl_gate_core.py (its code).
 
 Unit tests import the module (shell allowlist, tool classification, the Claude human-prompt test,
 the record readers). End-to-end tests run the hook as a subprocess with `python3 -I`, a private
@@ -16,6 +16,7 @@ Usage:
 import atexit
 import datetime
 import hashlib
+import io
 import json
 import os
 import pathlib
@@ -31,14 +32,16 @@ from unittest import mock
 
 TOOLS = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(TOOLS))
-import ddl_gate  # noqa: E402
+import ddl_gate_core as ddl_gate  # noqa: E402  (the gate's code; GATE below is its entry, the launcher)
+import ddl_run  # noqa: E402  (the Run subcommands; this suite drives them through ddl_gate.py's command line)
 
 GATE = str(TOOLS / "ddl_gate.py")
+GATE_FILES = ("ddl_gate.py", "ddl_gate_core.py", "ddl_run.py")  # the entry and the modules it loads from beside it
 REPO = TOOLS.parent
 FIXTURES = TOOLS / "fixtures"
 ADAPTERS = {"claude": REPO / "hosts" / "claude" / "settings.json",
             "codex": REPO / "hosts" / "codex" / "hooks.json"}
-EVENT_NAMES = {"pre-tool-use": "PreToolUse", "session-start": "SessionStart", "stop": "Stop",
+EVENT_NAMES = {"pre-tool-use": "PreToolUse", "permission-request": "PermissionRequest", "session-start": "SessionStart", "stop": "Stop",
                "user-prompt-submit": "UserPromptSubmit"}
 REPORT_TEXT = "+++DDL_REPORT\n\n## Realize report\n\nAwaiting approval."
 SEGMENT_SUFFIX = " Shell segment is not read-only: `{}`."
@@ -215,6 +218,7 @@ ALLOWED_COMMANDS = [
     "printf '%s\\n' a b",
     "stat f; file f; type ls",
     "cut -d, -f1 f | tr a-z A-Z | sort | uniq",
+    "grep -n /dev/tcp/ notes.txt",
 ]
 
 DENIED_COMMANDS = [  # (command, offending segment); None means the whole command
@@ -295,6 +299,9 @@ DENIED_COMMANDS = [  # (command, offending segment); None means the whole comman
     ('grep "$PATTERN" file', None),
     ("grep foo *.py", None),
     ("cat ~user/file.txt", None),
+    ("cat < /dev/tcp/127.0.0.1/9", None),
+    ("ls -la 0</dev/udp/127.0.0.1/53", None),
+    ("head -c1 <'/dev/tcp/example.invalid/80'", None),
 ]
 
 
@@ -659,10 +666,13 @@ class ClaudePreToolUseTest(GateTest):
         denied = [("echo hi > x.txt", "echo hi > x.txt"), ("sed -i 's/a/b/' f", "sed -i 's/a/b/' f"),
                   ("find . -delete", "find . -delete"), ("git commit -m x", "git commit -m x"),
                   ('python3 -c "print(1)"', 'python3 -c "print(1)"'), ("cat a | tee b", "tee b"),
-                  ("git branch new", "git branch new")]
+                  ("git branch new", "git branch new"), ("cat < /dev/tcp/127.0.0.1/9", "cat < /dev/tcp/127.0.0.1/9")]
         for cmd, segment in denied:
             with self.subTest(cmd=cmd):
                 self.assert_denied(self.run_gate("pre-tool-use", "claude", bash(cmd, transcript=transcript)), segment)
+        codex = fixture("codex_closed_in_turn.jsonl")
+        self.assert_denied(self.run_gate("pre-tool-use", "codex", bash("ls 0</dev/udp/127.0.0.1/53", "codex", codex)),
+                           "ls 0</dev/udp/127.0.0.1/53")
 
     def test_fixture_outcomes(self):
         outcomes = {"claude_closed_after_task_notification.jsonl": False, "claude_reopened.jsonl": True,
@@ -833,7 +843,8 @@ class AdapterDispatchTest(GateTest):
     """Use the shipped matcher and command, without executing any tool payload.
 
     A private Git project makes the Codex adapter's root lookup real, including when the hook runs
-    in a subdirectory. Only the canonical gate is copied; generated hook mirrors are not trusted.
+    in a subdirectory. Only the canonical gate's files are copied (the entry, the code it loads, the Run
+    subcommands, as a project copy holds them); generated hook mirrors are not trusted.
     """
 
     def setUp(self):
@@ -855,7 +866,8 @@ class AdapterDispatchTest(GateTest):
         for directory in (".claude", ".codex"):
             hooks = self.root / directory / "hooks"
             hooks.mkdir(parents=True)
-            shutil.copyfile(GATE, hooks / "ddl_gate.py")
+            for name in GATE_FILES:
+                shutil.copyfile(TOOLS / name, hooks / name)
         self.adapters = {runtime: json.loads(path.read_text(encoding="utf-8"))
                          for runtime, path in ADAPTERS.items()}
 
@@ -1245,13 +1257,27 @@ class GitReviewTest(GateTest):
         self.assertEqual(out["permissionDecision"], "deny")
         return out["permissionDecisionReason"]
 
-    def pushed(self, runtime, proc):
-        """A matched push passes: Codex leaves the native policy alone, Claude asks for the native confirmation."""
+    def passed(self, runtime, proc, review=None):
+        """A matched commit or push passes: Claude's PreToolUse allows it (the review was the one confirmation);
+        Codex's PreToolUse says nothing, since Codex takes no allow there (its PermissionRequest answers)."""
         if runtime == "codex":
             return self.assert_allowed(proc)
         out = json.loads(proc.stdout)["hookSpecificOutput"]
-        self.assertEqual((out["hookEventName"], out["permissionDecision"]), ("PreToolUse", "ask"))
-        self.assertEqual(out["permissionDecisionReason"], ddl_gate.PUSH_ASK_REASON)
+        self.assertEqual((out["hookEventName"], out["permissionDecision"]), ("PreToolUse", "allow"))
+        if review:
+            self.assertEqual(out["permissionDecisionReason"], "DDL: matches Git review " + review["reviewId"])
+        else:
+            self.assertRegex(out["permissionDecisionReason"], r"^DDL: matches Git review G-[0-9a-f]{16}$")
+
+    pushed = passed
+
+    def permitted(self, runtime, command=None, **extra):
+        """Codex's PermissionRequest for the same call: its output, parsed (None when it printed nothing)."""
+        data = payload(runtime, "pre-tool-use", str(self.transcript), cwd=str(self.repo), tool_name="Bash",
+                       tool_input={"command": command or self.command}, hook_event_name="PermissionRequest", **extra)
+        data.pop("tool_use_id", None)  # PermissionRequest carries none
+        out = self.run_gate("permission-request", runtime, data).stdout
+        return json.loads(out) if out else None
 
     def test_missing_review_is_denied_in_both_runtimes_and_all_permission_modes(self):
         for runtime in ("claude", "codex"):
@@ -1285,7 +1311,7 @@ class GitReviewTest(GateTest):
         for runtime in ("claude", "codex"):
             review = self.prepare(runtime)
             self.record(runtime, review)
-            self.assert_allowed(self.check(runtime, permission_mode="bypassPermissions"))
+            self.passed(runtime, self.check(runtime, permission_mode="bypassPermissions"))
 
     def test_hold_revision_and_normal_text_cannot_authorize_git(self):
         for runtime in ("claude", "codex"):
@@ -1324,7 +1350,7 @@ class GitReviewTest(GateTest):
             for change in (lambda rows: rows.pop(0 if runtime == "claude" else 1), omit_detail):
                 with self.subTest(runtime=runtime, missing="report text"):
                     self.record(runtime, review, mutate=change)
-                    self.assert_allowed(self.check(runtime))
+                    self.passed(runtime, self.check(runtime))
 
     def test_report_recorded_only_as_thinking_still_proves_commit_and_push(self):
         for runtime in ("claude", "codex"):
@@ -1338,7 +1364,7 @@ class GitReviewTest(GateTest):
                 else:
                     self.assertFalse(any(row["payload"].get("type") in ("message", "agent_message") for row in rows))
                 self.assert_allowed(self.ask(runtime, review["nativeRequest"], str(self.transcript)))
-                self.assert_allowed(self.check(runtime))
+                self.passed(runtime, self.check(runtime))
                 self.git("commit", "--cleanup=verbatim", "-F", str(self.message))
                 self.pushed(runtime, self.check(runtime, "git push origin main"))
 
@@ -1505,7 +1531,7 @@ class GitReviewTest(GateTest):
             self.git("checkout", "-q", "-b", "other-" + runtime)
             self.blocked(self.check(runtime))
             self.git("checkout", "-q", "main")
-            self.assert_allowed(self.check(runtime))
+            self.passed(runtime, self.check(runtime))
 
     def test_review_file_diff_and_report_tampering_are_denied(self):
         for runtime in ("claude", "codex"):
@@ -1525,7 +1551,7 @@ class GitReviewTest(GateTest):
             for source in ("resume", "compact", "fork", "clear"):
                 review = self.prepare(runtime)
                 self.record(runtime, review)
-                self.assert_allowed(self.check(runtime))
+                self.passed(runtime, self.check(runtime))
                 self.run_gate("session-start", runtime, payload(runtime, "session-start", str(self.transcript),
                               cwd=str(self.repo), source=source))
                 self.blocked(self.check(runtime))
@@ -1545,7 +1571,7 @@ class GitReviewTest(GateTest):
             self.stage("reviewed " + runtime + "\n")
             review = self.prepare(runtime, [self.command, "git push origin main"])
             self.record(runtime, review)
-            self.assert_allowed(self.check(runtime))
+            self.passed(runtime, self.check(runtime))
             self.blocked(self.check(runtime, "git push origin main"))  # the planned commit does not exist yet
             self.git("commit", "--cleanup=verbatim", "-F", str(self.message))
             self.blocked(self.check(runtime))  # an approval cannot create a second, different commit
@@ -1553,19 +1579,108 @@ class GitReviewTest(GateTest):
             self.git("push", "origin", "main")
             self.pushed(runtime, self.check(runtime, "git push origin main"))  # an idempotent retry sends no new content
 
-    def test_claude_reviewed_push_asks_for_the_native_confirmation(self):
+    def test_claude_reviewed_commit_and_push_are_allowed_without_a_second_question(self):
         review = self.prepare("claude", [self.command, "git push origin main"])
         self.record("claude", review)
-        self.assert_allowed(self.check("claude"))  # a reviewed commit keeps the host's own policy
+        self.passed("claude", self.check("claude"), review)  # the review was the one confirmation
         self.git("commit", "--cleanup=verbatim", "-F", str(self.message))
         for mode in ("default", "acceptEdits", "bypassPermissions", "dontAsk"):
-            with self.subTest(mode=mode):  # the hook asks in every mode; what the host does with it is its own
-                self.pushed("claude", self.check("claude", "git push origin main", permission_mode=mode))
-        self.assertEqual(untimed(events(self.repo, kind="ask"))[0], {
-            "v": 1, "host": "claude", "session": "sess", "kind": "ask", "rule": "git-review", "tool": "Bash",
-            "toolUseId": "toolu_01"})
+            with self.subTest(mode=mode):  # the same allow in every mode; the user's deny and ask rules still win
+                self.passed("claude", self.check("claude", "git push origin main", permission_mode=mode), review)
+        self.assertEqual(events(self.repo, kind="ask"), [])  # the push is no longer asked again
+        self.assertEqual([(row["allow"], row["id"]) for row in events(self.repo, kind="allowed")],
+                         [("commit", review["reviewId"])] + [("push", review["reviewId"])] * 4)
+        self.assertEqual(untimed(events(self.repo, kind="allowed"))[0], {
+            "v": 1, "host": "claude", "session": "sess", "kind": "allowed", "allow": "commit", "id": review["reviewId"],
+            "tool": "Bash", "toolUseId": "toolu_01"})
         self.assertEqual(events(self.repo, kind="granted"), [])  # a Git review is no grant
         self.assertIn("DDL Git review", self.blocked(self.check("claude", "git push origin main:refs/heads/other")))
+
+    def notebook(self):
+        """A second Git directory `.notebook.git` over the same work tree (no remote), its design.md staged; the
+        commit command that records it."""
+        pair = ("--git-dir=.notebook.git", "--work-tree=.")
+        self.git("--git-dir=.notebook.git", "init", "-q", "-b", "main")
+        for key, value in (("user.email", "fixture@example.invalid"), ("user.name", "DDL fixture"), ("commit.gpgSign", "false")):
+            self.git(*pair, "config", key, value)
+        with (self.repo / ".git" / "info" / "exclude").open("a") as fh:
+            fh.write(".notebook.git\ndesign.md\n.claude/\n")
+        (self.repo / "design.md").write_text("first\n")
+        self.git(*pair, "add", "design.md")
+        self.git(*pair, "commit", "-q", "--cleanup=verbatim", "-m", "notebook base")
+        (self.repo / "design.md").write_text("reviewed notebook\n")
+        self.git(*pair, "add", "design.md")
+        return "git --git-dir=.notebook.git --work-tree=. commit --cleanup=verbatim -F " + shlex.quote(str(self.message))
+
+    def test_a_second_git_directory_is_its_own_repository_in_one_review(self):
+        notebook = self.notebook()
+        for runtime in ("claude", "codex"):
+            with self.subTest(runtime=runtime):
+                review = self.prepare(runtime, [self.command, notebook])
+                ops = json.loads((pathlib.Path(review["report"]).parent / "review.json").read_text())["operations"]
+                git_dir = os.path.realpath(str(self.repo / ".notebook.git"))
+                self.assertEqual([(op["repo"], op.get("gitDir"), op.get("workTree")) for op in ops],
+                                 [(os.path.realpath(str(self.repo)), None, None),
+                                  (git_dir, git_dir, os.path.realpath(str(self.repo)))])
+                self.assertEqual([[path for _, path in op["files"]] for op in ops], [["sample.txt"], ["design.md"]])
+                self.assertEqual(review["question"]["title"].splitlines()[0],
+                                 "決めること: 2 件のコミット（review repo、review repo (.notebook.git)）を記録するか")
+                self.assertIn("main（review repo (.notebook.git)）", review["question"]["title"].splitlines()[2])
+                self.assertIn("## 2. 記録 — {} ({})".format(os.path.realpath(str(self.repo)), git_dir),
+                              pathlib.Path(review["report"]).read_text())
+                self.record(runtime, review)
+                self.passed(runtime, self.check(runtime, notebook), review)
+                self.passed(runtime, self.check(runtime), review)
+                self.passed(runtime, self.check(runtime, "git -C " + shlex.quote(str(self.repo)) + notebook[3:]), review)
+                if runtime == "codex":
+                    self.assertEqual(self.permitted(runtime, notebook), ALLOW_PERMISSION)
+                # What the review did not show is denied: other staged contents in that repository.
+                for text in ("changed after the review\n", "reviewed notebook\n"):
+                    (self.repo / "design.md").write_text(text)
+                    self.git("--git-dir=.notebook.git", "--work-tree=.", "add", "design.md")
+                    if text.startswith("changed"):
+                        self.assertIn("differ from the approved set", self.blocked(self.check(runtime, notebook)))
+                        if runtime == "codex":
+                            self.assertIsNone(self.permitted(runtime, notebook))
+        write_rows(self.transcript, [])  # and no review at all
+        for runtime in ("claude", "codex"):
+            self.assertIn("DDL Git review", self.blocked(self.check(runtime, notebook)))
+
+    def test_a_second_git_directory_takes_only_its_supported_form(self):
+        self.notebook()
+        message = shlex.quote(str(self.message))
+        for command, problem in (
+                ("git -C .notebook.git commit --cleanup=verbatim -F " + message, "run Git from the work tree"),
+                ("git --git-dir=.notebook.git commit --cleanup=verbatim -F " + message, "second Git directory"),
+                ("git --git-dir=.notebook.git --work-tree=. push origin main", "pushing from it is not supported"),
+                ("git --git-dir=.notebook.git --work-tree=. -C . commit --cleanup=verbatim -F " + message,
+                 "put -C before --git-dir"),
+                ("git --git-dir=missing.git --work-tree=. commit --cleanup=verbatim -F " + message, "missing.git")):
+            with self.subTest(command=command):
+                proc = self.subcommand(["prepare-git-review", "--runtime", "codex"],
+                                       {"operations": [{"cwd": str(self.repo), "command": command}]})
+                self.assertEqual(proc.returncode, 2)
+                self.assertIn(problem, proc.stderr)
+                self.assertIn("DDL Git review", self.blocked(self.check("claude", command)))
+
+    def test_codex_reviewed_commit_and_push_are_allowed_by_its_permission_request(self):
+        review = self.prepare("codex", [self.command, "git push origin main"])
+        self.record("codex", review)
+        allow = {"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": {"behavior": "allow"}}}
+        self.passed("codex", self.check("codex"))  # Codex's PreToolUse never prints an allow
+        self.assertEqual(self.permitted("codex"), allow)
+        self.git("commit", "--cleanup=verbatim", "-F", str(self.message))
+        self.passed("codex", self.check("codex", "git push origin main"))
+        self.assertEqual(self.permitted("codex", "git push origin main"), allow)
+        # Nothing else: an unmatched push, another destination, a call without a review.
+        for command in ("git push origin main:refs/heads/other", "git commit --cleanup=verbatim -m other", "touch x"):
+            with self.subTest(command=command):
+                self.assertIsNone(self.permitted("codex", command))
+        rows = events(self.repo, kind="allowed")
+        self.assertEqual([(row["allow"], row["id"], row.get("toolUseId")) for row in rows],
+                         [("commit", review["reviewId"], None), ("push", review["reviewId"], None)])
+        # Codex's PreToolUse logged no allow of its own: the PermissionRequest is the allow.
+        self.assertEqual({row["host"] for row in rows}, {"codex"})
 
     def test_push_rejects_commit_created_with_different_message_or_tree(self):
         review = self.prepare("codex", [self.command, "git push origin main"])
@@ -1639,7 +1754,7 @@ class GitReviewTest(GateTest):
         for runtime in ("claude", "codex"):
             review = self.prepare(runtime)
             self.record(runtime, review)
-            self.assert_allowed(self.check(runtime))
+            self.passed(runtime, self.check(runtime))
             self.run_gate("user-prompt-submit", runtime, payload(runtime, "user-prompt-submit", str(self.transcript),
                           cwd=str(self.repo), prompt="Please revise; do not execute."))
             self.blocked(self.check(runtime))  # the file still contains the earlier approved answer
@@ -1722,7 +1837,7 @@ class GitReviewTest(GateTest):
         rows = self.record("claude", review)
         rows[1]["message"]["content"].insert(0, rows.pop(0)["message"]["content"][0])
         self.transcript.write_text("".join(json.dumps(row) + "\n" for row in rows))
-        self.assert_allowed(self.check("claude"))
+        self.passed("claude", self.check("claude"))
 
     def test_initial_commit_and_push_share_one_review(self):
         self.git("checkout", "--orphan", "first")
@@ -1759,6 +1874,9 @@ WRITES = {"claude": [("Edit", {"file_path": "design.md", "old_string": "a", "new
           "codex": [("apply_patch", {"patch": "*** Begin Patch\n*** End Patch"}), ("spawn_agent", {"message": "continue"})]}
 READS = {"claude": [("Read", {"file_path": "design.md"}), ("Bash", {"command": "git status"})],
          "codex": [("exec_command", {"cmd": "rg -n DDL design.md"})]}
+# A write no grant answers for: outside every project root (Claude), a patch without a target (Codex).
+HOST_WRITES = {"claude": ("Edit", {"file_path": "/ddl-gate-fixture/outside.md", "old_string": "a", "new_string": "b"}),
+               "codex": WRITES["codex"][0]}
 SHELL = {"claude": ("Bash", "command"), "codex": ("exec_command", "cmd")}
 
 
@@ -2207,8 +2325,9 @@ class GrantFlowTest(ReportFlowTest):
         return self.prepare_report(runtime, cwd=self.cwd, **fields)
 
     def tool(self, runtime, transcript, session="sess", tool=None, tool_input=None, **extra):
-        """A PreToolUse call in this project; by default the runtime's first write tool."""
-        name, default = WRITES[runtime][0]
+        """A PreToolUse call in this project; by default the runtime's first write tool, aimed where no grant
+        answers (outside the project, or no target), so a recorded grant leaves its decision as it was."""
+        name, default = HOST_WRITES[runtime]
         return self.call(runtime, transcript, tool or name, default if tool is None else tool_input, session,
                          cwd=self.cwd, **extra)
 
@@ -2594,28 +2713,40 @@ class GrantRecordTest(GrantFlowTest):
         self.assertEqual(self.subcommand(["status", "--cwd", str(PROJECT)]).stdout,
                          "DDL project: yes ({}:3)\n".format(PROJECT / ".claude" / "CLAUDE.md"))
 
-    def test_a_recorded_grant_allows_nothing_and_denies_nothing(self):
+    def test_a_recorded_grant_answers_for_its_calls_and_never_under_a_pending_stop(self):
         for runtime in ("claude", "codex"):
             with self.subTest(runtime=runtime):
-                prepared = self.prepared(runtime, grant=grant(paths=["**"], commands=list(ddl_gate.GRANT_COMMANDS)))
+                prepared = self.prepared(runtime, grant=grant(paths=["skills/**"], commands=["build"]))
                 self.assert_allowed(self.approve(runtime, prepared, session=runtime))
                 self.assertIsNotNone(self.record(prepared))
                 (shell, key), opened, closed = SHELL[runtime], fixture(runtime + "_open.jsonl"), fixture(runtime + "_closed_in_turn.jsonl")
-                calls = WRITES[runtime] + READS[runtime] + [(shell, {key: command}) for command in (
-                    "touch skills/x", "python3 tools/build.py", "git commit --cleanup=verbatim -m x", "git push origin main")]
-                for transcript in (opened, closed):
-                    for tool, tool_input in calls:
-                        with self.subTest(transcript=os.path.basename(transcript), tool=tool, tool_input=tool_input):
-                            granted = self.tool(runtime, transcript, runtime, tool, tool_input).stdout
-                            # The same call in a project without any grant: the decision is the same, byte for byte.
-                            bare = self.call(runtime, transcript, tool, tool_input, "bare-" + runtime).stdout
-                            self.assertEqual(granted, bare)
-                            self.assertNotIn("allow", granted)
-                            if granted:
-                                self.assertEqual(json.loads(granted)["hookSpecificOutput"]["permissionDecision"], "deny")
-                            mutating = (tool, tool_input) not in READS[runtime]
-                            if mutating and (transcript == closed or "git " in str(tool_input)):
-                                self.assertTrue(granted)  # a pending STOP and the Git review hold inside the granted scope
+                inside = ("Edit", {"file_path": "skills/a.md", "old_string": "a", "new_string": "b"}) if runtime == "claude" \
+                    else ("apply_patch", {"patch": "*** Begin Patch\n*** Update File: skills/a.md\n@@\n-a\n+b\n*** End Patch"})
+                calls = {"edit": inside, "read": READS[runtime][-1], "build": (shell, {key: "python3 tools/build.py"})}
+                for kind, (tool, tool_input) in calls.items():
+                    with self.subTest(kind=kind):
+                        out = self.tool(runtime, opened, runtime, tool, tool_input).stdout
+                        if runtime == "codex":  # Codex takes no allow from PreToolUse: its PermissionRequest answers
+                            self.assertEqual(out, "")
+                            permitted = self.run_gate("permission-request", runtime, payload(
+                                runtime, transcript=opened, session=runtime, cwd=self.cwd, tool_name=tool,
+                                tool_input=tool_input, hook_event_name="PermissionRequest")).stdout
+                            self.assertEqual(json.loads(permitted)["hookSpecificOutput"]["decision"], {"behavior": "allow"})
+                        else:
+                            self.assertEqual(json.loads(out)["hookSpecificOutput"]["permissionDecisionReason"],
+                                             "DDL: inside grant {} ({})".format(prepared["reportId"], kind))
+                        # A pending STOP decides as it always did: the same call, byte for byte as in a bare project.
+                        held = self.tool(runtime, closed, runtime, tool, tool_input).stdout
+                        bare = self.call(runtime, closed, tool, tool_input, "bare-" + runtime).stdout
+                        self.assertEqual(held, bare)
+                        self.assertNotIn("allow", held)
+                        self.assertEqual(self.run_gate("permission-request", runtime, payload(
+                            runtime, transcript=closed, session=runtime, cwd=self.cwd, tool_name=tool,
+                            tool_input=tool_input)).stdout, "")
+                # A commit or push still needs its Git review, grant or not.
+                for command in ("git commit --cleanup=verbatim -m x", "git push origin main"):
+                    out = json.loads(self.tool(runtime, opened, runtime, shell, {key: command}).stdout)
+                    self.assertIn("DDL Git review", out["hookSpecificOutput"]["permissionDecisionReason"])
 
     def test_a_reply_to_a_report_without_options_still_moves_the_epoch(self):
         """A report record written by hand can agree with its own ID and offer no option to compare a reply with."""
@@ -2899,6 +3030,645 @@ class GrantStoreTest(GrantFlowTest):
         self.assertFalse(os.path.exists(self.grants))  # the suite's default store was never used
 
 
+PATCH = "*** Begin Patch\n{}*** End Patch"
+ALLOW_PERMISSION = {"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": {"behavior": "allow"}}}
+
+
+class GrantAnswerTest(GrantFlowTest):
+    """What an active grant answers (the protocol's Run Operation step 1 and Formats): an allow inside it, a deny
+    outside it, the host's own decision for everything else; never under a pending STOP, and nothing without it.
+
+    Claude reads the allow from PreToolUse; Codex takes none there, so its PermissionRequest gives the same answer.
+    Each check runs on both hosts, and a Codex call that PreToolUse denies gets nothing from PermissionRequest."""
+
+    def setUp(self):
+        super().setUp()
+        for directory in ("tools/deep", "skills", "bin", ".notebook.git/objects", ".ddl/runs/N-0123456789ab"):
+            (self.root / directory).mkdir(parents=True, exist_ok=True)
+        (self.root / ".notebook.git" / "HEAD").write_text("ref: refs/heads/main\n")
+        (self.root / "tools" / "test_x.py").write_text("")
+        self.outside = pathlib.Path(self.tmp) / "outside"
+        self.outside.mkdir()
+
+    def granted(self, ident="R-" + "a" * 16, days=30, approved="2026-11-20T00:00:00.000Z", **changes):
+        """A grant record as the gate stores it (the form read_grant accepts); its ID."""
+        expires = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=days)).replace(microsecond=0)
+        fields = dict({"paths": ["tools/**", "skills/*.md"], "commands": ["test", "check"]}, **changes)
+        record = {"id": ident, "projectKey": project_key(self.root), "root": os.path.realpath(self.root),
+                  "grant": grant(expires=expires.isoformat(), **fields), "approvedAt": approved, "session": "plan",
+                  "host": "claude"}
+        self.store.mkdir(parents=True, exist_ok=True)
+        (self.store / (ident + ".json")).write_text(json.dumps(record), encoding="utf-8")
+        return ident
+
+    @staticmethod
+    def edit(runtime, *paths, kind="Update File"):
+        if runtime == "claude":
+            return "Edit", {"file_path": paths[0], "old_string": "a", "new_string": "b"}
+        return "apply_patch", {"patch": PATCH.format("".join("*** {}: {}\n@@\n-a\n+b\n".format(kind, p) for p in paths))}
+
+    @staticmethod
+    def shell(runtime, command):
+        tool, key = SHELL[runtime]
+        return tool, {key: command}
+
+    def decide(self, runtime, call, transcript=None, event="pre-tool-use", process=False):
+        """The gate's output for one call: its `main` in this process (the same argv, stdin, stdout, environment
+        and working directory as the hook's), or with `process` the launcher as a subprocess, as the hosts run it."""
+        tool, tool_input = call
+        data = payload(runtime, transcript=fixture(runtime + "_open.jsonl") if transcript is None else transcript or None,
+                       session=runtime, cwd=self.cwd, tool_name=tool, tool_input=tool_input)
+        if event == "permission-request":
+            data.update(hook_event_name="PermissionRequest")
+            data.pop("tool_use_id", None)
+        if process:
+            out = self.run_gate(event, runtime, data).stdout
+        else:
+            with mock.patch.dict(os.environ, {"DDL_GATE_STATE_DIR": self.state, "DDL_GATE_GRANT_DIR": self.grants}), \
+                    mock.patch("sys.stdin", io.StringIO(json.dumps(data))), \
+                    mock.patch("sys.stdout", new_callable=io.StringIO) as stdout, \
+                    mock.patch("sys.stderr", new_callable=io.StringIO) as stderr:
+                self.assertEqual(ddl_gate.main([event, "--runtime", runtime]), 0)
+            self.assertEqual(stderr.getvalue(), "")
+            out = stdout.getvalue()
+        return json.loads(out) if out else None
+
+    def outcome(self, runtime, call, transcript=None):
+        """("allow" | "deny", reason) or None; Codex's allow is its PermissionRequest's, which has no reason."""
+        pre = self.decide(runtime, call, transcript)
+        verdict = pre and pre.get("hookSpecificOutput", {}).get("permissionDecision")
+        if runtime == "codex":
+            self.assertNotEqual(verdict, "allow")  # Codex refuses an allow from PreToolUse
+            asked = self.decide(runtime, call, transcript, "permission-request")
+            if pre is not None or asked is not None:
+                self.assertTrue(pre is None or asked is None, (pre, asked))
+            if asked is not None:
+                self.assertEqual(asked, ALLOW_PERMISSION)  # no updatedInput, updatedPermissions or interrupt
+                return "allow", None
+        if pre is None:
+            return None
+        if "systemMessage" in pre:
+            return "warn", pre["systemMessage"]
+        return verdict, pre["hookSpecificOutput"]["permissionDecisionReason"]
+
+    def expect(self, make, expected, transcript=None):
+        for runtime in ("claude", "codex"):
+            call = make(runtime)
+            with self.subTest(runtime=runtime, call=call):
+                want = ("allow", None) if expected and expected[0] == "allow" and runtime == "codex" else expected
+                self.assertEqual(self.outcome(runtime, call, transcript and transcript(runtime)), want)
+
+    def allow(self, ident, kind):
+        return "allow", ddl_gate.GRANT_ALLOW.format(ident, kind)
+
+    def test_the_launcher_gives_the_same_answers_as_the_code_it_loads(self):
+        """The rest of this class calls the gate in process; the hook runs ddl_gate.py. Both answer alike."""
+        ident = self.granted(machines=["build-1"])
+        calls = [lambda rt: self.edit(rt, "tools/x.py"), lambda rt: self.edit(rt, "design.md"),
+                 lambda rt: self.shell(rt, "python3 tools/test_x.py"), lambda rt: self.shell(rt, "python3 tools/build.py"),
+                 lambda rt: self.shell(rt, "ssh build-1 git push"), lambda rt: self.shell(rt, "touch x"),
+                 lambda rt: self.shell(rt, 'python3 "$HOME/.claude/hooks/ddl_gate.py" status')]
+        for runtime in ("claude", "codex"):
+            for make in calls:
+                for event in ("pre-tool-use", "permission-request"):
+                    with self.subTest(runtime=runtime, call=make(runtime), event=event):
+                        self.assertEqual(self.decide(runtime, make(runtime), event=event, process=True),
+                                         self.decide(runtime, make(runtime), event=event))
+        self.assertEqual(self.outcome("claude", self.edit("claude", "tools/x.py")), self.allow(ident, "edit"))
+
+    def test_an_edit_inside_the_grant_is_allowed_and_one_outside_its_paths_denied(self):
+        ident = self.granted()
+        for path in ("tools/x.py", "tools/deep/x.py", "skills/a.md", str(self.root / "tools" / "x.py"), "bin/../tools/x.py"):
+            self.expect(lambda rt, p=path: self.edit(rt, p), self.allow(ident, "edit"))
+        for path in ("docs/a.md", "skills/deep/a.md", "bin/x.sh", "toolsx/a.py"):
+            self.expect(lambda rt, p=path: self.edit(rt, p), ("deny", ddl_gate.OUTSIDE_PATHS.format(path, ident)))
+        for tool, key in (("Write", "file_path"), ("MultiEdit", "file_path"), ("NotebookEdit", "notebook_path")):
+            self.assertEqual(self.outcome("claude", (tool, {key: "tools/n.ipynb"})), self.allow(ident, "edit"))
+            self.assertEqual(self.outcome("claude", (tool, {key: "x.ipynb"})),
+                             ("deny", ddl_gate.OUTSIDE_PATHS.format("x.ipynb", ident)))
+
+    def test_protected_files_and_paths_outside_the_root_are_the_hosts(self):
+        """Git directories, the ledger directory, the adapters' directories, the instruction files and the notebook
+        are never a grant's, not even under `**` or by name; nor is anything outside the root."""
+        ident = self.granted(paths=["**"])
+        os.symlink(str(self.outside), str(self.root / "tools" / "out"))
+        os.symlink(str(self.outside / "f.py"), str(self.root / "tools" / "link.py"))
+        for path in (".git/config", ".notebook.git/config", ".ddl/notes.md", str(self.outside / "x.py"),
+                     "../outside/x.py", "tools/out/x.py", "tools/link.py", ".claude/settings.json", ".claude/CLAUDE.md",
+                     ".codex/config.toml", ".agents/skills/x/SKILL.md", "CLAUDE.md", "docs/AGENTS.md", "design.md",
+                     "design-history.md", "tools/deep/design.md", ".mcp.json", "CLAUDE.local.md", "docs/AGENTS.override.md",
+                     ".envrc", ".vscode/tasks.json", ".githooks/pre-commit", ".gitattributes", "sub/.gitmodules",
+                     ".pre-commit-config.yaml", ".github/workflows/ci.yml", ".cursor/rules/x.mdc", ".claude.json",
+                     "sub/.claude.json"):
+            self.expect(lambda rt, p=path: self.edit(rt, p), None)
+        self.granted(paths=[".claude/**", "design.md", "CLAUDE.md"])  # named explicitly: still the host's
+        for path in (".claude/settings.json", "design.md", "CLAUDE.md"):
+            self.expect(lambda rt, p=path: self.edit(rt, p), None)
+        self.granted(paths=["**"])
+        if ddl_gate.folds_case(os.path.realpath(str(self.root))):  # the macOS default: the spelling does not matter
+            for path in (".CLAUDE/settings.json", ".Codex/config.toml", "Design.md", ".GIT/config", "claude.md",
+                         ".VSCode/x.json", ".GitAttributes", "Claude.Local.md", ".MCP.json", "de\u017fign.md",
+                         ".GitHub/Workflows/ci.yml", ".Cursor/x", ".Claude.json"):
+                self.expect(lambda rt, p=path: self.edit(rt, p), None)
+        self.expect(lambda rt: self.edit(rt, "docs/a.md"), self.allow(ident, "edit"))  # `**` reaches the rest
+        self.expect(lambda rt: self.edit(rt, ".github/CODEOWNERS"), self.allow(ident, "edit"))  # only its workflows
+
+    def test_codex_patch_targets_all_count_and_a_deletion_is_the_hosts(self):
+        ident = self.granted()
+        self.assertEqual(self.outcome("codex", self.edit("codex", "tools/a.py", "skills/b.md", kind="Add File")),
+                         ("allow", None))
+        self.assertEqual(self.outcome("codex", self.edit("codex", "tools/a.py", "docs/a.md")),
+                         ("deny", ddl_gate.OUTSIDE_PATHS.format("docs/a.md", ident)))
+        self.assertIsNone(self.outcome("codex", self.edit("codex", "tools/a.py", "design.md")))  # protected
+        indented = ("apply_patch", {"patch": PATCH.format("*** Update File: tools/a.py\n@@\n-a\n+b\n"
+                                                          "  *** Add File: ../outside/evil.txt\n+x\n")})
+        self.assertIsNone(self.outcome("codex", indented))  # an indented header counts like any other
+        self.assertIsNone(self.outcome("codex", self.edit("codex", "tools/a.py", str(self.outside / "b.py"))))
+        self.assertIsNone(self.outcome("codex", self.edit("codex", "tools/a.py", kind="Delete File")))
+        moved = ("apply_patch", {"patch": PATCH.format("*** Update File: tools/a.py\n*** Move to: ../outside/a.py\n")})
+        self.assertIsNone(self.outcome("codex", moved))
+        self.assertIsNone(self.outcome("codex", ("apply_patch", {"patch": PATCH.format("")})))  # no target named
+
+    def test_commands_inside_the_grant_are_allowed_by_class(self):
+        ident = self.granted(commands=["test", "check", "build"])
+        cases = {
+            "read": ["git status", "sed -n '1,5p' tools/x.py | head -n 3", "cd /tmp && ls"],
+            "test": ["cd tools && python3 test_x.py 2>&1 | tail -5", "python3 -I -B tools/test_x.py -k Grant",
+                     "/usr/bin/python3 tools/deep/x_test.py", "python3.9 -m unittest discover -s tools -p 'test_*.py'",
+                     "python3 -m unittest -v tools.test_x", "python3 -m pytest tools", "pytest -q -x tools/test_x.py",
+                     "pytest -k 'grant and not slow' --maxfail=2 -m fast tools", "npm test", "cargo test",
+                     "cargo test --release -p core -- grant", "go test ./...",
+                     "go test -v -race -run TestGrant -count 1 -timeout 10m ./...", "make test", "make -j 4 test",
+                     "python3 tools/test_x.py --out /tmp/result.json < /dev/null"],
+            "check": ["python3 tools/check_x.py source", "bash -n bin/install.sh bin/doctor.sh", "git diff --check",
+                      "make lint", "make check"],
+            "build": ["python3 tools/build.py", "make", "make all", "make -j8 build", "npm run build", "cargo build",
+                      "cargo build --workspace --all-features", "go build ./...", "go build -v ./cmd/x"],
+            "test, check": ["python3 tools/test_x.py > /dev/null && python3 tools/check_x.py"],
+        }
+        for kind, commands in cases.items():
+            for command in commands:
+                self.expect(lambda rt, c=command: self.shell(rt, c), self.allow(ident, kind))
+
+    def test_a_validation_command_is_a_check_exactly_as_the_notebook_writes_it(self):
+        ident = self.granted(commands=["check"])
+        command = 'ddl_tmp=$(mktemp -d) &&\n(\n  trap \'rm -rf "$ddl_tmp"\' EXIT\n  python3 tools/run_x.py "$ddl_tmp"\n)'
+        (self.root / "design.md").write_text(
+            "# design.md\n\n## Validation\n\n```bash\n# V1 tools: a check\n" + command + "\n# expected: OK\n\n"
+            "# V2 tools: a push is never a grant's\ngit push --dry-run origin main\n```\n", encoding="utf-8")
+        self.expect(lambda rt: self.shell(rt, command), self.allow(ident, "check"))
+        spaced = command.replace("trap", "trap  ").replace("\n  ", "\n\t") + "\n\n"
+        self.expect(lambda rt: self.shell(rt, spaced), self.allow(ident, "check"))  # whitespace within lines
+        self.expect(lambda rt: self.shell(rt, " ".join(command.split())), None)  # a newline is no space
+        self.expect(lambda rt: self.shell(rt, command.replace("run_x", "run_y")), None)
+        out = self.decide("claude", self.shell("claude", "git push --dry-run origin main"))
+        self.assertIn("DDL Git review", out["hookSpecificOutput"]["permissionDecisionReason"])
+        # Without the `check` class the notebook is not read, and the same text is the host's.
+        self.granted(commands=["test"])
+        self.expect(lambda rt: self.shell(rt, command), None)
+
+    def test_the_notebook_the_guidance_names_holds_the_validation_commands(self):
+        ident = self.granted(commands=["check"])
+        mark_project(self.root)  # .claude/CLAUDE.md; point its Notebook import at another file
+        path = self.root / ".claude" / "CLAUDE.md"
+        path.write_text(path.read_text() + "\n## Notebook\n\n@../notes/plan.md\n", encoding="utf-8")
+        (self.root / "notes").mkdir()
+        (self.root / "notes" / "plan.md").write_text("## Validation\n\n```\n# V9 x\necho $HOME | wc -c\n```\n")
+        (self.root / "design.md").write_text("## Validation\n\n```\n# V1 x\necho $PATH | wc -c\n```\n")
+        self.expect(lambda rt: self.shell(rt, "echo $HOME | wc -c"), self.allow(ident, "check"))
+        self.expect(lambda rt: self.shell(rt, "echo $PATH | wc -c"), None)
+        self.granted(paths=["**"], commands=["check"])
+        self.expect(lambda rt: self.edit(rt, "notes/plan.md"), None)  # the named notebook is protected too
+
+    def test_the_gates_own_subcommands_need_no_class_and_snapshot_needs_its_own(self):
+        ident = self.granted(commands=["test"])
+        for command in ('python3 "$HOME/.claude/hooks/ddl_gate.py" status',
+                        'python3 "$HOME/.codex/hooks/ddl_gate.py" run-item N-0123456789ab w1 done',
+                        'python3 "${HOME}/.codex/hooks/ddl_gate.py" status',
+                        "python3 {} run-start < /etc/hosts".format(shlex.quote(GATE)),
+                        "python3 -I {} report --run N-0123456789ab".format(shlex.quote(GATE)),
+                        'python3 "$HOME/.claude/hooks/ddl_gate.py" run-start <<\'JSON\'\n{"report": "R-x"}\nJSON',
+                        PREPARE_CALL["claude"]):
+            self.expect(lambda rt, c=command: self.shell(rt, c), self.allow(ident, "gate"))
+        snapshot = 'python3 "$HOME/.claude/hooks/ddl_gate.py" snapshot --item w1'
+        self.expect(lambda rt: self.shell(rt, snapshot), ("deny", ddl_gate.OUTSIDE_CLASS.format("snapshot", ident)))
+        for command in ('python3 "$HOME/.claude/hooks/ddl_gate.py" bogus',
+                        'python3 "$HOME/.claude/hooks/ddl_gate.py" status > status.txt',
+                        "python3 tools/test_x.py <<'EOF'\ninput\nEOF"):
+            self.expect(lambda rt, c=command: self.shell(rt, c), None)
+        # Only the real gate: a project file of that name, a made-up path, an unquoted `$HOME` are not it.
+        (self.root / "tools" / "ddl_gate.py").write_text("print('not the gate')\n")
+        (self.root / ".claude" / "hooks").mkdir(parents=True, exist_ok=True)
+        for command in ("python3 tools/ddl_gate.py status", "python3 ./tools/ddl_gate.py run-item N-0123456789ab w1 done",
+                        "python3 /ddl-gate-entry/ddl_gate.py status", "python3 $HOME/.claude/hooks/ddl_gate.py status",
+                        'python3 "$CLAUDE_PROJECT_DIR/.claude/hooks/ddl_gate.py" status'):
+            self.expect(lambda rt, c=command: self.shell(rt, c), None)
+        other = self.granted("R-" + "b" * 16, commands=["snapshot"], approved="2026-11-21T00:00:00.000Z")
+        self.expect(lambda rt: self.shell(rt, snapshot), self.allow(other, "snapshot"))
+        inside = snapshot + " --git-dir .notebook.git --work-tree=."
+        self.expect(lambda rt: self.shell(rt, inside), self.allow(other, "snapshot"))
+        for pair in (" --git-dir=/tmp/other/.git --work-tree=/tmp/other", " --git-dir .git --work-tree " + str(self.outside),
+                     " --git-dir ../outside/.git --work-tree ."):
+            self.expect(lambda rt, c=snapshot + pair: self.shell(rt, c), None)  # both inside the root, or the host's
+
+    def test_a_class_outside_the_grant_is_denied(self):
+        ident = self.granted(commands=["test"])
+        for command, kind in (("python3 tools/build.py", "build"), ("make", "build"), ("go build ./...", "build"),
+                              ("python3 tools/check_x.py", "check"), ("git diff --check", "check"),
+                              ("python3 tools/test_x.py && python3 tools/build.py", "build"),
+                              ("ssh build-1 ls", None)):
+            expected = ("deny", ddl_gate.OUTSIDE_CLASS.format(kind, ident)) if kind else \
+                ("deny", ddl_gate.OUTSIDE_MACHINE.format("build-1", ident))
+            self.expect(lambda rt, c=command: self.shell(rt, c), expected)
+
+    def test_everything_else_is_the_hosts(self):
+        self.granted(commands=["test", "check", "build"])
+        for command in ("python3 tools/test_$X.py", "python3 /tmp/test_x.py", "python3 tools/test_x.py /etc/passwd",
+                        "cd / && python3 tools/test_x.py", "cd tools | python3 ../../x/test_x.py",
+                        "make install", "make deploy", "make deploy-prod", "make install-local", "make Install",
+                        "make -j", "make VAR=1", "make -f other.mk", "make -C tools test",
+                        "python3 tools/test_x.py > out.txt", "FOO=1 python3 tools/test_x.py",
+                        "env python3 tools/test_x.py", "python3 -c 'print(1)'", "./tools/test_x.py",
+                        "python3 tools/x.py", "npm test -- --watch", "npm run deploy", "touch tools/x.py", "rm -rf tools",
+                        "cd - && make", "cd .git && make", "cd .claude && python3 ../tools/test_x.py",
+                        # options outside each class form's allow-list
+                        "bash -n +n -c 'git push origin main'", "bash -n -o noexec +o noexec -c 'git commit -m x'",
+                        "bash -n +n tools/x.sh", "bash -n -i tools/x.sh", "bash -n", "bash -n /etc/profile",
+                        "go test -exec 'sh -c touch' .", "go test -exec=/tmp/evil ./...", "go build -toolexec x ./...",
+                        "go build -o .git/hooks/pre-commit ./cmd", "go test -count x ./...", "go test -timeout soon ./...",
+                        "cargo build --config x", "cargo test -- --nocapture", "cargo test tests::x", "cargo test -Z x",
+                        "pytest --basetemp=.git", "pytest --junitxml=.ddl/events.jsonl", "pytest -p evil",
+                        "python3 -m pytest -o cache_dir=/tmp/x", "pytest --maxfail=many", "pytest -qx tools",
+                        "python3 -m unittest discover -s /etc", "python3 -m unittest discover -t ..",
+                        "python3 -m unittest -b", "python3 -m unittest --locals",
+                        "git diff --check --output=/tmp/x", "git diff --check --ext-diff",
+                        # words that name a protected file, whatever their shape
+                        "python3 tools/test_x.py --basetemp=.git", "python3 tools/test_x.py .claude/settings.json",
+                        "python3 tools/test_x.py -o.git/x", "python3 tools/test_x.py design.md", "pytest .codex",
+                        "bash -n .claude/hooks/x.sh", "python3 .claude/hooks/test_x.py",
+                        # branch-moving Git commands
+                        "git reset --hard HEAD~1", "git checkout -B other", "git rebase main", "git branch -D old",
+                        "git switch -C topic", "git merge other", "git tag v1", "git stash", "git update-ref refs/x HEAD",
+                        # outbound commands
+                        "curl -X POST https://example.invalid -d x", "gh pr create --fill", "npm publish",
+                        "scp tools/x.py host:", "rsync -a . host:", "nc example.invalid 80", "ssh -p 22 host ls"):
+            self.expect(lambda rt, c=command: self.shell(rt, c), None)
+
+    def test_remote_run_reaches_only_a_granted_machine_and_never_an_exit_behind_it(self):
+        ident = self.granted(commands=["remote-run"], machines=["build-1"])
+        for command in ("ssh -o BatchMode=yes -o ConnectTimeout=5 -T build-1 make test",
+                        "ssh -n build-1 python3 run.py --out /var/tmp/x", "ssh -oBatchMode=yes build-1 nvidia-smi"):
+            self.expect(lambda rt, c=command: self.shell(rt, c), self.allow(ident, "remote-run"))
+        for command, word in (("ssh build-1 git push origin main", "git push"),
+                              ("ssh build-1 git -C w commit -m x", "git commit"),
+                              ("ssh build-1 git branch -D old", "git branch"),
+                              ("ssh build-1 rsync -a . other:", "rsync"), ("ssh build-1 ssh other ls", "ssh"),
+                              ("ssh build-1 scp x other:", "scp"), ("ssh build-1 gh release create v1", "gh"),
+                              ("ssh -T build-1 curl -X POST https://example.invalid", "method -X"),
+                              ("ssh build-1 curl --data @f https://example.invalid", "upload --data"),
+                              ("ssh build-1 npm publish", "npm publish")):
+            self.expect(lambda rt, c=command: self.shell(rt, c), ("deny", ddl_gate.EXIT_BEHIND_SSH.format(word)))
+        self.expect(lambda rt: self.shell(rt, "ssh other-host ls"),
+                    ("deny", ddl_gate.OUTSIDE_MACHINE.format("other-host", ident)))
+        for command in ("ssh -p 22 build-1 ls", "ssh build-1", "ssh -i key build-1 ls",
+                        # an option after the machine: OpenSSH still reads it
+                        "ssh build-1 -oProxyCommand=x true", "ssh build-1 -o ProxyCommand=nc true",
+                        "ssh build-1 -oLocalCommand=x -oPermitLocalCommand=yes true", "ssh build-1 -F /tmp/cfg true",
+                        "ssh build-1 -J jump true", "ssh build-1 -L 8080:intranet:80 sleep 9",
+                        "ssh build-1 -R 2222:localhost:22 sleep 9", "ssh build-1 -D 1080 sleep 9",
+                        # a remote command that is not literal words, which could hide an exit
+                        "ssh build-1 'cd work && make test'", "ssh build-1 'g\"\"it push'", "ssh build-1 'gi\\t push'",
+                        "ssh build-1 'x=gi; ${x}t push'", "ssh build-1 \"echo x | sh\"", "ssh build-1 make > /dev/null",
+                        "ssh build-1 ma\\ke"):
+            self.expect(lambda rt, c=command: self.shell(rt, c), None)
+
+    def test_a_command_or_an_edit_starts_inside_the_root_and_runs_in_a_standard_shell(self):
+        ident = self.granted(paths=["tools/**"], commands=["build", "test"])
+        read, build = self.allow(ident, "read"), self.allow(ident, "build")
+        outside = str(self.outside)
+        for workdir in (outside, "/", ".claude", ".git", "../outside"):
+            with self.subTest(workdir=workdir):
+                for command in ("make", "pytest", 'python3 "$HOME/.claude/hooks/ddl_gate.py" status'):
+                    call = ("exec_command", {"cmd": command, "workdir": workdir})
+                    self.assertIsNone(self.outcome("codex", call))
+                self.assertEqual(self.outcome("codex", ("exec_command", {"cmd": "git status", "workdir": workdir})),
+                                 ("allow", None))  # a read may run anywhere
+                patch = self.edit("codex", str(self.root / "tools" / "a.py"))
+                self.assertIsNone(self.outcome("codex", (patch[0], dict(patch[1], workdir=workdir))))
+        for workdir in ("tools", str(self.root / "tools")):
+            self.assertEqual(self.outcome("codex", ("exec_command", {"cmd": "make", "workdir": workdir})), ("allow", None))
+        # Claude's working directory is the call's `cwd`: a protected directory inside the root is not a start.
+        for cwd, expected in ((self.root / ".claude", None), (self.root / "tools", build)):
+            data = payload("claude", transcript=fixture("claude_open.jsonl"), session="cwd", cwd=str(cwd),
+                           tool_name="Bash", tool_input={"command": "make"})
+            out = self.run_gate("pre-tool-use", "claude", data).stdout
+            self.assertEqual(json.loads(out)["hookSpecificOutput"]["permissionDecisionReason"] if out else None,
+                             expected and expected[1])
+            data["tool_input"] = {"command": "git status"}
+            out = self.run_gate("pre-tool-use", "claude", data).stdout
+            self.assertEqual(json.loads(out)["hookSpecificOutput"]["permissionDecisionReason"], read[1])
+        # A command that runs through anything but bash, sh, zsh or dash is the host's, a read included.
+        for tool_input in ({"cmd": "make", "shell": "/tmp/evil"}, {"cmd": "git status", "shell": "python3"},
+                           {"command": ["/tmp/bash", "-lc", "make"]}, {"command": ["./zsh", "-c", "git status"]}):
+            tool = "shell" if "command" in tool_input else "exec_command"
+            self.assertIsNone(self.outcome("codex", (tool, tool_input)), tool_input)
+        for tool_input in ({"cmd": "make", "shell": "/bin/zsh"}, {"cmd": "make", "shell": "bash", "login": True},
+                           {"command": ["bash", "-lc", "make"]}, {"command": ["/usr/bin/env", "make"]},
+                           {"command": ["make"]}):
+            tool = "shell" if "command" in tool_input else "exec_command"
+            expected = None if tool_input.get("command", [""])[0] == "/usr/bin/env" else ("allow", None)
+            self.assertEqual(self.outcome("codex", (tool, tool_input)), expected, tool_input)
+
+    def test_no_input_reaches_a_remote_shell_and_no_hidden_exit_passes(self):
+        ident = self.granted(commands=["remote-run", "test"], machines=["build-1"])
+        self.expect(lambda rt: self.shell(rt, "ssh build-1 make test | tail -5"), self.allow(ident, "remote-run"))
+        self.expect(lambda rt: self.shell(rt, "python3 tools/test_x.py && ssh build-1 make test"),
+                    self.allow(ident, "test, remote-run"))
+        self.expect(lambda rt: self.shell(rt, "echo x &&\nssh build-1 make test"), self.allow(ident, "remote-run"))
+        for command in ("echo git push | ssh build-1 sh", "cat tools/test_x.py | ssh build-1 bash",
+                        "ssh build-1 sh < tools/test_x.py", "ssh build-1 sh 0<tools/test_x.py", "true & ssh build-1 sh",
+                        # the shell continues a pipe across a newline
+                        "echo git push |\nssh build-1 sh", "echo git push | \n ssh build-1 sh", "echo git push |\n\nssh build-1 sh"):
+            self.expect(lambda rt, c=command: self.shell(rt, c), None)  # the remote shell would run that input
+        for command, word in (("ssh build-1 git-push origin main", "git push"),
+                              ("ssh build-1 /usr/lib/git-core/git-push origin main", "git push"),
+                              ("ssh build-1 git-branch -D old", "git branch"), ("ssh build-1 hub push", "hub"),
+                              ("ssh build-1 hub release create v1", "hub"), ("ssh build-1 aws s3 cp x s3://b/x", "aws s3 cp"),
+                              ("ssh build-1 aws s3 sync . s3://b", "aws s3 sync"), ("ssh build-1 ftp example.invalid", "ftp"),
+                              ("ssh build-1 git-http-push x", "git http-push"), ("ssh build-1 aws s3api put-object", "aws s3api"),
+                              ("ssh build-1 gsutil cp a gs://b", "gsutil cp"), ("ssh build-1 lftp x", "lftp"),
+                              ("ssh build-1 tftp x", "tftp"), ("ssh build-1 telnet x 25", "telnet"),
+                              ("ssh build-1 python3 -m http.server", "http.server"),
+                              ("ssh build-1 git-receive-pack x", "git receive-pack"),
+                              ("ssh build-1 /usr/libexec/git-core/git-upload-pack x", "git upload-pack"),
+                              ("ssh build-1 git-upload-archive x", "git upload-archive")):
+            self.expect(lambda rt, c=command: self.shell(rt, c), ("deny", ddl_gate.EXIT_BEHIND_SSH.format(word)))
+
+    def test_a_socket_redirect_or_a_sandbox_escape_gets_no_allow(self):
+        ident = self.granted(commands=["build", "test"])
+        for command in ("cat < /dev/tcp/127.0.0.1/9", "head -c1 < /dev/tcp/example.invalid/80",
+                        "ls -la 0</dev/udp/127.0.0.1/53", "cat <'/dev/tcp/example.invalid/80'",
+                        "python3 tools/test_x.py < /dev/tcp/example.invalid/80", "make 0</dev/udp/127.0.0.1/53"):
+            self.expect(lambda rt, c=command: self.shell(rt, c), None)
+        self.expect(lambda rt: self.shell(rt, "grep -n /dev/tcp/ notes.txt"), self.allow(ident, "read"))
+        escapes = {"claude": [{"dangerouslyDisableSandbox": True}],
+                   "codex": [{"sandbox_permissions": "require_escalated", "justification": "x"},
+                             {"with_escalated_permissions": True}]}
+        for runtime, fields in escapes.items():
+            tool, key = SHELL[runtime]
+            for extra in fields:
+                for command in ("make", "git status", "python3 tools/test_x.py"):
+                    with self.subTest(runtime=runtime, extra=extra, command=command):
+                        self.assertIsNone(self.outcome(runtime, (tool, dict({key: command}, **extra))))
+        self.assertEqual(self.outcome("codex", ("exec_command", {"cmd": "make", "sandbox_permissions": "use_default"})),
+                         ("allow", None))
+        for extra in ({"additional_permissions": {"network": True}}, {"additional_permissions": ["network"]}):
+            for command in ("make", "git status"):
+                self.assertIsNone(self.outcome("codex", ("exec_command", dict({"cmd": command}, **extra))), extra)
+        self.assertEqual(self.outcome("codex", ("exec_command", {"cmd": "make", "additional_permissions": {}})),
+                         ("allow", None))
+        self.assertEqual(self.outcome("claude", ("Bash", {"command": "make", "dangerouslyDisableSandbox": False})),
+                         self.allow(ident, "build"))
+
+    def test_symlinks_tests_packages_and_jobs_stay_inside_their_bounds(self):
+        ident = self.granted(commands=["build", "test", "check"])
+        os.symlink(str(self.outside), str(self.root / "tools" / "outlink"))
+        (self.outside / "evil.py").write_text("")
+        (self.root / "tools" / "deep" / "test_d.py").write_text("")
+        for command in ("cd tools && pytest outlink", "pytest tools/outlink", "pytest /tmp/x/test_a.py",
+                        "python3 -m pytest tools/outlink/test_a.py::test", "python3 -m unittest tools.outlink.evil",
+                        "python3 -m unittest antigravity", "python3 -m unittest idlelib.idle",
+                        "python3 -m unittest discover tools/outlink", "python3 -m unittest discover -s tools/outlink",
+                        "python3 -m unittest discover -s tools -t /", "python3 tools/outlink/test_a.py",
+                        "bash -n tools/outlink/x.sh", "go test -run . all", "go test github.com/evil/pkg",
+                        "go build tools/outlink", "go test -run -exec=x .", "make -j 999999999", "make -j257", "make -j 0",
+                        "pytest -k -p tools"):
+            self.expect(lambda rt, c=command: self.shell(rt, c), None)
+        # A script's own argument may name the temporary directory, never a place outside it and the root.
+        os.symlink(os.sep, str(self.root / "tools" / "homelink"))  # `/`: outside the root and every temporary directory
+        for command in ("cd tools && python3 test_x.py homelink", "python3 tools/test_x.py tools/homelink",
+                        "cd tools && python3 test_x.py --out=homelink"):
+            self.expect(lambda rt, c=command: self.shell(rt, c), None)
+        self.expect(lambda rt: self.shell(rt, "cd tools && python3 test_x.py deep"), self.allow(ident, "test"))
+        for command, kind in (("python3 -m unittest tools.test_x", "test"), ("python3 -m unittest tools.deep.test_d.Case.test", "test"),
+                              ("pytest tools/test_x.py::test_a", "test"), ("go build .", "build"), ("go test ./tools/...", "test"),
+                              ("make -j 256 test", "test"), ("make -j8", "build")):
+            self.expect(lambda rt, c=command: self.shell(rt, c), self.allow(ident, kind))
+
+    def test_active_grants_form_a_union(self):
+        first = self.granted(paths=["tools/**"], commands=["test"])
+        second = self.granted("R-" + "b" * 16, paths=["skills/**"], commands=["build"], approved="2026-11-22T00:00:00.000Z")
+        both = "{}, {}".format(first, second)
+        self.expect(lambda rt: self.edit(rt, "skills/a.md"), self.allow(second, "edit"))
+        self.assertEqual(self.outcome("codex", self.edit("codex", "tools/a.py", "skills/b.md")), ("allow", None))
+        self.expect(lambda rt: self.shell(rt, "python3 tools/test_x.py && python3 tools/build.py"),
+                    ("allow", ddl_gate.GRANT_ALLOW.format(both, "test, build")))
+        self.expect(lambda rt: self.edit(rt, "docs/a.md"), ("deny", ddl_gate.OUTSIDE_PATHS.format("docs/a.md", both)))
+        self.expect(lambda rt: self.shell(rt, "python3 tools/check_x.py"),
+                    ("deny", ddl_gate.OUTSIDE_CLASS.format("check", both)))
+
+    def corpus(self, runtime):
+        """Calls a grant could answer for, inside and outside it."""
+        return [self.edit(runtime, path) for path in ("tools/x.py", "design.md", ".ddl/notes.md")] + [
+            self.shell(runtime, command) for command in (
+                "git status", "python3 tools/test_x.py", "python3 tools/build.py", "ssh build-1 ls", "ssh x git push",
+                'python3 "$HOME/.claude/hooks/ddl_gate.py" status', "git diff --check")]
+
+    def test_no_grant_and_an_expired_grant_allow_nothing_and_deny_nothing_new(self):
+        for runtime in ("claude", "codex"):
+            bare = [self.outcome(runtime, call) for call in self.corpus(runtime)]
+            with self.subTest(runtime=runtime, grant="none"):
+                self.assertEqual(bare, [None] * len(bare))
+        self.granted(days=-1, paths=["**"], commands=list(ddl_gate.GRANT_COMMANDS), machines=["build-1", "x"])
+        self.granted("R-" + "c" * 16, paths=["skills/**"], commands=["test"], budget={"minutes": 0, "fixAttempts": 0})
+        for runtime in ("claude", "codex"):
+            with self.subTest(runtime=runtime, grant="expired or malformed"):
+                self.assertEqual([self.outcome(runtime, call) for call in self.corpus(runtime)], [None] * 10)
+
+    def test_a_pending_stop_keeps_its_decisions_with_a_grant_active(self):
+        self.granted(paths=["**"], commands=list(ddl_gate.GRANT_COMMANDS), machines=["build-1"])
+        for runtime in ("claude", "codex"):
+            closed = fixture(runtime + "_closed_in_turn.jsonl")
+            for call in self.corpus(runtime):
+                with self.subTest(runtime=runtime, call=call):
+                    held = self.outcome(runtime, call, closed)
+                    data = payload(runtime, transcript=closed, session="bare", tool_name=call[0], tool_input=call[1])
+                    bare = self.run_gate("pre-tool-use", runtime, data).stdout  # PROJECT has no grant
+                    self.assertEqual(held, None if not bare else ("deny", json.loads(bare)["hookSpecificOutput"]
+                                                                   ["permissionDecisionReason"]))
+                    self.assertNotEqual(held and held[0], "allow")
+
+    def test_an_unreadable_record_allows_nothing(self):
+        self.granted(paths=["**"])
+        for runtime in ("claude", "codex"):
+            with self.subTest(runtime=runtime):
+                self.assertEqual(self.outcome(runtime, self.edit(runtime, "tools/x.py"), False),
+                                 ("warn", ddl_gate.UNREADABLE))
+                self.assertIsNone(self.outcome(runtime, self.edit(runtime, "tools/x.py"), False))  # warned once
+
+    def test_only_the_gate_writes_the_ledger_grant_or_not(self):
+        for granted in (False, True):
+            if granted:
+                self.granted(paths=["**"], commands=list(ddl_gate.GRANT_COMMANDS))
+            for path in (".ddl/events.jsonl", ".ddl/runs/N-0123456789ab/run.json", str(self.root / ".ddl/events.jsonl")):
+                shown = os.path.join(".ddl", *pathlib.PurePosixPath(path.split(".ddl/", 1)[1]).parts)
+                self.expect(lambda rt, p=path: self.edit(rt, p), ("deny", ddl_gate.LEDGER_REASON.format(shown)))
+            for command in ("echo x >> .ddl/events.jsonl", "rm .ddl/events.jsonl", "cp /tmp/x .ddl/runs/N-0123456789ab/run.json",
+                            "sed -i '' 1d .ddl/events.jsonl", "cd .ddl && truncate -s 0 events.jsonl",
+                            "python3 tools/test_x.py >| .ddl/events.jsonl", "python3 tools/test_x.py <> .ddl/events.jsonl"):
+                with self.subTest(command=command, granted=granted):
+                    if command.startswith("cd "):  # the shell's own `cd` is followed no further: the host's
+                        self.assertNotEqual(self.outcome("claude", self.shell("claude", command)), ("allow", None))
+                        continue
+                    self.expect(lambda rt, c=command: self.shell(rt, c), ("deny", ddl_gate.LEDGER_REASON.format(
+                        os.path.join(".ddl", "runs", "N-0123456789ab", "run.json") if "run.json" in command
+                        else os.path.join(".ddl", "events.jsonl"))))
+            if ddl_gate.folds_case(os.path.realpath(str(self.root))):  # the macOS default: any spelling is the ledger
+                for path in (".DDL/events.jsonl", ".Ddl/runs/N-0123456789ab/run.json"):
+                    self.expect(lambda rt, p=path: self.edit(rt, p), ("deny", ddl_gate.LEDGER_REASON.format(path)))
+                self.expect(lambda rt: self.shell(rt, "echo x > .DDL/EVENTS.jsonl"),
+                            ("deny", ddl_gate.LEDGER_REASON.format(".DDL/EVENTS.jsonl")))
+            read = None if not granted else self.allow("R-" + "a" * 16, "read")
+            self.expect(lambda rt: self.shell(rt, "tail -n 3 .ddl/events.jsonl"), read)
+            self.expect(lambda rt: self.shell(rt, "cp .ddl/events.jsonl /tmp/copy.jsonl"), None)
+        # Under a pending STOP the STOP answers, as it always did.
+        closed = lambda rt: fixture(rt + "_closed_in_turn.jsonl")
+        self.expect(lambda rt: self.edit(rt, ".ddl/events.jsonl"), ("deny", ddl_gate.DENY_REASON), closed)
+
+    def test_each_answer_writes_its_ledger_line(self):
+        ident = self.granted()
+        self.outcome("claude", self.edit("claude", "tools/x.py"))
+        self.outcome("claude", self.shell("claude", "python3 tools/test_x.py && python3 tools/check_x.py"))
+        self.outcome("claude", self.edit("claude", "docs/a.md"))
+        self.outcome("codex", self.edit("codex", "tools/x.py"))
+        rows = [{k: v for k, v in row.items() if k not in ("ts", "v", "session")}
+                for row in events(self.root) if row["kind"] in ("allowed", "denied")]
+        self.assertEqual(rows, [
+            {"host": "claude", "kind": "allowed", "allow": "edit", "id": ident, "tool": "Edit", "toolUseId": "toolu_01"},
+            {"host": "claude", "kind": "allowed", "allow": "test,check", "id": ident, "tool": "Bash",
+             "toolUseId": "toolu_01"},
+            {"host": "claude", "kind": "denied", "id": ident, "rule": "grant-paths", "tool": "Edit", "toolUseId": "toolu_01"},
+            # Codex: its PreToolUse prints nothing and logs no allow; the PermissionRequest that allows does.
+            {"host": "codex", "kind": "allowed", "allow": "edit", "id": ident, "tool": "apply_patch"}])
+
+    def test_an_allowed_call_keeps_the_bookkeeping_of_a_call_that_passes(self):
+        """The answer to a plan's question is read, and its grant recorded, also on a call a grant allows."""
+        self.granted(paths=["tools/**"])
+        for runtime in ("claude", "codex"):
+            with self.subTest(runtime=runtime):
+                session, prepared = runtime + "-next", self.prepared(runtime)
+                self.assert_allowed(self.ask(runtime, prepared, session))
+                if runtime == "codex":
+                    self.assert_allowed(self.reply(prepared, 0, session))
+                tool, tool_input = self.edit(runtime, "tools/x.py")
+                out = self.tool(runtime, self.flow(runtime, prepared, "answered"), session, tool, tool_input).stdout
+                if runtime == "claude":
+                    self.assertEqual(json.loads(out)["hookSpecificOutput"]["permissionDecision"], "allow")
+                else:
+                    self.assertEqual(out, "")
+                self.assertIsNotNone(self.record(prepared))
+                self.assertEqual([row["kind"] for row in events(self.root, session=session)][-2:],
+                                 ["granted", "allowed"] if runtime == "claude" else ["answered", "granted"])
+                self.assertFalse(self.armed(session))
+
+    def test_an_internal_error_allows_nothing(self):
+        self.granted(paths=["**"])
+        data = payload("claude", transcript=fixture("claude_open.jsonl"), cwd=self.cwd, tool_name="Edit",
+                       tool_input={"file_path": "tools/x.py"})
+        for event in ("pre-tool-use", "permission-request"):
+            for name in ("edit_grant", "active_grants", "ledger_guard"):
+                with self.subTest(event=event, failing=name), \
+                        mock.patch.dict(os.environ, {"DDL_GATE_STATE_DIR": self.state, "DDL_GATE_GRANT_DIR": self.grants}), \
+                        mock.patch.object(ddl_gate, name, side_effect=RuntimeError("probe")), \
+                        mock.patch("sys.stdin", io.StringIO(json.dumps(data))), \
+                        mock.patch("sys.stdout", new_callable=io.StringIO) as out:
+                    self.assertEqual(ddl_gate.main([event, "--runtime", "claude"]), 0)
+                    text = out.getvalue()
+                    self.assertNotIn("allow\"", text.replace("allowed (fail-open)", ""))
+                    if event == "pre-tool-use":
+                        self.assertEqual(list(json.loads(text)), ["systemMessage"])
+                    else:
+                        self.assertEqual(text, "")
+
+
+class GrantMatchTest(unittest.TestCase):
+    """The pieces of the grant's answers, in process."""
+
+    def test_path_globs(self):
+        cases = [("tools/**", "tools/a.py", True), ("tools/**", "tools/a/b/c.py", True), ("tools/**", "toolsx/a", False),
+                 ("**", "a/b", True), ("**/x.md", "x.md", True), ("**/x.md", "a/b/x.md", True), ("a/**/b", "a/b", True),
+                 ("a/**/b", "a/x/y/b", True), ("skills/*.md", "skills/a.md", True), ("skills/*.md", "skills/d/a.md", False),
+                 ("t?st/*", "test/x", True), ("t?st/*", "toast/x", False), ("a.b", "aXb", False), ("[ab]", "a", False),
+                 ("design.md", "design.md", True)]
+        for glob, path, expected in cases:
+            with self.subTest(glob=glob, path=path):
+                self.assertEqual(ddl_gate.glob_matches(glob, path.split("/")), expected)
+
+    def test_exit_words(self):
+        for text, word in (("git push origin main", "git push"), ("cd w && /usr/bin/git commit -m x", "git commit"),
+                           ("git checkout -B x", "git checkout"), ("git switch -C y", "git switch"),
+                           ("git branch -f main HEAD~1", "git branch"), ("echo $(scp a b:)", "scp"),
+                           ("curl -T f https://x", "upload -T"), ("curl -sSfd x https://x", "upload -sSfd"),
+                           ("curl --request=PUT https://x", "method --request=PUT"), ("wget --post-data=a https://x", "upload --post-data=a"),
+                           ("twine upload dist/x", "twine upload"), ("nc -l 80", "nc"), ("glab mr create", "glab"),
+                           ("git-push origin main", "git push"), ("/usr/lib/git-core/git-commit -m x", "git commit"),
+                           ("git-branch -D old", "git branch"), ("hub release create v1", "hub"),
+                           ("aws s3 cp x s3://b/x", "aws s3 cp"), ("aws s3 sync . s3://b", "aws s3 sync"),
+                           ("aws s3 mv a s3://b/a", "aws s3 mv"), ("ftp example.invalid", "ftp"),
+                           ("git-http-push x", "git http-push"), ("aws s3api put-object", "aws s3api"),
+                           ("gsutil rsync a gs://b", "rsync"), ("gsutil mv a gs://b", "gsutil mv"), ("lftp x", "lftp"),
+                           ("tftp x", "tftp"), ("telnet x 25", "telnet"), ("python3 -m http.server 8000", "http.server"),
+                           ("git-receive-pack x", "git receive-pack"), ("/usr/lib/git-core/git-upload-pack x", "git upload-pack"),
+                           ("git-upload-archive x", "git upload-archive")):
+            with self.subTest(text=text):
+                self.assertEqual(ddl_gate.exit_word(text), word)
+        for text in ("git status", "git log --oneline", "make test", "curl -s https://x", "curl -X GET https://x",
+                     "git branch --show-current", "python3 run.py --commit-message x", "echo push", "aws s3 ls s3://b",
+                     "git-log --oneline", "aws ec2 describe-instances", "gsutil ls gs://b"):
+            with self.subTest(text=text):
+                self.assertIsNone(ddl_gate.exit_word(text))
+
+    def test_validation_commands_are_read_from_the_validation_section_only(self):
+        root = pathlib.Path(tempfile.mkdtemp(prefix="ddl-validation-"))
+        self.addCleanup(shutil.rmtree, str(root), True)
+        (root / "design.md").write_text(
+            "## Scopes\n\n```\n# V0 not here\nrm -rf /\n```\n\n## Validation\n\nText.\n\n```bash\n# V1 a\npython3 a.py\n"
+            "# expected: OK\n\n# V2 b\nx &&\n  y\n# note\nnot a command\n```\n\n## Next\n\n```\n# V3 c\nz\n```\n")
+        project = {"source": str(root / "AGENTS.md")}
+        self.assertEqual(ddl_gate.validation_commands(project, str(root)), {"python3 a.py", "x &&\ny"})
+
+    def test_class_forms(self):
+        gate = {"/gate/ddl_gate.py"}
+        cases = {"python3 tools/build.py --x": (("build",), ["--x"], ["tools/build.py"], True, []),
+                 "python3 -u -IB x_test.py": (("test",), [], ["x_test.py"], True, []),
+                 "python3 /gate/ddl_gate.py snapshot --item a --git-dir .git": (("snapshot",), [], [".git"], False, []),
+                 "python3 /gate/ddl_gate.py status": ("gate", [], [], False, []),
+                 "make test all -j 2": (("test", "build"), [], [], True, []), "make lint": (("check",), [], [], True, []),
+                 "bash -n a.sh": (("check",), [], ["a.sh"], True, []),
+                 "go test -run X -count=3 ./...": (("test",), ["X", "3"], ["./..."], True, []),
+                 "cargo test -p core -- name": (("test",), ["core", "name"], [], True, []),
+                 "python3 -m unittest discover -s tools -t .": (("test",), [], ["tools", "."], True, []),
+                 "python3 -m unittest -k fast tools.test_x tools/test_y.py": (("test",), ["fast"], ["tools/test_y.py"], True,
+                                                                              ["tools.test_x"]),
+                 "pytest -k slow a/test_b.py::test_c": (("test",), ["slow"], ["a/test_b.py"], True, []),
+                 "python3 tools/ddl_gate.py status": None, "python3 -m pip install x": None,
+                 "python3 -X dev tools/test_a.py": None, "git diff --check --output=x": None,
+                 "python4 tools/test_a.py": None, "make test install": None, "npm run deploy": None,
+                 "bash -n +n x.sh": None, "bash -n -c x": None, "go test -exec x .": None, "cargo build x": None,
+                 "pytest -p plugin": None, "make -j": None, "python3 -m unittest -b": None, "go test all": None,
+                 "go build example.com/x": None, "make -j 300": None, "pytest -k -x": None}
+        for command, expected in cases.items():
+            with self.subTest(command=command):
+                self.assertEqual(ddl_gate.segment_class(shlex.split(command), gate.__contains__), expected)
+
+    def test_a_remote_command_is_literal_words_after_the_machine(self):
+        for command, expected in (("ssh -T -n box make test", ("box", ["make", "test"])), ("ssh box", None),
+                                  ("ssh box -oProxyCommand=x true", None), ("ssh -p 22 box ls", None),
+                                  ("ssh -o ConnectTimeout=5 box ls", ("box", ["ls"]))):
+            with self.subTest(command=command):
+                self.assertEqual(ddl_gate.ssh_form(shlex.split(command)), expected)
+
+
 class LedgerTest(ReportFlowTest):
     """Where the ledger lives, what the hook writes into it, and that it never touches a decision."""
 
@@ -3053,7 +3823,7 @@ class LedgerTest(ReportFlowTest):
                        tool_input={"cmd": "git -C /repo push origin main"})
         with mock.patch.dict(os.environ, {"DDL_GATE_STATE_DIR": self.state}), \
                 mock.patch.object(ddl_gate, "git_review_guard", return_value=None):
-            decision = ddl_gate.tool_decision("codex", data, note)
+            decision = ddl_gate.tool_decision("codex", data, ddl_gate.project_decision(str(PROJECT)), note)
         self.assertEqual(decision, ddl_gate.deny(ddl_gate.PUSH_FORM_REASON))
         self.assertEqual((note["rule"], note["state"]), ("push-form", False))
 
@@ -3473,7 +4243,7 @@ class RunTest(GateTest):
     def test_run_item_sets_one_status(self):
         _, out = self.started()
         path = pathlib.Path(out["path"])
-        for status in ddl_gate.ITEM_STATUSES:
+        for status in ddl_run.ITEM_STATUSES:
             with self.subTest(status=status):
                 proc = self.item(out["run"], "I2", status)
                 self.assertEqual((proc.returncode, proc.stderr), (0, ""))
@@ -3671,6 +4441,8 @@ class ProjectScopeTest(GateTest):
                              bash("git -C /repo push origin main", runtime, None, session=session, cwd=root),
                              payload(runtime, transcript=None, session=session, cwd=root)):
                     self.assert_allowed(self.run_gate("pre-tool-use", runtime, data))
+                    self.assert_allowed(self.run_gate("permission-request", runtime, dict(
+                        data, hook_event_name="PermissionRequest")))
                 question = "a\nb\nc\nID: R-0123456789abcdef\nFull report: /x"
                 request = {"questions": [{QUESTION_KEY[runtime]: question, "options": ["A", "B"]}]}
                 self.assert_allowed(self.run_gate("pre-tool-use", runtime, payload(

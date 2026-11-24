@@ -53,8 +53,8 @@ def summary(exits, wrappers, counted="not counted", unaudited=0):
 
 
 def gate_module():
-    """tools/ddl_gate.py as a module (read only): the grant store doctor checks must be the gate's."""
-    spec = importlib.util.spec_from_file_location("ddl_gate_for_setup_test", ROOT / "tools/ddl_gate.py")
+    """The gate's code tools/ddl_gate_core.py as a module (read only): the grant store doctor checks must be the gate's."""
+    spec = importlib.util.spec_from_file_location("ddl_gate_for_setup_test", ROOT / "tools/ddl_gate_core.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -64,12 +64,14 @@ ROOT_USER = hasattr(os, "geteuid") and os.geteuid() == 0  # file modes do not st
 
 
 REPORT = "+++DDL_REPORT\n\n## Realize report\n\nAwaiting approval."
+# The gate's files in each runtime's hooks/: the entry the settings name, the code it loads, the Run subcommands.
+GATE_FILES = ("ddl_gate.py", "ddl_gate_core.py", "ddl_run.py")
 RUNTIMES = {
     "claude": {"home": ".claude", "settings": "settings.json", "project_settings": ".claude/settings.json",
-               "instruction": ".claude/CLAUDE.md", "gate": ".claude/hooks/ddl_gate.py",
+               "instruction": ".claude/CLAUDE.md", "gate": ".claude/hooks/ddl_gate.py", "dist": "dist/claude/.claude",
                "legacy_matcher": "^(Edit|Write|NotebookEdit|Bash|Agent|SendMessage|TaskCreate|TaskUpdate|mcp__.*)$"},
     "codex": {"home": ".codex", "settings": "hooks.json", "project_settings": ".codex/hooks.json",
-              "instruction": "AGENTS.md", "gate": ".codex/hooks/ddl_gate.py",
+              "instruction": "AGENTS.md", "gate": ".codex/hooks/ddl_gate.py", "dist": "dist/codex/.codex",
               "legacy_matcher": "^(apply_patch|Bash|shell|exec_command|local_shell|shell_command|spawn_agent|mcp__.*)$"},
 }
 
@@ -88,24 +90,20 @@ class SetupTest(unittest.TestCase):
                         DDL_GATE_STATE_DIR=str(self.state), DDL_GATE_GRANT_DIR=str(self.grants), TMPDIR=str(self.base),
                         XDG_CONFIG_HOME=str(self.home / ".config"), XDG_CACHE_HOME=str(self.home / ".cache"),
                         XDG_STATE_HOME=str(self.home / ".local/state"))
-        # Native policy checks are deterministic even on machines without the Codex executable.
+        # DDL installs no Codex rule, so nothing runs the Codex executable: a stand-in on PATH logs any call.
         self.fake_bin = self.base / "bin"
         self.fake_bin.mkdir()
         codex = self.fake_bin / "codex"
         codex.write_text(
             "#!/usr/bin/env python3\n"
             "import json, os, pathlib, sys\n"
-            "args = sys.argv[1:]\n"
-            "if args[:2] != ['execpolicy', 'check']: sys.exit(2)\n"
-            "with pathlib.Path(os.environ['DDL_TEST_POLICY_LOG']).open('a') as log:\n"
-            "    log.write(json.dumps(args) + '\\n')\n"
-            "result = ({'decision': os.environ.get('DDL_TEST_POLICY_DECISION', 'prompt')}\n"
-            "          if args[-2:] == ['git', 'push'] else {'matchedRules': []})\n"
-            "print(json.dumps(result))\n")
+            "with pathlib.Path(os.environ['DDL_TEST_CODEX_LOG']).open('a') as log:\n"
+            "    log.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+            "sys.exit(2)\n")
         codex.chmod(0o755)
-        self.policy_log = self.base / "policy.jsonl"
+        self.codex_log = self.base / "codex-calls.jsonl"
         self.env.update(PATH=str(self.fake_bin) + os.pathsep + os.environ.get("PATH", ""),
-                        DDL_TEST_POLICY_LOG=str(self.policy_log))
+                        DDL_TEST_CODEX_LOG=str(self.codex_log))
 
     def cli(self, command, *options, expected=0):
         proc = subprocess.run([sys.executable, "-I", str(SETUP), command, *options],
@@ -236,6 +234,10 @@ class SetupTest(unittest.TestCase):
         for runtime, rt in RUNTIMES.items():
             with self.subTest(runtime=runtime):
                 self.assertTrue((self.home / rt["gate"]).is_symlink())
+                for name in GATE_FILES:
+                    link = self.home / rt["home"] / "hooks" / name
+                    self.assertEqual((link.is_symlink(), os.path.realpath(link)),
+                                     (True, str((ROOT / rt["dist"] / "hooks" / name).resolve())))
                 self.assertTrue(self.settings_path(runtime).is_file())
         self.assertFalse(self.grants.exists(), "install must leave the grant store to the gate hook")
         out = self.cli("doctor", "--claude", "--codex")
@@ -243,16 +245,21 @@ class SetupTest(unittest.TestCase):
         self.assertEqual(out.splitlines()[-2], summary(0, 0))
         self.assertRegex(out.splitlines()[-1], r"^\d+ OK, 0 not OK$")
         self.assertIn(f"info      grant store {self.grants} absent", out)
-        self.assertIn("codex native execpolicy check: git push -> prompt", out)
-        self.assertIn("codex native execpolicy check: git -C /tmp push -> no matching rule", out)
+        self.assertIn("OK        ~/.codex/rules/ddl.rules absent (DDL installs no Codex rule)\n", out)
+        self.assertFalse((self.home / ".codex/rules").exists(), "install links no Codex rule")
+        self.assertFalse(self.codex_log.exists(), "doctor runs no Codex executable")
         self.assertEqual(out.count("deny (independent Git review)"), 10)
-        checks = [json.loads(line) for line in self.policy_log.read_text().splitlines()]
-        self.assertEqual([args[4:] for args in checks], [["git", "push"], ["git", "-C", "/tmp", "push"]])
+        self.assertEqual(out.count(f"inside grant {ddl_setup.PROBE_GRANT} (OPEN transcript, default) -> "
+                                   "allow (inside the grant)"), 1)
+        for rt in RUNTIMES.values():
+            for name in GATE_FILES:
+                self.assertIn(f"OK        ~/{rt['home']}/hooks/{name} -> {rt['dist']}/hooks/{name}\n", out)
         self.cli("uninstall", "--claude", "--codex")
         for runtime, rt in RUNTIMES.items():
             with self.subTest(runtime=runtime):
                 self.assertFalse(self.settings_path(runtime).exists())
                 self.assertFalse((self.home / rt["gate"]).is_symlink())
+                self.assertFalse((self.home / rt["home"] / "hooks").exists())  # every gate file's link is gone
         self.assertFalse(self.state.exists(), "doctor must keep probe state in its disposable directory")
         self.assertFalse(self.grants.exists(), "doctor must keep probe grants in its disposable directory")
 
@@ -326,9 +333,19 @@ class SetupTest(unittest.TestCase):
             with self.subTest(runtime=runtime):
                 self.assertEqual((project / rt["instruction"]).read_text(), "Keep the project's existing instructions.\n")
                 self.assertFalse((project / rt["gate"]).is_symlink())
+                hooks = (project / rt["gate"]).parent
+                for name in GATE_FILES:  # a copy, not a link, of every gate file
+                    self.assertFalse((hooks / name).is_symlink())
+                    self.assertEqual((hooks / name).read_bytes(), (ROOT / rt["dist"] / "hooks" / name).read_bytes())
                 self.assertEqual((project / rt["project_settings"]).read_bytes(), first[runtime])
                 config = json.loads(first[runtime])
                 self.lifecycle(runtime, config, project, nested)
+                counts = [subprocess.run([sys.executable, "-I", str(hooks / name), "report", "--session", "setup-" + runtime],
+                                         cwd=str(project), env=self.env, capture_output=True, encoding="utf-8", timeout=60)
+                          for name in ("ddl_gate.py", "ddl_run.py")]  # the Run words of the copy, through either entry
+                self.assertEqual([(proc.returncode, proc.stderr) for proc in counts], [(0, "")] * 2)
+                self.assertEqual((len(counts[0].stdout.splitlines()), counts[0].stdout), (4, counts[1].stdout))
+                self.assertEqual(sorted(path.name for path in hooks.iterdir()), sorted(GATE_FILES))  # no __pycache__
                 transcript = self.base / (runtime + "-transcript.jsonl")
                 data = self.payload(runtime, nested, transcript, source="resume")
                 (project / "design.md").write_text("# Disposable project design\n")
@@ -340,15 +357,167 @@ class SetupTest(unittest.TestCase):
         self.assertFalse((self.home / ".claude").exists())
         self.assertFalse((self.home / ".codex").exists())
 
-    def test_doctor_fails_native_canonical_rule_without_confusing_hook_guard(self):
+    def test_install_doctor_and_uninstall_cover_each_gate_file(self):
         self.install()
-        self.env["DDL_TEST_POLICY_DECISION"] = "allow"
+        for runtime, name in (("claude", "ddl_run.py"), ("codex", "ddl_gate_core.py")):
+            (self.home / RUNTIMES[runtime]["home"] / "hooks" / name).unlink()
+        code, lines = self.doctor("--claude", "--codex")
+        self.assertEqual(code, 1, lines)
+        self.assertIn("not OK    ~/.claude/hooks/ddl_run.py missing", lines)
+        self.assertIn("not OK    ~/.codex/hooks/ddl_gate_core.py missing", lines)
+        self.assertRegex(lines[-1], r"^\d+ OK, 2 not OK$")  # the probes still pass: the entry resolves into dist/
+        code, out = self.run_main("install", "--claude", "--codex")
+        self.assertEqual(code, 0, out)
+        for line in ("OK        link ~/.claude/hooks/ddl_run.py -> ", "OK        link ~/.codex/hooks/ddl_gate_core.py -> "):
+            self.assertIn(line, out)
+        self.assertEqual(self.doctor("--claude", "--codex")[0], 0)
+        code, out = self.run_main("uninstall", "--claude", "--codex")
+        self.assertEqual(code, 0, out)
+        for rt in RUNTIMES.values():
+            for name in GATE_FILES:
+                self.assertIn(f"OK        unlink ~/{rt['home']}/hooks/{name}\n", out)
+            self.assertFalse((self.home / rt["home"] / "hooks").exists())
+
+    def test_doctor_hook_probes_link_every_gate_file_into_their_disposable_home(self):
+        base = self.base / "standin"
+        (base / "hooks").mkdir(parents=True)
+        for name in GATE_FILES:
+            (base / "hooks" / name).write_text("# stand-in\n")
+        settings = {"hooks": {"PreToolUse": [{"matcher": ".*", "hooks": [{
+            "type": "command", "command": 'python3 "$HOME/.codex/hooks/ddl_gate.py"'}]}]}}
+        seen = []
+
+        def outputs(settings, event, payload, env, cwd):
+            hooks = pathlib.Path(env["HOME"]) / ".codex/hooks"
+            seen.append(sorted((path.name, os.readlink(path)) for path in hooks.iterdir()))
+            return []
+
+        with mock.patch.object(ddl_setup, "configured_hook_outputs", outputs):
+            self.in_home(ddl_setup.doctor_git_hooks, "codex", base, settings, ddl_setup.Report())
+        self.assertEqual(seen, [sorted((name, str(base / "hooks" / name)) for name in GATE_FILES)] * 6)
+
+    def test_retired_push_rule_link_is_not_ok_until_install_removes_it(self):
+        self.install()
+        rules = self.home / ".codex/rules"
+        rules.mkdir()
+        old = ROOT / "dist/codex/.codex/rules/ddl.rules"  # gone from dist/: the link an older install left dangles
+        (rules / "ddl.rules").symlink_to(old)
         code, lines = self.doctor("--codex")
-        out = "\n".join(lines)
-        self.assertEqual(code, 1, out)
-        self.assertIn("git push -> allow (expected prompt)", out)
-        self.assertEqual(out.count("deny (independent Git review)"), 6)
-        self.assertRegex(lines[-1], r"^\d+ OK, 1 not OK$")
+        self.assertEqual(code, 1, lines)
+        self.assertEqual([line for line in lines if line.startswith("not OK")],
+                         [f"not OK    ~/.codex/rules/ddl.rules -> {old}: DDL no longer installs it (run install to remove it)"])
+        self.assertEqual(sum("deny (independent Git review)" in line for line in lines), 6)
+        code, out = self.run_main("install", "--codex", "--dry-run")
+        self.assertIn(f"OK        remove ~/.codex/rules/ddl.rules (was {old}; DDL no longer installs it)\n", out)
+        self.assertTrue((rules / "ddl.rules").is_symlink())
+        code, out = self.run_main("install", "--codex")
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"OK        remove ~/.codex/rules/ddl.rules (was {old}; DDL no longer installs it)\n", out)
+        self.assertFalse(rules.exists(), "the directory install left empty is removed")
+        self.assertIn("OK        ~/.codex/rules/ddl.rules absent (DDL installs no Codex rule)", self.doctor("--codex")[1])
+        # The user's own rules stay, and so does a file of that name that is not DDL's link.
+        rules.mkdir()
+        self.codex_file("rules/default.rules", 'prefix_rule(pattern=["ls"], decision="allow")\n')
+        (rules / "ddl.rules").symlink_to(old)
+        self.install()
+        self.assertEqual(sorted(path.name for path in rules.iterdir()), ["default.rules"])
+        self.codex_file("rules/ddl.rules", "# the user's own file\n")
+        out = self.install()
+        self.assertNotIn("remove ~/.codex/rules/ddl.rules", out)
+        self.assertIn("info      ~/.codex/rules/ddl.rules is not DDL's; left in place", self.doctor("--codex")[1])
+        self.assertEqual((rules / "ddl.rules").read_text(), "# the user's own file\n")
+        # Uninstall removes a retired link an install from before its retirement left.
+        (rules / "ddl.rules").unlink()
+        (rules / "ddl.rules").symlink_to(old)
+        out = self.cli("uninstall", "--codex")
+        self.assertIn("OK        unlink ~/.codex/rules/ddl.rules\n", out)
+        self.assertEqual(sorted(path.name for path in rules.iterdir()), ["default.rules"])
+        self.assertFalse(self.codex_log.exists(), "neither install nor doctor runs the Codex executable")
+
+    def test_project_copy_removes_the_retired_rule_it_once_copied(self):
+        project = self.base / "project"
+        rules = project / ".codex/rules"
+        rules.mkdir(parents=True)
+        (rules / "ddl.rules").write_text("# DDL adapter for Codex: command rules (loaded only for a trusted project).\n"
+                                         'prefix_rule(pattern = ["git", "push"], decision = "prompt")\n')
+        line = f"OK        remove {os.path.realpath(rules / 'ddl.rules')} (DDL no longer installs it)\n"
+        out = self.cli("install", "--project", str(project), "--codex", "--dry-run")
+        self.assertIn(line, out)
+        self.assertTrue((rules / "ddl.rules").is_file())
+        out = self.cli("install", "--project", str(project), "--codex")
+        self.assertIn(line, out)
+        self.assertFalse(rules.exists())
+        rules.mkdir()
+        (rules / "ddl.rules").write_text("# the project's own rules\n")
+        out = self.cli("install", "--project", str(project), "--codex")
+        self.assertNotIn("ddl.rules", out)
+        self.assertEqual((rules / "ddl.rules").read_text(), "# the project's own rules\n")
+
+    def claude_probe_standin(self, body):
+        """A stand-in for the installed Claude gate (body: its Python code after the payload is read): (base, settings)."""
+        base = self.base / "standin"
+        gate = base / "hooks/ddl_gate.py"
+        gate.parent.mkdir(parents=True, exist_ok=True)
+        gate.write_text("import json, os, sys\npayload = json.load(sys.stdin)\n" + body)
+        for name in GATE_FILES[1:]:
+            (base / "hooks" / name).write_text("# stand-in\n")
+        settings = {"hooks": {"PreToolUse": [{"matcher": "*", "hooks": [{
+            "type": "command", "command": 'python3 "$HOME/.claude/hooks/ddl_gate.py" pre-tool-use --runtime claude'}]}]}}
+        return base, settings
+
+    def test_doctor_probes_an_edit_inside_a_grant_on_claude(self):
+        def decision(value, reason):
+            output = {"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": value,
+                                             "permissionDecisionReason": reason}}
+            return f"print({json.dumps(json.dumps(output))})\n"
+        deny = decision("deny", "DDL Git review: none")
+        allow = decision("allow", f"DDL: inside grant {ddl_setup.PROBE_GRANT} (edit)")
+        log = self.base / "probe-payloads.jsonl"
+        self.env["DDL_TEST_PROBE_LOG"] = str(log)
+        record = ("store = os.environ['DDL_GATE_GRANT_DIR']\n"
+                  "found = [os.path.join(d, f) for d, _, fs in os.walk(store) for f in fs] if os.path.isdir(store) else []\n"
+                  "with open(os.environ['DDL_TEST_PROBE_LOG'], 'a') as log:\n"
+                  "    log.write(json.dumps([payload, [open(p).read() for p in found]]) + '\\n')\n")
+        for body, expected in ((record + f"if payload['tool_name'] == 'Edit':\n    {allow}else:\n    {deny}", (5, 0)),
+                               (record + deny, (4, 1)),
+                               (record + "print(json.dumps({'hookSpecificOutput': {'permissionDecision': 'allow'}}))\n",
+                                (0, 5)),
+                               (record, (0, 5))):
+            with self.subTest(body=body[-60:]):
+                if log.exists():
+                    log.unlink()
+                base, settings = self.claude_probe_standin(body)
+                report = ddl_setup.Report()
+                _, out = self.in_home(ddl_setup.doctor_git_hooks, "claude", base, settings, report)
+                self.assertEqual((report.ok, report.bad), expected, out)
+                seen = [json.loads(line) for line in log.read_text().splitlines()]
+                self.assertEqual([payload["tool_name"] for payload, _ in seen], ["Bash"] * 4 + ["Edit"])
+                self.assertEqual([grants for _, grants in seen[:4]], [[]] * 4, "the deny probes run without a grant")
+        payload, grants = seen[-1]
+        self.assertEqual(payload["tool_input"]["file_path"], os.path.join(payload["cwd"], "src/doctor.txt"))
+        self.assertEqual(len(grants), 1)
+        self.assertIn("allow (inside the grant)", self.in_home(
+            ddl_setup.doctor_git_hooks, "claude", *self.claude_probe_standin(
+                f"if payload['tool_name'] == 'Edit':\n    {allow}else:\n    {deny}"), ddl_setup.Report())[1])
+
+    def test_probe_grant_is_a_record_the_gate_reads_as_active(self):
+        gate = gate_module()
+        self.assertEqual(ddl_setup.PROJECT_KEY_LENGTH, gate.PROJECT_KEY_LENGTH)
+        project = self.base / "probe home/project"
+        project.mkdir(parents=True)
+        (project / "CLAUDE.md").write_text("→ DDL-PROTOCOL\n")
+        store = self.base / "probe grants"
+        ddl_setup.probe_grant(store, project, "claude")
+        env = dict(self.env, HOME=str(project.parent), DDL_GATE_GRANT_DIR=str(store))
+        with mock.patch.dict(os.environ, env, clear=True):
+            key = gate.project_key(gate.ledger_root(gate.project_decision(str(project))))
+            records = gate.grant_records(key)
+        self.assertEqual([record["id"] for record in records], [ddl_setup.PROBE_GRANT])
+        self.assertEqual((records[0]["projectKey"], records[0]["root"]), (key, os.path.realpath(project)))
+        self.assertEqual(sorted(records[0]["grant"]), sorted(gate.GRANT_KEYS))
+        self.assertTrue(gate.grant_summary(records[0], "en").endswith("valid)"), gate.grant_summary(records[0], "en"))
+        for path in (store, store / key, store / key / "grants", store / key / "grants" / (ddl_setup.PROBE_GRANT + ".json")):
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode) & 0o077, 0, path)
 
     def test_doctor_rejects_missing_independent_guard_and_explicit_allow(self):
         # A synthetic installed hook verifies diagnostic failure behavior without editing sources.

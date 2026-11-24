@@ -59,27 +59,26 @@ Section-by-section comparison across language pairs:
   D3: Structural Mismatch — Heading hierarchy or section order differs
   D4: Untranslated Section — Section exists in one language but not the other
   D5: Stale Pair — One language version changed after the pair was last synchronized
+  D6: Design Change — the versions state a Binding Decision, a principle or a promised behavior differently, so aligning them changes what one of them promises
 
-### Phase 3: REPORT
+D6 asks with options: align to one version, leave the pair, or revise the proposal.
 
-+++STOP: always
++++STOP: on D6
 
-Do NOT apply changes without approval.
+### Phase 3: APPLY
 
-+++Report:
-Decision: apply all current compatible language-pair proposals, select or revise the set, or leave it pending.
-Recommendation: a concise overall reason, then numbered proposals with stable IDs, the nuance each restores, and its effect on both languages.
-Consequence: approve all covers the displayed ready set in both versions; subset approval covers only the selected proposal IDs.
-Review detail: each stable proposal ID, section, detection type, relevant EN/JA text and proposed edits.
-Choices: request one batch approval through Approval; open item selection only when requested, with no per-proposal or per-language reapproval after approve all. With no dissonance, state that no change needs approval and stop.
+Read the Run operation and its implementation for the current host, then make a snapshot (the gate's `snapshot`) before the first change.
 
-### Phase 4: APPLY
++++DETECT:
+  D7: No Snapshot — the snapshot cannot be made (no gate, no Git repository, or a failure)
 
-**Pre-condition.** Enter this phase only after explicit user approval of its scope at the Phase 3 STOP gate (per Approval). If the actual answer does not authorize this work, return to Phase 3 and re-present the current decision.
+D7 asks with options: apply without a snapshot, or apply nothing.
 
-Apply approved changes to BOTH language versions.
++++STOP: on D7
 
-+++SWARM: 2+ document pairs with approved changes
+Apply every proposal to BOTH language versions of the pairs Phase 0 found, and a D6 proposal only as its answer chose.
+
++++SWARM: 2+ document pairs with changes
 
 ```
   team: resonate-apply
@@ -88,17 +87,25 @@ Apply approved changes to BOTH language versions.
   max: 5
   batch: auto
   each: |
-    Apply to both language versions of {scope} the approved changes listed in this prompt, and nothing else.
+    Apply to both language versions of {scope} the changes listed in this prompt, and nothing else.
     Report completion to the lead when done.
   collect: lead verifies changes applied to both language versions
 ```
 
-After applying:
-1. Summarize what changed in each language
-2. List any sections that still need human review
+### Phase 4: REPORT
+
++++STOP: always
+
+Report what was applied; ask nothing (Approval Exceptions: informational).
+
++++Report:
+Outcome: the applied proposals, numbered with stable IDs, each with its section and the nuance it restores, and the snapshot ref that undoes them.
+Consequence: both language versions hold the changes in the working tree, uncommitted; restoring the snapshot undoes them all.
+Review detail: each proposal ID, section, detection type, the EN/JA text before and after; what changed in each language; each finding left unapplied, with its reason; any sections that still need human review.
+Choices: none; the report asks nothing. With no dissonance, state that nothing changed.
 
 ## Constraints
 
 +++NEVER: Treat either language as strictly source — proposals refine BOTH versions
-+++NEVER: Auto-apply changes — +++STOP is mandatory
++++NEVER: Apply a change outside the document pairs Phase 0 found, or a Binding Decision, principle or behavior change unasked
 +++NEVER: Override domain authority — English for technical precision, Japanese for cultural nuance

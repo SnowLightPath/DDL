@@ -119,7 +119,7 @@
 | fold / folded | 畳み込む / 畳み込まれた |  | 導入時にホストの実装を入口の Host 節と操作の Implementation 節に入れること。「統合する」「取り込む」とは訳さない |
 | DDL project / project detection | DDL のプロジェクト / プロジェクトの判定 |  | 指示ファイル（CLAUDE.md、`.claude/CLAUDE.md`、AGENTS.md）の `→ DDL-PROTOCOL` の行で判定する。design.md の有無では判定しない。ゲートの hook はこのプロジェクトでだけ働く |
 | host（`claude`、`codex`） | ホスト |  | `hosts/` の下の名前で実行環境を指すときの語。ディレクトリ名 `hosts/claude/`、`hosts/codex/` は英字のまま。表示名は Claude と Codex であり、製品名 Claude Code は版を引くときに限って書く |
-| source tree | 正本の木 |  | `skills/`、`protocol/`、`hosts/<host>/` の実装、`tools/ddl_gate.py` からなるホストに中立な一本の木。両ホストの生成物はここから作る |
+| source tree | 正本の木 |  | `skills/`、`protocol/`、`hosts/<host>/` の実装、ゲートの 3 ファイル（`tools/ddl_gate.py`、`tools/ddl_gate_core.py`、`tools/ddl_run.py`）からなるホストに中立な一本の木。両ホストの生成物はここから作る |
 | build（`tools/build.py`） | 生成（build） |  | 正本の木から両ホストの生成物を `dist/` に書き出すこと。初出に英語を添える |
 | generated layout / dist | 生成物（`dist/`） |  | `dist/claude/.claude/` と `dist/codex/`。Git では追跡されず、`bin/install.sh` は生成してから導入する |
 | guidance.md | 指示ファイルのテンプレート（`guidance.md`） |  | `hosts/claude/guidance.md` は `.claude/CLAUDE.md` に、`hosts/codex/guidance.md` は `AGENTS.md` になる。プロトコルの隣に `claude.md` という名のファイルを置かないための名前 |
@@ -167,6 +167,7 @@
 | reasoning item（Codex の記録） | 推論の項目 |  | Codex の記録の reasoning。ゲートは読まない |
 | count lines（ゲートの `report` が出力する 4 行。`Questions` line、`Waiting` line など） | 数の行（`問い` の行、`待ち` の行など） |  | ラベルは英語で `Questions`、`Waiting`、`Denials`、`Grant`、日本語で `問い`、`待ち`、`拒否`、`許諾`。ラベルはゲートが出力するとおりに書き、本文の question は「質問」のままにする。サブコマンドの `report` は英字のままコード体で書き、「報告」とは訳さない |
 | not measured | `未計測` |  | 数の行のうち導き出せない値。推定した値では置き換えない。コード体で書く |
+| snapshot（ゲートの `snapshot` が作る途中の版） | 保存点 |  | 枝、index、作業ツリーを動かさずに作業ツリーを記録するコミット（`refs/ddl/snapshots/…`）。サブコマンドの `snapshot` は英字のままコード体で書く |
 | check（照らし合わせる） | 照らす / 確かめる |  | 名詞の checks は「検査」 |
 | validation / Validation | 検証 / Validation |  | 節の名前は英字のまま |
 | verbatim | 逐語で / そのまま |  |  |

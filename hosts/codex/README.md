@@ -38,14 +38,14 @@ Review the draft before saving it. Use `$realize` when you are ready to review a
 |---|---|
 | `$draft` | Describe the experience and review the design before saving |
 | `$realize` | Implement an approved plan and close the work with one Git review |
-| `$reflect` | Propose updates that align the design and implementation |
+| `$reflect` | Align the design with the implementation |
 | `$validate` | Run project checks and mechanical acceptance gates |
 | `$resonate` | Reconcile multilingual documents |
-| `$docs` | Review documentation and propose corrections |
-| `$refactoring` | Review code quality and propose refactors |
+| `$docs` | Review and correct documentation |
+| `$refactoring` | Review code quality and refactor |
 | `$commit` | Close the work and commit verified changes; `$commit remote` also proposes a push |
 
-`draft` and `realize` accept a feature; `reflect`, `resonate`, `docs`, and `refactoring` accept a path; `validate` accepts a scope. `ddl-protocol` may appear in the skill list; the command skills read it, and you do not invoke it yourself.
+`$reflect`, `$resonate`, `$docs`, and `$refactoring` take a snapshot, apply their reversible changes inside their own targets, then report what they applied and the snapshot that undoes it; a change to a Binding Decision, a principle or behavior stops for your choice first. `draft` and `realize` accept a feature; `reflect`, `resonate`, `docs`, and `refactoring` accept a path; `validate` accepts a scope. `ddl-protocol` may appear in the skill list; the command skills read it, and you do not invoke it yourself.
 
 ## Scope
 
@@ -57,7 +57,7 @@ The hook acts only in a DDL project: one whose instruction file (`AGENTS.md`, `C
 
 The agent shows the final staged diff, exact commit message, and any requested push destination in one Git review. Approve the ready set once through the native choices. A ready commit and its push share that approval; files and languages do not get separate questions. Before that review, the Close stage brings `design.md`, its history file, and the documents up to date, so the commit is the last step and no skill follows it.
 
-The hook independently checks the actual contents and submitted choice before ordinary `git commit` and `git push` calls. A general reply or an earlier implementation approval supplies no Git permission. Changed contents, message, destination, or an unprovable answer stop the Git action. Git reads remain available. A native permission policy that shows no command prompt does not skip this content check.
+The hook independently checks the actual contents and submitted choice before ordinary `git commit` and `git push` calls. A general reply or an earlier implementation approval supplies no Git permission. Changed contents, message, destination, or an unprovable answer stop the Git action. Git reads remain available. A native permission policy that shows no command prompt does not skip this content check. When Codex asks permission for the reviewed commit or push, the hook answers it, so Codex asks nothing more after your answer; DDL installs no Codex rule.
 
 Doctor also audits the exits: `bash DDL/bin/doctor.sh --codex` names each allowing `prefix_rule` in `$HOME/.codex/rules/*.rules` that lets an exit through unasked (a push, a pull request or release command, a transfer to another machine, a branch-moving git command) or that wraps any command, and says when `$HOME/.codex/config.toml` never asks and sandboxes nothing. The audit reads the rules as text and runs nothing, and it reads only those files. A finding is information: the hook's review of `git commit` and `git push` holds either way; narrow or remove a listed rule if you want the host to ask (the `config.toml` remark is never counted). It is a separate tally and does not change doctor's result; with `--strict` its findings count as not OK.
 
@@ -67,13 +67,13 @@ At a required STOP, the report gives one overall recommendation and a visible nu
 
 One native interaction offers **approve all current recommendations**, **choose a subset or request changes**, or **hold**, with optional free text. An explicit approve-all covers exactly the displayed ready set and its recommended resolutions, without another approval per file, item, or section. It covers no undisplayed or future work, later STOP, unconfirmed outward action, or silent change to a Binding Decision.
 
-A `$realize` plan also names a grant: the scope the work may touch, a budget, and an expiry. The question shows it on one generated line after the five (the line counts the path scopes; the report file spells them out), and the gate records it when you submit the approving option. In this version the grant is recorded and reported but changes no decision: every STOP and every Git review still asks, and the limit on approve-all above holds.
+A `$realize` plan also names a grant: the scope the work may touch, a budget, and an expiry. The question shows it on one generated line after the five (the line counts the path scopes; the report file spells them out), and the gate records it when you submit the approving option. Until its expiry the gate allows the calls inside the grant, an edit of its paths and a command of a granted class (build, test, check, a snapshot, and a run on a granted machine with no exit behind it), by answering Codex's permission request for them, and denies an edit, class or machine outside it: widening the scope means a revised plan. A grant never lifts a STOP, never covers a protected file (such as Git's files, the ledger, an agent's or editor's settings, an instruction file, the notebook) and never covers a commit, a push or any other outward action, and the limit on approve-all above holds.
 
 Subset editing starts only when requested and uses the host's actual native capabilities, such as a supported checklist or grouped form. DDL does not invent interface fields, force typed ID lists, or automatically turn the set into separate item-by-item questions. A request receipt, cancellation, dismissal, unanswered question, or timeout approves nothing. If a permitted native interface is unavailable or cannot collect the answer, DDL explains the limitation and stops without a typed-choice fallback.
 
 ## Host limits
 
-The [approval implementation](approval.md#observed) and [Git review implementation](git-review.md#observed) record the tested desktop versions, dates and Coverage limits. These checks do not establish support for every Codex surface. The [Run implementation](run.md#coverage) lists what is unverified for the grant and the counts on Codex: whether a hook process can write the grant store, and whether a hook runs for a subagent's tool call; where the host supplies no transcript path, no grant is recorded.
+The [approval implementation](approval.md#observed) and [Git review implementation](git-review.md#observed) record the tested desktop versions, dates and Coverage limits. These checks do not establish support for every Codex surface. The [Run implementation](run.md#coverage) lists what is unverified for the grant and the counts on Codex: whether a hook process can write the grant store, and whether a hook runs for a subagent's tool call; where the host supplies no transcript path, no grant is recorded. The [Git review implementation](git-review.md#coverage) adds that the hook's answer to a permission request is unchecked live, as is whether one of your own `prompt` rules still asks after it.
 
 The tested **Codex CLI 0.166.0 Default** could show a question but could not collect its answer after the response ended. DDL therefore leaves the work unapproved on that route, including Git recording and sending: typed approval cannot replace the missing native Git-review answer. Other versions may behave differently; support depends on whether the interface can collect the required approval.
 
@@ -114,20 +114,19 @@ Preview with `--dry-run`, or remove DDL's links and settings fragment with `bash
 <details>
 <summary>Maintainer details: this directory, the generated layout, and the protocol</summary>
 
-This directory holds everything that is specific to Codex: the five protocol implementations, the instruction-file template, the adapter files, and this guide. Everything else DDL deploys is host-neutral and lives in `skills/`, `protocol/`, and `tools/ddl_gate.py`.
+This directory holds everything that is specific to Codex: the five protocol implementations, the instruction-file template, the adapter files, and this guide. Everything else DDL deploys is host-neutral and lives in `skills/`, `protocol/`, and the gate's three files in `tools/`.
 
 ```
 hosts/codex/
 ├── start.md           Phase 0 after the entry: paths, hook events, markers
 ├── approval.md        the choice tool, receipt and selector limits, mutating tools, permitted calls
 ├── parallel-work.md   type, spawn, background, completion on Codex subagents
-├── git-review.md      the helper path, the native request, the push rule
+├── git-review.md      the helper path, the native request, the hooks' decision
 ├── run.md             the grant record, the event record, answer times, the gate's subcommands
 ├── guidance.md        the instruction-file template, deployed as AGENTS.md
 ├── hooks.json         the adapter's hook wiring
 ├── config.toml        the agent cap that matches SWARM max: 5
 ├── agents/            explorer.toml and worker.toml
-├── rules/             ddl.rules, the native git push confirmation rule
 └── README.md          this guide (not deployed)
 ```
 
@@ -139,9 +138,8 @@ dist/codex/                       → a project's root
 ├── .codex/
 │   ├── config.toml               from hosts/codex/config.toml
 │   ├── hooks.json                from hosts/codex/hooks.json
-│   ├── hooks/ddl_gate.py         from tools/ddl_gate.py
-│   ├── agents/                   explorer.toml and worker.toml
-│   └── rules/ddl.rules           from hosts/codex/rules/ddl.rules
+│   ├── hooks/                    ddl_gate.py, ddl_gate_core.py, ddl_run.py, from tools/
+│   └── agents/                   explorer.toml and worker.toml
 └── .agents/skills/
     ├── <name>/SKILL.md           the eight skills, from skills/<name>/SKILL.md with /name turned into $name
     ├── <name>/agents/openai.yaml no implicit invocation, generated for every skill

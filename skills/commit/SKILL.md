@@ -36,8 +36,8 @@ Read the Close operation before the Close scan.
 
 Run the Close scan, then the verification checks:
 
-1. Close scan (Close, steps 1–3): compare the change set with `design.md` the way `/reflect` does (Experience the code revealed, every Binding Decision, Direction stages and Acceptance Gates whose gates are all marked passed, Scopes and Validation), audit the documentation it touches, and check every changed document that has a language counterpart. The findings form one batch (D7); a Binding Drift is D8. When nothing is found, say so in one progress line, without `+++DDL_REPORT`, and continue
-2. After the batch is approved, apply the Close changes to the working tree; they join the change set
+1. Close scan (Close, steps 1–3): compare the change set with `design.md` the way `/reflect` does (Experience the code revealed, every Binding Decision, Direction stages and Acceptance Gates whose gates are all marked passed, Scopes and Validation), audit the documentation it touches, and check every changed document that has a language counterpart. The findings are D7; a Binding Drift is D8. When nothing is found, say so in one progress line, without `+++DDL_REPORT`, and continue
+2. Once no Binding Drift (D8) is pending, apply the Close changes (D7) to the working tree without a separate approval; they join the change set, and the Git review shows them
 3. Run all validation commands defined in `design.md` and the mechanical gates in Acceptance Gates (if any)
 4. Secret scan: check the files the commit would include (staged, unstaged, and the untracked files proposed for `Files`) for API keys, tokens, credentials
 5. Check for untracked files that should be included
@@ -60,7 +60,6 @@ After those checks pass, prepare the final candidate set for review:
 
 +++STOP: on D1
 +++STOP: on D2
-+++STOP: on D7
 +++STOP: on D8
 
 ### Phase 2: REVIEW

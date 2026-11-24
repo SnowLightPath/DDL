@@ -56,25 +56,27 @@ When a STOP needs a decision, read the Approval operation and its implementation
   D5: Duplicate Logic — Near-identical code blocks across files
   D6: Contradictory Impl — Two code paths that implement conflicting behavior
   D7: Inconsistent Naming — Same concept named differently across scopes
+  D8: Design Change — a fix would change external behavior, a principle or a Binding Decision
 
-### Phase 2: REPORT
+D6 and D8 ask with options: apply the fix, leave it unapplied, or revise it; a Binding Decision change is left for /draft or /reflect.
 
-+++STOP: always
++++STOP: on D6
++++STOP: on D8
 
-Do NOT refactor without approval.
+### Phase 2: EXECUTE
 
-+++Report:
-Decision: apply all current compatible refactors, select or revise the set, or leave it pending.
-Recommendation: a concise overall reason, then numbered fixes with stable IDs and any material uncertainty or downside.
-Consequence: approve all applies the displayed ready set; subset approval changes only the selected fix IDs. Behavior or Binding Decision changes remain outside this approval.
-Review detail: each stable fix ID, file/line, detection type, finding, and proposed correction.
-Choices: request one batch approval through Approval; open item selection only when requested, with no per-fix reapproval after approve all. With no findings, state that no refactor needs approval and stop.
+Read the Run operation and its implementation for the current host, then make a snapshot (the gate's `snapshot`) before the first refactor.
 
-### Phase 3: EXECUTE
++++DETECT:
+  D9: No Snapshot — the snapshot cannot be made (no gate, no Git repository, or a failure)
 
-**Pre-condition.** Enter this phase only after explicit user approval of its scope at the Phase 2 STOP gate (per Approval). If the actual answer does not authorize this work, return to Phase 2 and re-present the current decision.
+D9 asks with options: apply without a snapshot, or apply nothing.
 
-+++SWARM: 2+ approved fixes across independent scopes
++++STOP: on D9
+
+Apply every refactor inside the scopes Phase 0 selected, and a D6 or D8 fix only as its answer chose.
+
++++SWARM: 2+ fixes across independent scopes
 
 ```
   team: refactoring-execute
@@ -83,12 +85,12 @@ Choices: request one batch approval through Approval; open item selection only w
   max: 5
   batch: auto
   each: |
-    Apply to {scope} the approved refactors listed in this prompt, and nothing else.
+    Apply to {scope} the refactors listed in this prompt, and nothing else.
     Report completion to the lead when done.
   collect: lead verifies refactors and runs validation
 ```
 
-### Phase 4: VERIFY
+### Phase 3: VERIFY
 
 Run full validation:
 
@@ -97,14 +99,26 @@ Run full validation:
 3. Summarize: what was fixed, what remains, any regressions
 
 +++DETECT:
-  D8: Regression — A validation command exits non-zero, cannot run, or prints other than its expected value after the refactor
+  D10: Regression — A validation command exits non-zero, cannot run, or prints other than its expected value after the refactor
 
-+++STOP: on D8
++++STOP: on D10
+
+### Phase 4: REPORT
+
++++STOP: always
+
+Report what was applied; ask nothing (Approval Exceptions: informational).
+
++++Report:
+Outcome: the applied refactors, numbered with stable IDs, each with its file and correction, and the snapshot ref that undoes them.
+Consequence: the refactors stand in the working tree, uncommitted; restoring the snapshot undoes them all.
+Review detail: each refactor ID, file/line, detection type, finding, and correction; each finding left unapplied, with its reason; each validation command's result and any regression.
+Choices: none; the report asks nothing. With no findings, state that nothing changed.
 
 ## Constraints
 
-+++NEVER: Refactor without +++STOP approval
++++NEVER: Refactor outside the scopes Phase 0 selected
 +++NEVER: Hardcode scopes or validation commands — they come from design.md
-+++NEVER: Change external behavior without explicit approval
++++NEVER: Change external behavior or a principle without explicit approval
 +++NEVER: Auto-fix D6 (Contradictory Impl) — escalate to user first
 +++NEVER: Replace or bypass a Binding Decision — that is a design change for /draft or /reflect, not a refactoring

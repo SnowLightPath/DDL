@@ -11,7 +11,7 @@ Read once per Codex session after the entry and before the first command step; i
 | Session start | The `AGENTS.md` chain (global, then the project root down to the working directory) is read once per run before any work; memories are injected when `memories.use_memories` is on. |
 | Compaction | The conversation is summarized; the SessionStart hook (Notebook loading) runs again, injects design.md and re-states a pending report's ID and file. |
 | Notebook loading | The SessionStart hook in `.codex/hooks.json` (`session-start --runtime codex`, `additionalContextLimit: 0`) injects design.md as additional context at every SessionStart event (wiring: Approval Implementation), when the hook is enabled and trusted. |
-| Adapter paths | `.codex/config.toml`, `.codex/agents/`, `.codex/hooks.json`, `.codex/hooks/`, `.codex/rules/` and the project `AGENTS.md`; `bin/install.sh` puts the same files under `$HOME/.codex/`, except `config.toml`, which is set by hand. Project-local configuration needs project trust, user-level hooks do not; review new or changed hooks in `/hooks` when the host asks. |
+| Adapter paths | `.codex/config.toml`, `.codex/agents/`, `.codex/hooks.json`, `.codex/hooks/` and the project `AGENTS.md`; `bin/install.sh` puts the same files under `$HOME/.codex/`, except `config.toml`, which is set by hand. Project-local configuration needs project trust, user-level hooks do not; review new or changed hooks in `/hooks` when the host asks. |
 | `+++DDL_PHASE` | Must. |
 | `+++DDL_REPORT` | Must; the Stop hook records the marker, as `transcript_path` may be null (Approval Implementation). |
 
