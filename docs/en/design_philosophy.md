@@ -126,6 +126,10 @@ Human controls the pace and corrects LLM's short-term bias.
 
 When agents run long and in parallel, the human's share becomes concrete: decide what binds, decide where to look, and approve at those gates. Agents work between the gates.
 
+Human attention is a budget. The work waits longest on the human, and approval asked for again and again turns into a formality, so DDL removes questions by design rather than by asking the human to be careful. On the ordinary path, DDL asks the human when the design is decided (a draft, a change to a Binding Decision or a principle), when a plan is approved together with its grant, at the human gates design.md names, and before an exit such as a commit or a push; a detection, such as a failing check or a secret found in the change, also stops the work. Reversible local work inside the grant goes ahead without a question. A command called on its own, such as `/reflect` or `/docs`, makes a snapshot, applies its reversible changes and then reports them; it asks first about a change to a Binding Decision, a principle or a promised behavior. The final report of `/realize` carries count lines for the questions, the minutes the work waited for the human, the gate's denials and the grant, so questions and waiting are visible as numbers.
+
+A grant is the scope, budget and expiry that a `/realize` plan names for its work. The scope names the paths the work may edit, the classes of command it may run (build, test, check and the like) and the machines it may reach over ssh. The gate hook records the grant when the human submits the approving option of the plan's question. Until the expiry, the gate allows reads, edits of those paths and commands of those classes, so neither DDL nor the host asks about them, and it denies an edit, a command class or a machine outside the grant; widening a grant takes a revised plan. A grant never lifts a STOP, never covers a protected file such as Git's files, an instruction file or the notebook, and never covers an exit.
+
 When a decision is needed, the agent recommends a course for the whole review and shows the compatible actions and their impacts as a short numbered list. Material risks and unknowns stay visible; detailed evidence is available separately.
 
 One native interaction offers **Approve all**, **Select a subset or revise**, and **Hold**, with optional free text. Approve all covers exactly the displayed, ready recommendations and stated resolutions in the current batch. The agent applies that approved scope without asking again for each item, file, section, language, or state. Future STOPs, outward actions not explicitly named in the reviewed choice, and undisclosed Binding Decision changes remain unapproved.
@@ -164,6 +168,9 @@ What matters is updating documents after the work (Reflect), before the commit t
 | Treating harness memory as the design | The agent remembers, but the human has not agreed |
 | Treating Direction as a contract | The outlook hardens into a plan nobody revisits |
 | Approving from a summary | A compacted conversation is not the report; the human approves what is in front of them |
+| Asking about work inside the grant | Approval turns into a formality, and the work waits on a question that changes nothing |
+| Confirming a reviewed exit twice | The human sees the same contents again; the Git review is the one confirmation |
+| A grant without an expiry, or widened silently | The approval outlives or outgrows the plan it was given for |
 
 ## Summary
 
@@ -171,7 +178,9 @@ DDL uses temporary notes to help Human and LLM share purposes and designs across
 
 Ultimately, code becomes the source of truth. Delete DDL documents when no longer needed.
 
-Before recording or sending changes with Git, the agent shows the final diff, exact message, and destination in a review file. One submitted native choice covers the compatible ready set; its question names the review ID and that file, so the question alone is enough to decide. The hook checks ordinary commit/push calls against that review even when STOP is open; an earlier implementation approval or a normal reply is insufficient. Changed contents require a new review. This guard covers calls reaching the hook, with the runtime limits documented separately. The Close stage brings design.md and the documents up to date before that review, so one commit ends the work and no further command follows.
+Saving, recording and sending are separate. A snapshot saves the work tree as a commit under `refs/ddl/snapshots/` and moves no branch, index or file, so DDL puts no question before one; inside a grant the gate allows it, and outside one, as in a standalone command, the host's own permission policy decides the call. A commit on a branch and a push are what the human checks by content, in one Git review.
+
+Before recording or sending changes with Git, the agent shows the final diff, exact message, and destination in a review file. One submitted native choice covers the compatible ready set; its question names the review ID and that file, so the question alone is enough to decide. The hook checks ordinary commit/push calls against that review even when STOP is open; an earlier implementation approval or a normal reply is insufficient. Changed contents require a new review. A call that matches the answered review is allowed by the hook, so the host does not ask a second time; the user's own ask rules still apply, and on Codex that allow, given through PermissionRequest, is not yet checked in a live run. This guard covers calls reaching the hook, with the runtime limits documented separately. The Close stage brings design.md and the documents up to date before that review, so one commit ends the work and no further command follows.
 
 **Tool-Assisted Option:** [Claude](../../hosts/claude/) (`/draft`, `/realize`, `/reflect` + support commands) | [OpenAI Codex](../../hosts/codex/) (`$draft`, `$realize`, `$reflect` + support skills)
 

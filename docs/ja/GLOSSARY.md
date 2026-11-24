@@ -168,6 +168,15 @@
 | count lines（ゲートの `report` が出力する 4 行。`Questions` line、`Waiting` line など） | 数の行（`問い` の行、`待ち` の行など） |  | ラベルは英語で `Questions`、`Waiting`、`Denials`、`Grant`、日本語で `問い`、`待ち`、`拒否`、`許諾`。ラベルはゲートが出力するとおりに書き、本文の question は「質問」のままにする。サブコマンドの `report` は英字のままコード体で書き、「報告」とは訳さない |
 | not measured | `未計測` |  | 数の行のうち導き出せない値。推定した値では置き換えない。コード体で書く |
 | snapshot（ゲートの `snapshot` が作る途中の版） | 保存点 |  | 枝、index、作業ツリーを動かさずに作業ツリーを記録するコミット（`refs/ddl/snapshots/…`）。サブコマンドの `snapshot` は英字のままコード体で書く |
+| grant（計画が名指しする範囲、予算、期限） | 許諾 |  | `/realize` の計画の質問で人間が承認の選択肢を送信したときに、ゲートの `hook` が記録する。期限でだけ終わる。数の行のラベル `許諾` と同じ語。hook の allow（許可）と人間の approval（承認）とは区別する。許諾の scope は「範囲」と訳し、design.md の Scopes や作業単位の scope は「スコープ」の行に従う |
+| exit / exit gate | 出口 / 出口のゲート |  | 手元の戻せる作業の外へ出る操作。枝に残るコミットと push は中身に結んだ Git の確認を通り、どの許諾も出口には及ばない。outward-facing action（外に出る操作）を含む語 |
+| human attention | 人間の注意 |  | 「人間の注意は予算です」（P23）。人間の注意深さ（carefulness）とは区別する |
+| reversible | 戻せる |  | 保存点から戻せること。「戻せて手元にとどまる作業」 |
+| protected file | 保護されたファイル |  | どの許諾も及ばないファイル。Git のファイル、CI のワークフロー、台帳、エージェント、エディタ、direnv（`.envrc`）の設定、指示ファイル、ノートと履歴ファイル |
+| standalone command | 単独で呼んだコマンド |  | `/reflect`、`/docs`、`/resonate`、`/refactoring` を単独で呼ぶこと。呼び出しそのものがその対象への承認になる |
+| allow / deny（ゲートの `hook` の判定） | 許可する / 拒む |  | 名詞は許可 / 拒否。数の行のラベル `拒否` と同じ語。人間の approval（承認）とは区別する |
+| ledger | 台帳 |  | `.ddl/` に置く Run の記録。ゲートだけが書く |
+| promised behavior | 保証した振る舞い |  | contract の行の「使わない訳」に当たる語を避ける |
 | check（照らし合わせる） | 照らす / 確かめる |  | 名詞の checks は「検査」 |
 | validation / Validation | 検証 / Validation |  | 節の名前は英字のまま |
 | verbatim | 逐語で / そのまま |  |  |
