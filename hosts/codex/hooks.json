@@ -8,7 +8,8 @@
           {
             "type": "command",
             "command": "python3 \"$(git rev-parse --show-toplevel 2>/dev/null || pwd)/.codex/hooks/ddl_gate.py\" pre-tool-use --runtime codex",
-            "timeout": 10
+            "timeout": 10,
+            "additionalContextLimit": 0
           }
         ]
       }
@@ -32,7 +33,8 @@
           {
             "type": "command",
             "command": "python3 \"$(git rev-parse --show-toplevel 2>/dev/null || pwd)/.codex/hooks/ddl_gate.py\" post-tool-use --runtime codex",
-            "timeout": 10
+            "timeout": 10,
+            "additionalContextLimit": 0
           }
         ]
       }
@@ -54,7 +56,8 @@
           {
             "type": "command",
             "command": "python3 \"$(git rev-parse --show-toplevel 2>/dev/null || pwd)/.codex/hooks/ddl_gate.py\" user-prompt-submit --runtime codex",
-            "timeout": 10
+            "timeout": 10,
+            "additionalContextLimit": 0
           }
         ]
       }

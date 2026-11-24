@@ -58,7 +58,7 @@ Lead with the decision to implement the complete proposed plan, the recommended 
 
 For planned equivalent alignment of Scopes or Validation before a stage gate, follow Notebook.
 
-On first entry, move into `## Binding Decisions` only the delegated `Unbound:` lines whose choice the approved plan stated and the lines the user picked, with Source `approved in /realize plan (<date>)`; write the plan's durable parts under `## Direction` as `Approved plan (<date>)` (Notebook), including the Close stage when the plan added it. Then start the Run (Run) with the plan's lanes and stages cut into items of 10–30 minutes (Parallel work), each with its kind, owner files and dependencies; keep each item's status current until Phase 7. Whenever the user approves gates in advance, at the plan or at a later STOP, write `approved in advance (<date>)` after each such gate at once (Notebook).
+On first entry, move into `## Binding Decisions` only the delegated `Unbound:` lines whose choice the approved plan stated and the lines the user picked, with Source `approved in /realize plan (<date>)`; write the plan's durable parts under `## Direction` as `Approved plan (<date>)` (Notebook), including the Close stage when the plan added it. Then start the Run (Run) with the plan's lanes and stages cut into items of 10–30 minutes (Parallel work), each with its kind, owner files and dependencies; keep each item's status current until Phase 7, and at each item boundary read the Run's mail and take an amendment in as Run says. Whenever the user approves gates in advance, at the plan or at a later STOP, write `approved in advance (<date>)` after each such gate at once (Notebook).
 
 +++SWARM: 2+ independent scopes or Direction lanes need changes
 

@@ -94,7 +94,7 @@ Choices: request one approval for the complete displayed draft through Approval:
 
 **Pre-condition.** Enter this phase only after explicit user approval of its scope at the Phase 3 STOP gate (per Approval). If the actual answer does not authorize this work, return to Phase 3 and re-present the current decision.
 
-1. Save the approved draft as Notebook says, into `design.md` and the history: Experience, Binding Decisions, Direction (ending with its Close stage), and Acceptance Gates under their own headings (omit the sections the draft does not use); principles from D5 go to the principles section. A Binding Decision row without quoted words takes Source `approved /draft report (<date>)`
+1. Save the approved draft as Notebook says, into `design.md` and the history: Experience, Binding Decisions, Direction (ending with its Close stage), and Acceptance Gates under their own headings (omit the sections the draft does not use); principles from D5 go to the principles section. A Binding Decision row without quoted words takes Source `approved /draft report (<date>)`. While a Run is open (the ledger's newest `run.json` has items not done), only its lead writes design.md (Run): a session that is not the lead writes nothing and mails the approved sections to the lead as an amendment (`mail send --kind amend --to lead`); the lead saves them and takes them in at the next item boundary
 2. Suggest: "Run `/realize` to implement this experience"
 
 ## Constraints
