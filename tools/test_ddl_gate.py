@@ -414,6 +414,19 @@ def user(content, **fields):
     return entry
 
 
+def queued(origin, mode="prompt", kind="queued_command", **fields):
+    """A message delivered while a turn runs, as Claude Code records it: one attachment line, and no `user` entry for
+    a message the human typed then. `fields` go into the attachment; origin None leaves it out."""
+    attachment = {"type": kind, "prompt": "閲覧しました。すすめてください。", "commandMode": mode, "source_uuid": "s-1",
+                  "delivery_id": "d-1", "timestamp": "2026-11-24T11:27:59.141Z"}
+    attachment.update({} if origin is None else {"origin": origin}, **fields)
+    return {"type": "attachment", "uuid": "a-1", "timestamp": "2026-11-24T11:27:59.141Z", "isSidechain": False,
+            "attachment": attachment,
+            "rendered": [{"content": "<system-reminder>\nThe user sent a new message while you were working:\n…"}]}
+
+
+TYPED_MID_TURN = queued({"kind": "human"}, humanTurn=True)
+TASK_MID_TURN = queued({"kind": "task-notification", "producer": "session-task"}, "task-notification")
 HUMAN_ORIGIN = {"origin": {"kind": "human"}, "turnOrigin": "human", "promptSource": "typed"}
 DIALOG = {"permissionDecision": {"decision": "accept", "source": "user_temporary"}}
 APPROVED = [{"type": "tool_result", "tool_use_id": "t", "content": "User has approved your plan. Start coding."}]
@@ -464,6 +477,17 @@ HUMAN_CASES = [  # (description, entry, is human)
     ("plan result without approval text", user(REJECTED, toolUseResult={"plan": "p", "isAgent": False,
                                                                         "filePath": "f", "hasTaskTool": True},
                                                **DIALOG), False),
+    # A message typed mid-turn is recorded only as an attachment; every other attachment is no human.
+    ("message typed mid-turn", TYPED_MID_TURN, True),
+    ("task notification mid-turn", TASK_MID_TURN, False),
+    ("coordinator message mid-turn", queued({"kind": "coordinator"}, humanTurn=True), False),
+    ("hand-back mid-turn, origin without a kind", queued({"producer": "agent"}), False),
+    ("mid-turn message without an origin", queued(None, humanTurn=True), False),
+    ("mid-turn origin not an object", queued("human"), False),
+    ("other attachment with a human origin", queued({"kind": "human"}, kind="todo_reminder"), False),
+    ("attachment not an object", dict(TYPED_MID_TURN, attachment="queued_command"), False),
+    ("message typed mid-turn marked meta", dict(TYPED_MID_TURN, isMeta=True), False),
+    ("message typed mid-turn marked compact summary", dict(TYPED_MID_TURN, isCompactSummary=True), False),
 ]
 
 
@@ -1771,6 +1795,14 @@ class GitReviewTest(GateTest):
             self.run_gate("user-prompt-submit", runtime, payload(runtime, "user-prompt-submit", str(self.transcript),
                           cwd=str(self.repo), prompt="Please revise; do not execute."))
             self.blocked(self.check(runtime))  # the file still contains the earlier approved answer
+
+    def test_a_message_typed_mid_turn_after_the_answer_revokes_the_review(self):
+        # Read from the record alone (no UserPromptSubmit has moved the epoch): the attachment is the later human input.
+        review = self.prepare("claude")
+        self.record("claude", review, mutate=lambda rows: rows.append(TASK_MID_TURN))
+        self.passed("claude", self.check("claude"), review)  # a task notification delivered mid-turn is no human
+        self.record("claude", review, mutate=lambda rows: rows.append(TYPED_MID_TURN))
+        self.assertIn("DDL Git review", self.blocked(self.check("claude")))
 
     def test_a_workers_notice_before_the_answer_keeps_the_review(self):
         for runtime in ("claude", "codex"):
@@ -3509,6 +3541,81 @@ class NoticeTest(GrantFlowTest):
                     self.assert_allowed(self.approve(runtime, chosen, option, name))
                     (row,) = events(self.root, session=name, kind="answered")
                     self.assertEqual((row["choice"], row["label"]), (option, option_label(chosen, option)))
+
+
+class MidTurnMessageTest(GrantFlowTest):
+    """A message the human types while a turn runs (Claude records it only as a queued_command attachment of human
+    origin, and UserPromptSubmit fires for it) is human input: it ends the pending STOP as a typed prompt does. A task
+    notification delivered the same way is not."""
+
+    WRITE = WRITES["claude"][0]
+
+    def test_a_message_typed_mid_turn_ends_the_pending_stop_in_the_record(self):
+        for stage in ("prepared", "asked"):
+            with self.subTest(stage=stage):
+                first, second = self.prepare_report("claude", cwd=self.cwd), self.prepare_report("claude", cwd=self.cwd)
+                ident, other = ("R", first["reportId"][2:]), ("R", second["reportId"][2:])
+                pending = {"id": first["reportId"], "report": first["report"]}
+                rows, later = self.rows("claude", first, stage), self.rows("claude", second, "asked", call="second")[1:]
+                typed = self.record_of("typed-" + stage, rows + [TYPED_MID_TURN])
+                told = self.record_of("told-" + stage, rows + [TASK_MID_TURN])
+                self.assertEqual(self.scan("claude", typed), (False, None))
+                with mock.patch.dict(os.environ, {"DDL_GATE_STATE_DIR": self.state}):
+                    self.assertIs(ddl_gate.record_state_claude(typed), False)
+                    self.assertIs(ddl_gate.record_state_claude(told), True)
+                    self.assertEqual(ddl_gate.pending_signals("claude", told), {ident})
+                    # The walk stops at the typed message: a question asked after it is all that is pending.
+                    after = self.record_of("typed-then-" + stage, rows + [TYPED_MID_TURN] + later)
+                    self.assertEqual(ddl_gate.pending_signals("claude", after), {other})
+                    through = self.record_of("told-then-" + stage, rows + [TASK_MID_TURN] + later)
+                    self.assertEqual(ddl_gate.pending_signals("claude", through), {ident, other})
+                self.assertEqual(self.scan("claude", told), (True, pending))
+                waiting = ddl_gate.WAITING_REASON.format(first["reportId"], first["report"])
+                self.assert_allowed(self.call("claude", typed, *self.WRITE, "typed-" + stage, cwd=self.cwd))
+                self.assert_reason(self.call("claude", told, *self.WRITE, "told-" + stage, cwd=self.cwd), waiting)
+
+    def test_a_typed_approval_mid_turn_is_an_input_boundary(self):
+        """The reported flow: UserPromptSubmit moves the epoch for the typed message, so the old report predates it;
+        the record agrees, so writes go on and the report is prepared again rather than asked."""
+        prepared, session = self.prepare_report("claude", cwd=self.cwd), "typed-mid-turn"
+        typed = self.record_of("typed-mid-turn", self.rows("claude", prepared, "prepared") + [TYPED_MID_TURN])
+        self.assert_allowed(self.prompt("claude", typed, TYPED_MID_TURN["attachment"]["prompt"], session))
+        self.assert_allowed(self.call("claude", typed, *self.WRITE, session=session, cwd=self.cwd))
+        self.assert_reason(self.call("claude", typed, QUESTION_TOOL["claude"], prepared["nativeRequest"], session,
+                                     cwd=self.cwd), ddl_gate.PREDATES.format(prepared["reportId"]))
+        # A task notification delivered the same way keeps the epoch and the STOP.
+        told, session = self.prepare_report("claude", cwd=self.cwd), "told-mid-turn"
+        record = self.record_of("told-mid-turn", self.rows("claude", told, "prepared") + [TASK_MID_TURN])
+        self.assert_allowed(self.prompt("claude", record, NOTICE, session))
+        self.assert_reason(self.call("claude", record, *self.WRITE, session=session, cwd=self.cwd),
+                           ddl_gate.WAITING_REASON.format(told["reportId"], told["report"]))
+        self.assert_allowed(self.call("claude", record, QUESTION_TOOL["claude"], told["nativeRequest"], session,
+                                      cwd=self.cwd))
+
+    def test_a_grant_answer_and_a_later_mid_turn_message(self):
+        text = TYPED_MID_TURN["attachment"]["prompt"]
+        # The answer read by the next tool call: the grant is recorded, and the message after it takes nothing away.
+        prepared, session = self.prepared("claude"), "observed-mid-turn"
+        self.assert_allowed(self.ask("claude", prepared, session))
+        answered = self.rows("claude", prepared, "answered")
+        self.assert_allowed(self.tool("claude", self.record_of("observed", answered), session))
+        self.assert_allowed(self.prompt("claude", self.record_of("observed-then", answered + [TYPED_MID_TURN]), text,
+                                        session))
+        self.assertIsNotNone(self.record(prepared))
+        self.assertEqual([line[0] for line in self.lines(session)], ["asked", "answered", "granted", "prompt"])
+        # The record holds the message after the answer when the answer is first read (at that message's
+        # UserPromptSubmit): the question closes with its answer (the close reads `user` entries only), but the
+        # grant's proof, like a Git review's, needs the answer to be the latest human input, so no grant is recorded.
+        prepared, session = self.prepared("claude"), "unobserved-mid-turn"
+        ident = prepared["reportId"]
+        self.assert_allowed(self.ask("claude", prepared, session))
+        record = self.record_of("unobserved", self.rows("claude", prepared, "answered") + [TYPED_MID_TURN])
+        self.assert_allowed(self.prompt("claude", record, text, session))
+        self.assertIsNone(self.record(prepared))
+        self.assertFalse(self.armed(session))
+        self.assertEqual(self.lines(session)[:3], [("asked", ident, None, None), ("answered", ident, 0, False),
+                                                   ("warn", ident, None, None)])
+        self.assertEqual(events(self.root, session=session, kind="warn")[0]["rule"], "grant-proof")
 
 
 class GrantStoreTest(GrantFlowTest):
@@ -7235,6 +7342,48 @@ class PromotionTest(GrantFlowTest):
         out = self.prepared("claude")
         self.assertNotIn("上げる候補", out["question"])
 
+    def stored(self, out):
+        return json.loads((pathlib.Path(out["report"]).parent / "report.json").read_text(encoding="utf-8"))
+
+    def load(self, out):
+        with mock.patch.dict(os.environ, {"DDL_GATE_STATE_DIR": self.state}):
+            return ddl_gate.load_report(out["reportId"][2:])
+
+    def test_a_marked_report_loads_and_its_question_passes(self):
+        """kind, gate and promote are hashed into the ID at preparation and at load alike: the report loads, and its
+        question, asked unchanged, is not refused as not prepared here."""
+        found = {"block": ["## 上げる候補", "", "- commit（7 回続けて承認）: 許諾の命令 `commit`"], "line": "commit（7 回続けて承認）"}
+        prepared = []
+        for runtime in ("claude", "codex"):
+            prepared += [self.prepare_report(runtime, cwd=self.cwd, kind=kind) for kind in ("plan", "draft")]
+            prepared += [self.prepare_report(runtime, cwd=self.cwd, gate=True),
+                         self.prepare_report(runtime, cwd=self.cwd, kind="gate", gate=True),
+                         self.prepared(runtime, kind="plan")]
+        with mock.patch.object(ddl_run, "promotion", return_value=found):
+            promoted = self.prepare_here(kind="plan")
+        self.assertEqual(self.stored(promoted)["promote"], found)
+        for out in prepared + [promoted]:
+            record = self.stored(out)
+            runtime = record["runtime"]
+            marks = {key: record[key] for key in ddl_gate.REPORT_MARK_KEYS if key in record}
+            with self.subTest(runtime=runtime, marks=marks):
+                self.assertTrue(marks)
+                self.assertEqual(self.load(out), record)
+                self.assert_allowed(self.ask(runtime, out, session="marked-" + out["reportId"]))
+        # A mark changed or dropped after preparation: the report no longer loads, and its question is refused.
+        for out, change in ((prepared[0], {"kind": "decision"}), (prepared[2], {"gate": False}), (promoted, None)):
+            record = self.stored(out)
+            if change:
+                record.update(change)
+            else:
+                del record["promote"]
+            (pathlib.Path(out["report"]).parent / "report.json").write_text(json.dumps(record), encoding="utf-8")
+            with self.subTest(changed=out["reportId"]):
+                with self.assertRaises(ValueError):
+                    self.load(out)
+                self.assert_reason(self.ask(record["runtime"], out, session="changed-" + out["reportId"]),
+                                   ddl_gate.NOT_PREPARED.format(out["reportId"]))
+
     def test_kind_and_gate_are_kept(self):
         for runtime in ("claude", "codex"):
             out = self.prepare_report(runtime, cwd=self.cwd, kind="gate", gate=True)
@@ -7249,6 +7398,100 @@ class PromotionTest(GrantFlowTest):
                                        self.cwd)
                 self.assertEqual(proc.returncode, 2)
                 self.assertIn(reason, proc.stderr)
+
+
+class CommitHooksReportTest(GrantFlowTest):
+    """A plan whose grant names `commit`, prepared in a repository that runs a commit hook (where commit_allow never
+    allows a commit inside a grant), says so: in the grant line after the command classes, in report.md after the
+    grant's block, and in the record as commitHooks, which its ID binds."""
+
+    LINE = {"ja": "許諾: 編集 2 範囲、命令 commit・test、{}マシンなし、360 分、直し 3 回、期限 {}",
+            "en": "Grant: edit 2 scopes; commands commit, test; {}no machines; 360 minutes; 3 fix attempts; expires {}"}
+    DETAIL = "## Realize report\n\n- R1 版数\n- R2 リンク\n- R3 リンク\n"  # GateTest.prepare_report's
+
+    def setUp(self):
+        super().setUp()
+        self.git_env = dict(os.environ, GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull)
+        shutil.rmtree(str(self.root / ".git"))
+        subprocess.run(["git", "init", "-q", "-b", "main", str(self.root)], check=True, capture_output=True,
+                       env=self.git_env)
+        self.hooks = self.root / ".git" / "hooks"
+        self.hooks.mkdir(exist_ok=True)
+        self.write_hook("pre-commit.sample")  # a sample is no hook
+        self.given = grant(commands=["commit", "test"])
+
+    def write_hook(self, name):
+        path = self.hooks / name
+        path.write_text("#!/bin/sh\n")
+        path.chmod(0o755)
+        return path
+
+    def stored(self, out):
+        return json.loads((pathlib.Path(out["report"]).parent / "report.json").read_text(encoding="utf-8"))
+
+    def load(self, out):
+        with mock.patch.dict(os.environ, {"DDL_GATE_STATE_DIR": self.state}):
+            return ddl_gate.load_report(out["reportId"][2:])
+
+    def test_a_commit_hook_is_named_in_the_plan(self):
+        self.write_hook("post-commit")
+        for runtime, language in (("claude", "ja"), ("codex", "en")):
+            with self.subTest(runtime=runtime):
+                out = self.prepared(runtime, language=language, grant=self.given)
+                record = self.stored(out)
+                self.assertIs(record["commitHooks"], True)
+                part = ddl_gate.COMMIT_HOOKS_PART[language] + ("、" if language == "ja" else "; ")
+                self.assertEqual(out["question"].split("\n")[5],
+                                 self.LINE[language].format(part, self.given["expires"][:10]))
+                self.assertEqual(ddl_gate.COMMIT_HOOKS_PART[language], {
+                    "ja": "commit は hook があるため Git の確認", "en": "commit goes to a Git review (commit hooks)"}[language])
+                note = {"ja": "このリポジトリにはコミットの `hook` があるため、許諾の内のコミットは通らず、Git の確認に回る。",
+                        "en": "This repository runs a commit hook, so a commit inside this grant is not allowed "
+                              "and goes to a Git review."}[language]
+                text = pathlib.Path(out["report"]).read_text(encoding="utf-8")
+                block = ddl_gate.grant_block(language, self.given)
+                self.assertEqual(text, out["question"] + "\n\n" + block + "\n\n" + note + "\n\n" + self.DETAIL)
+                self.assertEqual(self.load(out), record)
+                self.assert_allowed(self.ask(runtime, out, session="hooked-" + runtime))
+                # The ID binds the mark: dropped from report.json, the report no longer loads.
+                changed = self.prepared(runtime, language=language, grant=self.given)
+                (pathlib.Path(changed["report"]).parent / "report.json").write_text(
+                    json.dumps({key: value for key, value in self.stored(changed).items() if key != "commitHooks"}),
+                    encoding="utf-8")
+                with self.assertRaises(ValueError):
+                    self.load(changed)
+                self.assert_reason(self.ask(runtime, changed, session="unhooked-" + runtime),
+                                   ddl_gate.NOT_PREPARED.format(changed["reportId"]))
+
+    def test_no_hook_or_no_commit_adds_nothing(self):
+        hook = self.hooks / "post-commit"
+        cases = [("only a sample hook", self.given, False), ("a hook, no commit in the grant", grant(), True),
+                 ("a hook that is not executable", self.given, "plain"), ("not a repository", self.given, None)]
+        for description, given, hooked in cases:
+            with self.subTest(case=description):
+                if hooked:
+                    self.write_hook("post-commit")
+                    if hooked == "plain":
+                        hook.chmod(0o644)
+                elif hook.exists():
+                    hook.unlink()
+                if hooked is None:  # an empty `.git` makes no repository: an error on the way is no mark
+                    shutil.rmtree(str(self.root / ".git"))
+                    (self.root / ".git").mkdir()
+                out = self.prepared("claude", grant=given)
+                record = self.stored(out)
+                self.assertNotIn("commitHooks", record)
+                line = out["question"].split("\n")[5]
+                self.assertNotIn(ddl_gate.COMMIT_HOOKS_PART["ja"], line)
+                if given is self.given:
+                    self.assertEqual(line, self.LINE["ja"].format("", given["expires"][:10]))
+                else:
+                    self.assertEqual(line, GRANT_LINE["ja"].format(given["expires"][:10]))
+                text = pathlib.Path(out["report"]).read_text(encoding="utf-8")
+                self.assertNotIn(ddl_gate.COMMIT_HOOKS_NOTE["ja"], text)
+                head = out["question"] + "\n\n" + ddl_gate.grant_block("ja", given) + "\n\n"
+                self.assertEqual(text, head + self.DETAIL)
+                self.assertEqual(self.load(out), record)
 
 
 class EditionPushTest(GitReviewTest):

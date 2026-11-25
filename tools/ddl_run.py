@@ -34,7 +34,14 @@ Usage (from inside the project; the project and its `.ddl/` ledger come from the
 {think, run} are the Run's thinking and run slots (default 5 and 0). An item's kind is write, verify, explore,
 compute, or close: the lead's records and push, which takes no slot and which the runner never starts. An item's `files` are owner globs below the
 project root: a leading `./` is dropped, and an empty glob or segment, an absolute path, `..`, a trailing slash or
-a bare existing directory (write `<dir>/**`) is refused, naming the entry. `run-item` sets one item's status (under a
+a bare existing directory (write `<dir>/**`) is refused, naming the entry. When the project has an active grant,
+the output gains `outside: [{item, files}]` (item order; absent when none is) with each item's owner globs that no
+active grant's path glob covers: the gate would deny those edits mid-Run. A grant glob covers an owner glob when it
+matches every path the owner may name, both read as the gate reads a grant's glob: segment by segment, a grant `**`
+takes any number of owner segments (an owner `**` among them), an owner `**` lies only under a grant `**`, and any
+other grant segment takes one owner segment, its literal the same literal, its `?` one literal or a `?`, its `*`
+any run of literals, `?` and `*` (`tools/test_*.py` lies under `tools/*.py`, `tools/**` under neither `tools/*` nor
+`tools/*.py`). The Run starts all the same; the lead asks for a revised plan. `run-item` sets one item's status (under a
 lock on the Run's directory) and prints {run, item, status}, and writes an `item` event (run, item, status, itemKind).
 `report` prints four lines: questions (with `open <n>` for those asked and never answered, counted in no other
 bucket; for one ID only its latest ask, open until an answer to that ID; then by kind: plan (a report with a
@@ -73,10 +80,14 @@ with no input; only the lines it prints with a random mark are read, as data.
 `measure <machine>` prints {machine, cores, load1, memFreePercent, seconds} (macOS `sysctl` and `vm_stat`,
 Linux `/proc`; free memory is what can be had without swapping), trying once more after a failure; two
 failures in a row print {machine, unavailable (why, in words of its own), failures} and exit 3. A codex:
-resource is never reached by ssh.
+resource is never reached by ssh. A table entry whose `hostname` equals, without case, the first label of this
+machine's host name is this machine (its own ssh alias may not resolve on it): `measure` runs the same script by a
+local `bash -s` (no ssh, no login-shell wrapper), read and retried the same way, and either object gains `here: true`.
 
 `remote` refuses (exit 2, no ssh) outside a DDL project, a machine the table does not declare, one without
-the compute role or an ssh reach, one whose `data` lacks `code`, one carrying `confirm` without `--confirmed`,
+the compute role or an ssh reach, this machine ("<machine> is this machine (hostname <h>); run the command here,
+not through remote.", before any confirmation is used or ref written), one whose `data` lacks `code`, one carrying
+`confirm` without `--confirmed`,
 one neither covered by a confirmation nor named by an active grant of the project with the class remote-run
 whose `handover` holds `code`, and a `--snapshot` that names no commit. `--confirmed <R-id>` is a confirmation
 the gate recorded when the human approved a report's `confirm` item for this resource (never a Git review's
@@ -666,6 +677,60 @@ def owner_glob(item_id, glob, root):
     return glob
 
 
+def segment_covers(grant, owner):
+    """True when the grant segment matches every name the owner segment may match, both read as segment_glob reads
+    a segment (`*` and `?` within it, every other character literal). The grant's characters take the owner's: a
+    literal the same literal, `?` one literal or an owner `?`, `*` any run of them (literals, `?`, `*`); so an owner
+    `*` is taken only by a grant `*`, an owner `?` only by a grant `?` or `*`. Sound, not complete."""
+    reach = [True] + [False] * len(owner)  # reach[j]: the grant's characters so far take owner[:j]
+    for char in grant:
+        if char == "*":
+            for j in range(1, len(owner) + 1):
+                reach[j] = reach[j] or reach[j - 1]
+        else:
+            reach = [False] + [reach[j - 1] and (owner[j - 1] != "*" if char == "?" else owner[j - 1] == char)
+                               for j in range(1, len(owner) + 1)]
+    return reach[-1]
+
+
+def glob_covers(grant, owner):
+    """True when the grant path glob matches every path the owner glob may name, both read as glob_matches reads a
+    grant's glob (`**` a whole segment for any number of segments). Segment by segment: a grant `**` takes any number
+    of owner segments, an owner `**` among them; an owner `**` lies only under a grant `**`; any other grant segment
+    takes one owner segment it covers (segment_covers). Sound, not complete: `tools/test_*.py` lies under `tools/**`
+    and `tools/*.py`, `tools/**/x.py` under `tools/**`; `tools/**` under neither `tools/*` nor `tools/*.py`."""
+    owners = owner.split("/")
+    reach = [True] + [False] * len(owners)  # reach[j]: the grant's segments so far take owners[:j]
+    for part in grant.split("/"):
+        if part == "**":
+            for j in range(1, len(owners) + 1):
+                reach[j] = reach[j] or reach[j - 1]
+        else:
+            reach = [False] + [reach[j - 1] and owners[j - 1] != "**" and segment_covers(part, owners[j - 1])
+                               for j in range(1, len(owners) + 1)]
+    return reach[-1]
+
+
+def outside_grants(items):
+    """[{item, files}] in item order of the owner globs no active grant of the working directory's project covers,
+    or [] when none is active or the grants cannot be read (the hint is only advice). During a Run the gate denies
+    an edit inside the root that no active grant's path covers: owners outside them would be denied mid-Run. An owner
+    glob is covered when one grant path glob matches every path it may name (glob_covers)."""
+    try:
+        globs = [glob for record in gate.active_grants(gate.project_decision(os.getcwd()))
+                 for glob in record["grant"]["paths"]]
+    except Exception:  # noqa: BLE001 - any failure leaves the Run as it would be without the hint
+        return []
+    if not globs:
+        return []
+    outside = []
+    for item in items:
+        files = [owner for owner in item["files"] if not any(glob_covers(glob, owner) for glob in globs)]
+        if files:
+            outside.append({"item": item["id"], "files": files})
+    return outside
+
+
 def run_slots(slots):
     """The Run's slots {think, run}: the given ones (each a whole number up to SLOT_LIMIT), the rest by default."""
     if slots is None:
@@ -677,11 +742,12 @@ def run_slots(slots):
 
 
 def run_start(data, runtime=None):
-    """`run-start`: write `.ddl/runs/<N-id>/run.json` for one approved plan's report and print {run, path}.
+    """`run-start`: write `.ddl/runs/<N-id>/run.json` for one approved plan's report and print {run, path,
+    outside?}: `outside` lists the owner globs no active grant covers (outside_grants), absent when there is none.
 
     The Run names the grant only when the store holds that grant's record, and keeps the plan's language,
     in which `report --run` prints. It is a record for people and reports. No hook reads it: an item's
-    `done` is never a gate pass."""
+    `done` is never a gate pass. `outside` changes nothing: the Run starts, and the lead asks for a revised plan."""
     if not isinstance(data, dict) or not {"report", "items"} <= set(data) <= {"report", "items", "slots"}:
         raise ValueError("send one JSON object with report and items (and slots, when the Run names its own).")
     slots = run_slots(data.get("slots"))
@@ -694,6 +760,7 @@ def run_start(data, runtime=None):
         raise ValueError("a Run belongs to a DDL project; start it from inside the project.")
     for item in items:
         item["files"] = [owner_glob(item["id"], glob, root) for glob in item["files"]]
+    outside = outside_grants(items)
     try:
         record = gate.load_report(match[2], runtime)
     except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
@@ -718,7 +785,10 @@ def run_start(data, runtime=None):
     with open(run_file(root, run_id), "w", encoding="utf-8") as fh:
         fh.write(json.dumps(run, ensure_ascii=False, indent=2) + "\n")
     gate.ledger_event(root, record["runtime"], None, "prepared", id=run_id, run=run_id)
-    return {"run": run_id, "path": run_file(root, run_id)}
+    started = {"run": run_id, "path": run_file(root, run_id)}
+    if outside:
+        started["outside"] = outside
+    return started
 
 
 def update_run(root, run_id, change):
@@ -1121,6 +1191,21 @@ def ssh_target(name, table, compute):
     return alias, entry
 
 
+def this_machine(entry):
+    """The table entry's `hostname` when it names the machine this runs on (equal, without case, to the first label
+    of the local host name: `Studio.local` is studio), else None; None without an entry or a hostname. A
+    machine's ssh alias may not resolve on the machine itself, so `measure` measures it here and `remote` refuses."""
+    hostname = entry.get("hostname") if isinstance(entry, dict) else None
+    if not isinstance(hostname, str) or not hostname:
+        return None
+    import socket
+    try:
+        local = socket.gethostname()
+    except OSError:
+        return None
+    return hostname if local.split(".")[0].lower() == hostname.lower() else None  # the table compares with lower()
+
+
 def resource_grant(name):
     """The oldest active grant of the working directory's project that names `name` with the class remote-run."""
     project = gate.project_decision(os.getcwd())
@@ -1355,6 +1440,24 @@ def ssh_call(alias, script, timeout):
         return -1, [], "", 0.0
 
 
+def local_call(script, timeout):
+    """`script` run by a plain `bash -s` on this machine, with the caller's own environment (the login-shell wrapper
+    is for ssh only): run_child's four values, as ssh_call gives them."""
+    try:
+        return run_child(["bash", "-s"], script.encode("utf-8"), timeout)
+    except OSError:
+        return -1, [], "", 0.0
+
+
+def local_failure(code, timeout):
+    """Why the local bash gave no answer, as ssh_failure words it for ssh."""
+    if code is None:
+        return "no answer in {} s".format(int(timeout))
+    if code == -1:
+        return "bash could not be run on this machine"
+    return "bash ended with exit status {} and no answer".format(code)
+
+
 MEASURE_BODY = r'''
 number() { case "$1" in ''|*[!0-9]*) return 1 ;; esac; }
 main() {
@@ -1540,23 +1643,26 @@ def measurement(name, rest):
             "memFreePercent": round(100.0 * min(avail, total) / total, 1)}
 
 
-def measure_machine(name, alias):
+def measure_machine(name, alias, here=False):
     """(measurement, None) from the first of two tries in a row that answers, or (None, the last reason): two
-    failures in a row make a machine unavailable (E12)."""
+    failures in a row make a machine unavailable (E12). With `here` (this_machine) the same script runs by a local
+    bash instead of over ssh, and its answer is read the same way."""
     import time
     reason = None
     for attempt in range(2):
         if attempt:
             time.sleep(MEASURE_PAUSE)
         mark = new_mark()
-        code, lines, stderr, seconds = ssh_call(alias, remote_script(mark, (), MEASURE_BODY), MEASURE_TIMEOUT)
+        script = remote_script(mark, (), MEASURE_BODY)
+        code, lines, stderr, seconds = local_call(script, MEASURE_TIMEOUT) if here else \
+            ssh_call(alias, script, MEASURE_TIMEOUT)
         answers = [rest for _, word, rest in marks(lines, mark) if word == "measure"]
         result = measurement(name, answers[-1]) if answers else None
         if result:
             result["seconds"] = round(seconds, 2)
             return result, None
         reason = "it answered without a readable measurement" if answers or code == 0 else \
-            ssh_failure(code, stderr, MEASURE_TIMEOUT)
+            local_failure(code, MEASURE_TIMEOUT) if here else ssh_failure(code, stderr, MEASURE_TIMEOUT)
     return None, reason
 
 
@@ -1566,14 +1672,18 @@ def busy(measured):
 
 def measure_command(argv):
     """`measure <machine>`: (exit status, JSON object). 0 with {machine, cores, load1, memFreePercent, seconds};
-    3 with {machine, unavailable, failures} when two tries in a row gave no answer."""
+    3 with {machine, unavailable, failures} when two tries in a row gave no answer. On the machine itself
+    (this_machine) it measures by a local bash, never ssh, and either object gains `here: true`."""
     if len(argv) != 1 or argv[0].startswith("-"):
         raise Refused(RESOURCE_USAGE["measure"])
-    alias, _ = ssh_target(argv[0], resource_table(), compute=False)
-    measured, reason = measure_machine(argv[0], alias)
-    if measured is None:
-        return EXIT_UNAVAILABLE, {"machine": argv[0], "unavailable": reason, "failures": 2}
-    return 0, measured
+    alias, entry = ssh_target(argv[0], resource_table(), compute=False)
+    here = this_machine(entry) is not None
+    measured, reason = measure_machine(argv[0], alias, here=here)
+    result, code = (measured, 0) if measured is not None else \
+        ({"machine": argv[0], "unavailable": reason, "failures": 2}, EXIT_UNAVAILABLE)
+    if here:
+        result["here"] = True
+    return code, result
 
 
 def artifact_glob(glob):
@@ -1707,6 +1817,10 @@ def remote_command(argv):
     if not root:
         raise Refused("remote runs from inside a DDL project, whose grant or confirmation covers the machine.")
     alias, entry = ssh_target(machine, resource_table(), compute=True)
+    here = this_machine(entry)
+    if here is not None:  # its alias may not resolve here, and a handover to itself would only copy the tree
+        raise Refused("{} is this machine (hostname {}); run the command here, not through remote.".format(machine,
+                                                                                                        here))
     if entry is not None and entry.get("confirm") and "--confirmed" not in options:
         raise Refused('{} asks for the human\'s confirmation on each run (confirm = "{}"); pass --confirmed <R-id> '
                       'of a report whose confirmation of {} the human approved.'.format(machine, entry["confirm"],

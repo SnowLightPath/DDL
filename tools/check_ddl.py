@@ -158,13 +158,13 @@ CONCERNS = {"start": START_CONCERNS, "parallel-work": PARALLEL_CONCERNS, "approv
 # the generated tree; file names are the files of the installed skill directory, the host's implementations
 # folded into them (start in SKILL.md, the others in the operation of the same name).
 BUDGET_PATHS = (
-    ("validate", 21386, ("SKILL.md", "approval.md")),
-    ("draft", 30293, ("notebook.md",)),
-    ("realize-plan", 55584, ("parallel-work.md", "run.md")),
-    ("realize-close", 72550, ("close.md", "git-review.md")),
+    ("validate", 21586, ("SKILL.md", "approval.md")),
+    ("draft", 30493, ("notebook.md",)),
+    ("realize-plan", 56277, ("parallel-work.md", "run.md")),
+    ("realize-close", 73135, ("close.md", "git-review.md")),
 )
-EXECUTION_LIMIT = 72550
-FILE_LIMITS = {"run.md": 15886}  # a generated file's own limit, the host's implementation folded in
+EXECUTION_LIMIT = 73135
+FILE_LIMITS = {"run.md": 16380}  # a generated file's own limit, the host's implementation folded in
 AUTHOR_ONLY = ("command-authoring",)  # operations read by authors only: outside the execution total
 # The folded implementations in the generated skill (P9 on dist): the file, the H2 section and the H3 sections.
 FOLDED_H3 = ("Mapping", "Observed", "Coverage")

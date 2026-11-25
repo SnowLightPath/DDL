@@ -1145,8 +1145,22 @@ reach   = "codex:plugin-x"
 data    = ["business"]
 confirm = "each run"
 """
+# A host that also computes, as the personal table declares the machine the lead may sit at: its own ssh alias
+# does not resolve on it, so on it `measure` measures here and `remote` refuses.
+HERE_TABLE = TABLE + """
+[studio-ssh]
+roles    = ["host", "compute"]
+hostname = "studio"
+reach    = "ssh:studio-ssh"
+data     = ["code"]
+"""
 RUN_ID = "N-0123456789ab"
 GRANT_ID = "R-00000000000000a1"
+
+
+def host_named(name):
+    """This machine's host name, as this_machine reads it, for the length of a `with`."""
+    return mock.patch("socket.gethostname", return_value=name)
 
 
 def sha256(data):
@@ -1268,10 +1282,11 @@ class ResourceTest(unittest.TestCase):
             root = ddl_gate_core.ledger_root(ddl_gate_core.project_decision(str(self.project)))
             return root, ddl_gate_core.project_key(root)
 
-    def grant(self, machines, commands=("remote-run",), ident=GRANT_ID, handover=("code",)):
+    def grant(self, machines, commands=("remote-run",), ident=GRANT_ID, handover=("code",), paths=("**",)):
         root, key = self.project_key()
-        grant = {"paths": ["**"], "commands": list(commands), "machines": list(machines), "handover": list(handover),
-                 "budget": {"minutes": 60, "fixAttempts": 1}, "expires": "2099-01-01T00:00:00+00:00"}
+        grant = {"paths": list(paths), "commands": list(commands), "machines": list(machines),
+                 "handover": list(handover), "budget": {"minutes": 60, "fixAttempts": 1},
+                 "expires": "2099-01-01T00:00:00+00:00"}
         path = self.grants / key / "grants" / (ident + ".json")
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps({"id": ident, "projectKey": key, "root": root, "grant": grant,
@@ -1400,6 +1415,47 @@ class MeasureTest(ResourceTest):
         self.assertEqual(self.answer("measure", "box-alias")["cores"], 8)
         self.assertEqual(self.answer("measure", "unknown-alias", code=3)["unavailable"],
                          "its host name does not resolve from this machine")
+
+    def test_on_the_machine_itself_it_measures_here_without_ssh(self):
+        self.table(HERE_TABLE)
+        fake = "{}:{}".format(self.tmp / "machine", self.env["PATH"])  # this side's tools answer as the fake machine
+        with host_named("Studio.local"):
+            measured = self.answer("measure", "studio-ssh", PATH=fake)
+        self.assertIsInstance(measured.pop("seconds"), float)
+        self.assertEqual(measured, {"machine": "studio-ssh", "cores": 8, "load1": 0.5, "memFreePercent": 50.0,
+                                    "here": True})
+        self.assertEqual((self.read("ssh"), self.read("shell")), ([], []))  # no ssh, no login-shell wrapper
+        self.assertEqual(self.read("brew"), ["shellenv bash"])  # the same script, Homebrew first
+        with host_named("STUDIO"):  # this machine's own tools, measured for real
+            real = self.answer("measure", "studio-ssh", PATH=self.machine_path.split(":", 1)[1])
+        self.assertEqual((real["here"], self.read("ssh")), (True, []))
+        self.assertTrue(real["cores"] >= 1 and real["load1"] >= 0 and 0 <= real["memFreePercent"] <= 100, real)
+        with host_named("studio"):  # two unreadable answers in a row, as over ssh
+            self.assertEqual(self.answer("measure", "studio-ssh", code=3, PATH=fake, FAKE_CORES="x"),
+                             {"machine": "studio-ssh", "unavailable": "it answered without a readable measurement",
+                              "failures": 2, "here": True})
+        self.assertEqual((len(self.read("brew")), self.read("ssh")), (4, []))
+
+    def test_another_host_name_or_an_entry_without_one_keeps_ssh(self):
+        self.table(HERE_TABLE)
+        for name in ("elsewhere.local", "studio-2", "box.studio", ""):
+            with self.subTest(hostname=name), host_named(name):
+                self.assertEqual(self.answer("measure", "studio-ssh", code=3),  # as that machine sees it
+                                 {"machine": "studio-ssh", "unavailable": "its host name does not resolve from this "
+                                                                            "machine", "failures": 2})
+        self.assertEqual(len(self.read("ssh")), 8)
+        self.logs["ssh"].unlink()
+        with host_named("elsewhere"):
+            measured = self.answer("measure", "studio-ssh", FAKE_SSH_HOST="studio-ssh")
+        self.assertEqual((measured["cores"], "here" in measured), (8, False))
+        self.assertEqual(self.read("ssh"), ['-o BatchMode=yes -o ConnectTimeout=10 studio-ssh exec "$SHELL" -l -c '
+                                            '"bash -s"'])
+        with host_named("box"):  # box declares no hostname: its name is never this machine's
+            self.assertNotIn("here", self.answer("measure", "box"))
+        self.table(None)
+        with host_named("studio-ssh"):  # without a table the name is an ssh alias, never this machine
+            self.assertNotIn("here", self.answer("measure", "studio-ssh", code=3))
+        self.assertEqual(len(self.read("ssh")), 4)
 
 
 class RemoteTest(ResourceTest):
@@ -1672,6 +1728,26 @@ class RemoteTest(ResourceTest):
         result = self.answer("remote", "box-alias", "--", "ddl-brew-probe")
         self.assertEqual((result["machine"], result["output"]), ("box-alias", ["probe: Homebrew is on PATH"]))
 
+    def test_this_machine_is_refused_before_a_confirmation_is_used_or_anything_is_sent(self):
+        self.table(HERE_TABLE + 'confirm  = "each run"\n')
+        self.grant(["studio-ssh"], ident="R-00000000000000a3")
+        ident, record = self.confirm([{"resource": "studio-ssh", "action": "true"}])
+        says = "studio-ssh is this machine (hostname studio); run the command here, not through remote."
+        with host_named("Studio.local"):
+            for argv in (("--",), ("--confirmed", ident, "--"), ("--snapshot", "no-such-ref", "--")):
+                with self.subTest(argv=argv):  # before the confirm rule, the confirmation and the snapshot
+                    stderr = self.refused("remote", "studio-ssh", *argv, "true", says=says)
+                    self.assertEqual(stderr, "DDL remote: {}\n".format(says))
+        self.assertIsNone(json.loads(record.read_text())["items"][0]["used"])
+        self.assertEqual((self.ddl_refs(), self.events("confirmation-used"), self.events("remote")), ([], [], []))
+        self.assertFalse((self.remote_home / ".ddl-runs").exists())
+        with host_named("elsewhere.local"):  # from another machine the same call goes as before
+            result = self.answer("remote", "studio-ssh", "--confirmed", ident, "--", "true",
+                                 FAKE_SSH_HOST="studio-ssh")
+        self.assertEqual((result["confirmed"], result["exit"]), (ident, 0))
+        self.assertTrue(self.ddl_refs()[0].startswith("refs/ddl/handovers/adhoc/"))
+        self.assertIsInstance(json.loads(record.read_text())["items"][0]["used"], str)
+
 
 class ServiceTest(ResourceTest):
     ANSWER = json.dumps({"status": "answered", "reason": "", "answer": "three jobs"})
@@ -1900,15 +1976,18 @@ class RunFixture(ResourceTest):
         self.root = str(self.project_key()[0])
 
     def start_run(self, items, **extra):
+        return self.run_started(items, **extra)["run"]
+
+    def run_started(self, items, **extra):
+        """run_start's whole answer, {run, path, outside?}, for a new report prepared in the project."""
         data = dict({"report": self.prepared(), "items": items}, **extra)
         previous = os.getcwd()
         os.chdir(str(self.project))
         try:
             with mock.patch.dict(os.environ, self.env, clear=True):
-                started = ddl_run.run_start(data)
+                return ddl_run.run_start(data)
         finally:
             os.chdir(previous)
-        return started["run"]
 
     def run_dir(self, run):
         return pathlib.Path(self.root, ".ddl", "runs", run)
@@ -2523,6 +2602,90 @@ class HoldAndOwnerTest(RunFixture):
         self.assertEqual((code, stdout), (2, ""))
         self.assertIn("src/b.txt has uncommitted changes and belongs to an item outside", stderr)
         self.assertEqual((self.project / "src/b.txt").read_text(), "a change of the item I4 owns\n")
+
+
+class OutsideGrantTest(RunFixture):
+    """run-start's `outside`: the owner globs no active grant's path glob covers, whose edits the gate would deny
+    mid-Run (a plan once named `Workspace/` as the lead's area while its grant listed other paths)."""
+
+    ITEMS = [{"id": "I1", "kind": "write", "files": ["tools/a.py"]},
+             {"id": "lead", "kind": "close", "files": ["Workspace/**", "design.md"]},
+             {"id": "I3", "kind": "verify", "files": ["tools/test_*.py"], "after": ["I1"]}]
+    # (grant, owner, a path the owner names that the grant does not): a grant's `*` or `?` never takes an owner's
+    # `**`, `*` or `?` it cannot match every name of (the verifier's five rows first).
+    NOT_COVERED = [("tools/*", "tools/**", "tools/sub/x.py"), ("*", "**", "a/b.txt"),
+                   ("docs/?", "docs/*", "docs/readme.md"), ("tools/*/x.py", "tools/**/x.py", "tools/a/b/x.py"),
+                   ("src/a?", "src/a*", "src/abc"), ("tools/*.py", "tools/**", "tools/a/b.py"),
+                   ("a?", "a*", "a"), ("?", "*", "ab"), ("tools/**", "Tools/a.py", "Tools/a.py")]
+    COVERED = [("tools/**", "tools/**/x.py"), ("*.py", "test_*.py"), ("a*", "a*"), ("a*", "a?"), ("**", "**"),
+               ("**", "a/**/b?/*.c"), ("tools/**", "tools/test_*.py"), ("tools/*.py", "tools/test_*.py"),
+               ("tools/**/x.py", "tools/**/x.py"), ("docs/**", "docs/a/*.md"), ("a?c", "a?c"), ("*", "?"),
+               ("**/x.py", "tools/**/x.py"), ("a/**", "a/b/**"), ("*b*", "a*b?c")]
+
+    def test_a_grant_glob_covers_an_owner_glob_only_when_it_matches_every_path_the_owner_names(self):
+        for grant, owner, path in self.NOT_COVERED:
+            with self.subTest(grant=grant, owner=owner):
+                parts = path.split("/")
+                self.assertTrue(ddl_gate_core.glob_matches(owner, parts), path)  # the gate denies a path it names
+                self.assertFalse(ddl_gate_core.glob_matches(grant, parts), path)
+                self.assertFalse(ddl_run.glob_covers(grant, owner))
+        names = ["a", "ab", "abc", "b", "bc", "x.py", "test_.py", "test_a.py", "tools", "docs", "a.c", "readme.md"]
+        paths = [[name] for name in names]
+        paths += [path + [name] for path in paths for name in names]
+        paths += [path + [name] for path in paths if len(path) == 2 for name in names]
+        for grant, owner in self.COVERED:
+            with self.subTest(grant=grant, owner=owner):
+                self.assertTrue(ddl_run.glob_covers(grant, owner))
+                for parts in paths:  # sound: every path the owner names, the grant names, as the gate reads both
+                    if ddl_gate_core.glob_matches(owner, parts):
+                        self.assertTrue(ddl_gate_core.glob_matches(grant, parts), "/".join(parts))
+
+    def test_each_owner_a_grant_glob_cannot_wholly_hold_is_outside(self):
+        for number, (grant, _, _) in enumerate(self.NOT_COVERED[:5], 1):
+            self.grant([], commands=(), handover=(), paths=(grant,), ident="R-00000000000000b{}".format(number))
+        items = [{"id": "I{}".format(number), "kind": "write", "files": [owner]}
+                 for number, (_, owner, _) in enumerate(self.NOT_COVERED[:5], 1)]
+        items.append({"id": "I6", "kind": "write", "files": ["tools/x", "src/ab", "docs/x", "tools/a/x.py"]})
+        started = self.run_started(items)  # I6's owners are covered, one by each of those grants
+        self.assertEqual(started["outside"], [{"item": item["id"], "files": item["files"]} for item in items[:5]])
+
+    def test_owner_globs_no_active_grant_covers_are_named_under_their_item(self):
+        self.grant([], commands=(), handover=(), paths=("tools/**", "design.md"))
+        started = self.run_started(self.ITEMS)
+        self.assertEqual(list(started), ["run", "path", "outside"])
+        self.assertEqual(started["outside"], [{"item": "lead", "files": ["Workspace/**"]}])
+        record = self.run_record(started["run"])  # the Run starts as it would without the hint
+        self.assertNotIn("outside", record)
+        self.assertEqual([item["files"] for item in record["items"]],
+                         [["tools/a.py"], ["Workspace/**", "design.md"], ["tools/test_*.py"]])
+        self.assertEqual(self.statuses(started["run"]), {"I1": "ready", "lead": "ready", "I3": "ready"})
+        # The command line prints the same object.
+        data = json.dumps({"report": self.prepared(), "items": self.ITEMS})
+        with mock.patch.object(sys, "stdin", io.StringIO(data)):
+            code, stdout, stderr = self.call("run-start")
+        self.assertEqual((code, stderr), (0, ""))
+        self.assertEqual(json.loads(stdout)["outside"], [{"item": "lead", "files": ["Workspace/**"]}])
+
+    def test_an_owner_glob_is_covered_only_when_every_path_it_names_is(self):
+        self.grant([], commands=(), handover=(), paths=("tools/*.py",))
+        self.grant([], commands=(), handover=(), paths=("docs/**",), ident="R-00000000000000a2")  # every active one
+        started = self.run_started([
+            {"id": "I1", "kind": "write", "files": ["tools/**", "tools/test_*.py", "docs/a/*.md", "tools/sub/x.py"]},
+            {"id": "I2", "kind": "write", "files": ["docs/**", "Tools/a.py"]},
+            {"id": "I3", "kind": "write", "files": ["tools/x.py"]}])
+        self.assertEqual(started["outside"], [{"item": "I1", "files": ["tools/**", "tools/sub/x.py"]},
+                                              {"item": "I2", "files": ["Tools/a.py"]}])  # case for case, as the gate
+
+    def test_no_key_when_every_owner_is_covered_or_no_grant_is_active(self):
+        self.grant([], commands=(), handover=(), paths=("tools/**", "design.md"))
+        covered = [dict(item, files=[glob for glob in item["files"] if glob != "Workspace/**"]) for item in self.ITEMS]
+        self.assertEqual(set(self.run_started(covered)), {"run", "path"})
+        self.assertEqual(set(self.run_started([{"id": "I1", "kind": "write"}])), {"run", "path"})  # no owners
+        with mock.patch.object(ddl_gate_core, "active_grants", side_effect=OSError("unreadable store")):
+            self.assertEqual(set(self.run_started(self.ITEMS)), {"run", "path"})  # any error skips the hint
+        for path in self.grants.rglob("grants/*.json"):
+            path.unlink()
+        self.assertEqual(set(self.run_started(self.ITEMS)), {"run", "path"})
 
 
 class CloseAndRecordsTest(RunFixture):

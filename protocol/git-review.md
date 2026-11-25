@@ -23,7 +23,7 @@ python3 <gate> prepare-git-review --runtime <host>
 | `project` | A push of an edition with `"project": {"from": <number of an earlier commit here>, "include": <its include list>, "files": <its overlay directory>, "message": <exact, ending in the `Built-by: public-edition` trailer>, "author": {"name", "email"}, "base": <the target's last published ref, null at first>}`: the review shows the edition built from that commit's staged tree (the listed paths, the overlay over them) and its diff against `base`, the target's head; the push passes only when its commit holds that projection of the commit made, has the target's head as its one parent and the reviewed message, author and committer | A later or non-commit `from`, a second git directory's, `..` or an absolute path, a `pin` beside it, a moved target |
 | `push` | `git push <remote> <branch or refspec>` with one configured remote and one branch or refspec; `--no-follow-tags` when follow-tags is enabled; `--recurse-submodules=no` when configuration could push submodules | The same list, a `--git-dir` form, and a push whose source commit, resolved remote or destination differs from the reviewed one |
 
-Run Git in the shell tool's working directory for the intended repository; read commands need no review.
+Run Git in the shell tool's working directory for the intended repository, or name another with `git -C <path>` (a `cd <dir> && git …` compound is not reviewable); read commands need no review.
 
 ## Operation
 

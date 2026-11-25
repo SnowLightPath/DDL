@@ -154,7 +154,8 @@ Decisions (JSON on stdout; the exit status is always 0):
 State: the conversation record (`transcript_path`) is read from the end. A readable record is
 authoritative for Claude; Codex keeps a pending marker authoritative even over an OPEN record
 until the marker is cleared. An answered AskUserQuestion and an approved plan count as human input
-(toolUseResult / permissionDecision from the user). A prepared ID older than the session's
+(toolUseResult / permissionDecision from the user), and so does a message the human typed mid-turn (a
+queued_command attachment of human origin). A prepared ID older than the session's
 `.git-epoch` (resume, compaction, fork, clear, or a new prompt) covers nothing. Claude Code writes
 the transcript asynchronously, so a continuation in the same turn can escape the gate; the rule then holds as
 an instruction. A marker file `<state dir>/<session_id>.pending` carries the signal across
@@ -333,6 +334,10 @@ PREDATES = "DDL STOP: {} predates the latest user message, resume or compaction;
 # Held, queued and provisional questions (each only where a report names it; without these keys nothing changes).
 # A report's optional keys are hashed into its ID only when given, so a report without them keeps its bytes.
 REPORT_OPTIONAL_KEYS = ("holds", "queue", "provisional", "replaces")
+# The marks preparation adds beside them: the report's kind, a design.md gate, a plan's promotion candidates, and a
+# grant's commit that the repository's hooks send to a Git review. Each is hashed into the ID when present, like the
+# optional keys, so a report without them keeps its bytes and ID, and one with them loads.
+REPORT_MARK_KEYS = ("kind", "gate", "promote", "commitHooks")
 HOLD_ITEMS = (1, 16)  # items one question may hold
 RUN_ID_SOURCE, ITEM_ID_SOURCE = r"N-[0-9a-f]{12}", r"[A-Za-z0-9][A-Za-z0-9._-]{0,31}"  # as tools/ddl_run.py reads them
 SNAPSHOT_REFS = "refs/ddl/snapshots/"
@@ -395,6 +400,12 @@ GRANT_BUDGET = {"minutes": (1, 10080), "fixAttempts": (0, 10)}
 GRANT_NAME_LIMIT = 80  # characters of one machine or handed-over entry
 # The question's extra line, then the three lines of the block in report.md.
 GRANT_LABELS = {"ja": ("許諾", "範囲", "予算", "期限"), "en": ("Grant", "Scope", "Budget", "Expiry")}
+# A grant's `commit` in a repository that runs commit hooks is never allowed inside it (commit_allow): the plan says
+# so, in the grant line after the command classes and in report.md after the grant's block (record key commitHooks).
+COMMIT_HOOKS_PART = {"ja": "commit は hook があるため Git の確認", "en": "commit goes to a Git review (commit hooks)"}
+COMMIT_HOOKS_NOTE = {"ja": "このリポジトリにはコミットの `hook` があるため、許諾の内のコミットは通らず、Git の確認に回る。",
+                     "en": "This repository runs a commit hook, so a commit inside this grant is not allowed and "
+                           "goes to a Git review."}
 # A report's confirmations: 1 to 4 {resource, action} for resources that ask each run, each used once.
 CONFIRM_ITEMS, CONFIRM_ACTION_LIMIT = (1, 4), 200
 CONFIRM_LABELS = {"ja": "確認", "en": "Confirm"}
@@ -1797,20 +1808,22 @@ def confirm_block(language, confirm):
     return "\n\n".join(parts)
 
 
-def grant_line(language, grant):
-    """The value of the question's generated grant line: sizes, command classes, budget and the expiry date.
+def grant_line(language, grant, hooks=False):
+    """The value of the question's generated grant line: sizes, command classes, budget and the expiry date; with
+    `hooks` (the record's commitHooks), the note that its commit goes to a Git review, right after the classes.
 
     Paths, machines and handed-over data are counted here and spelled out in the report's grant block."""
     budget, day = grant["budget"], grant["expires"][:10]
     paths, commands, machines, handover = (grant[key] for key in GRANT_KEYS[:4])
+    hooked = [COMMIT_HOOKS_PART["ja" if is_japanese(language) else "en"]] if hooks else []
     if is_japanese(language):
-        parts = ["編集 {} 範囲".format(len(paths)), "命令 " + "・".join(commands) if commands else "命令なし",
+        parts = ["編集 {} 範囲".format(len(paths)), "命令 " + "・".join(commands) if commands else "命令なし", *hooked,
                  "マシン {} 台".format(len(machines)) if machines else "マシンなし"]
         parts += ["引き継ぎ {} 件".format(len(handover))] if handover else []
         parts += ["{} 分".format(budget["minutes"]), "直し {} 回".format(budget["fixAttempts"]), "期限 " + day]
         return fit_line("、".join(parts))
     parts = ["edit " + counted(len(paths), "scope"), "commands " + ", ".join(commands) if commands else "no commands",
-             counted(len(machines), "machine") if machines else "no machines"]
+             *hooked, counted(len(machines), "machine") if machines else "no machines"]
     parts += ["{} handed over".format(len(handover))] if handover else []
     parts += [counted(budget["minutes"], "minute"), counted(budget["fixAttempts"], "fix attempt"), "expires " + day]
     return fit_line("; ".join(parts))
@@ -1843,7 +1856,8 @@ def report_question(record, path):
     question = question_text(record["language"], values)
     if record["grant"]:
         label = GRANT_LABELS["ja" if is_japanese(record["language"]) else "en"][0]
-        question += "\n" + label + ": " + grant_line(record["language"], record["grant"])
+        hooks = record.get("commitHooks") is True
+        question += "\n" + label + ": " + grant_line(record["language"], record["grant"], hooks)
         if (record.get("promote") or {}).get("line"):
             label = PROMOTE_LABELS["ja" if is_japanese(record["language"]) else "en"]
             question += "\n" + label + ": " + record["promote"]["line"]
@@ -2504,8 +2518,10 @@ def hold_block(language, record):
 
 
 def report_core(record):
-    """The fields a report's ID hashes: REPORT_CORE_KEYS, and each of REPORT_OPTIONAL_KEYS the report carries."""
-    return {key: record[key] for key in REPORT_CORE_KEYS + tuple(key for key in REPORT_OPTIONAL_KEYS if key in record)}
+    """The fields a report's ID hashes: REPORT_CORE_KEYS, and each of REPORT_OPTIONAL_KEYS and REPORT_MARK_KEYS the
+    report carries: the fields preparation hashed, so a report with a mark loads."""
+    return {key: record[key] for key in REPORT_CORE_KEYS + tuple(key for key in REPORT_OPTIONAL_KEYS + REPORT_MARK_KEYS
+                                                                if key in record)}
 
 
 def prepare_report(runtime, data):
@@ -2563,6 +2579,8 @@ def prepare_report(runtime, data):
     if data.get("gate") is not None and not isinstance(data["gate"], bool):
         raise ValueError("gate is true or false: whether the report asks a design.md human gate.")
     marks = {key: data[key] for key in ("kind", "gate") if data.get(key) is not None}
+    if grant is not None and "commit" in grant["commands"] and repository_hooks():
+        marks["commitHooks"] = True
     promote = plan_promotion(language) if grant is not None else None
     optional = {key: data[key] for key in REPORT_OPTIONAL_KEYS if data.get(key) is not None}
     if optional:
@@ -2615,6 +2633,17 @@ def prepare_report(runtime, data):
             "nativeRequest": request}
 
 
+def repository_hooks():
+    """For a plan whose grant names `commit`: True when the work tree the preparation runs in may run a commit hook
+    (commit_hooks), so its commit goes to a Git review. Any error is False: the mark informs the plan, and each commit
+    is still checked when it runs."""
+    try:
+        top = git_repo(os.getcwd())
+        return commit_hooks(top, top) is True
+    except Exception:
+        return False
+
+
 def plan_promotion(language):
     """For a plan (a report with a grant): what ddl_run.promotion reads in the project's ledger, {block, line}, or
     None when it names no candidate. A preparation is a subcommand: it may load ddl_run, which no hook event does."""
@@ -2633,9 +2662,12 @@ def plan_promotion(language):
 
 
 def report_head(record, question):
-    """What the gate writes at the top of report.md: the question, the grant's block and the confirmations' block
-    when the report carries them; the detail follows."""
+    """What the gate writes at the top of report.md: the question, the grant's block (and the commit hooks' sentence
+    when the record carries commitHooks) and the confirmations' block when the report carries them; the detail
+    follows."""
     block = grant_block(record["language"], record["grant"]) + "\n\n" if record["grant"] else ""
+    block += COMMIT_HOOKS_NOTE["ja" if is_japanese(record["language"]) else "en"] + "\n\n" \
+        if record["grant"] and record.get("commitHooks") is True else ""
     block += "\n".join(record["promote"]["block"]) + "\n\n" if (record.get("promote") or {}).get("block") else ""
     block += confirm_block(record["language"], record["confirm"]) + "\n\n" if record["confirm"] else ""
     block += hold_block(record["language"], record) + "\n\n" if record.get("holds") else ""
@@ -3075,14 +3107,23 @@ def is_dialog_answer_claude(entry) -> bool:
 
 
 def is_human_prompt_claude(entry) -> bool:
-    """True when a `user` entry is something the human typed, queued, accepted, or decided in a dialog."""
-    if entry.get("type") != "user":
+    """True when a `user` entry is something the human typed, queued, accepted, or decided in a dialog, or an
+    `attachment` entry is a message the human typed while a turn ran (a queued_command of human origin)."""
+    if entry.get("type") not in ("user", "attachment"):
         return False
     # Structural marks come before the origin fields: a compaction summary has been observed carrying a
     # turn-origin field, and tool results and attachments are never prompts whatever else they carry,
-    # except the dialog answers above, which are the human speaking through a tool.
+    # except the dialog answers above, which are the human speaking through a tool, and the mid-turn message.
     if entry.get("isCompactSummary") or entry.get("isMeta"):
         return False
+    if entry.get("type") == "attachment":
+        # Claude Code records a message typed mid-turn only as this attachment (no `user` entry follows), and
+        # UserPromptSubmit fires for it. Task notifications, a coordinator's and a hand-back share the type and the
+        # prompt mode, so only the human origin counts.
+        attachment = entry.get("attachment")
+        origin = attachment.get("origin") if isinstance(attachment, dict) else None
+        return isinstance(attachment, dict) and attachment.get("type") == "queued_command" \
+            and isinstance(origin, dict) and origin.get("kind") == "human"
     if is_dialog_answer_claude(entry):
         return True
     if "toolUseResult" in entry:
