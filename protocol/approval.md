@@ -28,7 +28,7 @@ Run these steps in order:
    - Plain prose, only what helps this decision; invent no technology choice or status field to fill a template.
    - Material downsides, open questions and blockers stay beside the decision; inventories, commands, output and rationale go into the detail, in the file.
    - Batch approval is the default: stable IDs, a brief shared purpose, a numbered list of recommended actions with their material effects; incompatible alternatives become separate complete plans or the unresolved part stays pending; never bundle contradictory actions into approve all.
-   - Name every design.md human gate whose evidence is ready, with the evidence, and every detection that needs a STOP here; one submission passes them all, no re-ask per gate. Never postpone a prerequisite gate to bundle it with a later one whose evidence is not ready.
+   - Name every design.md human gate whose evidence is ready, with the evidence, and every detection that needs a STOP here; one submission passes them all. Never postpone a prerequisite gate to bundle it with a later one whose evidence is not ready.
 2. **Ask.** Ask the prepared question unchanged, one interaction for the complete current review set through an available, permitted native choice with the three actions (Formats); its five lines alone suffice to decide:
    - Free text is optional, a typed selection or ID list never required.
    - Open item selection only on request, in the interface's actual schema: a native checklist, multi-select or grouped form with one submission where the host supports it, else complete compatible subsets as native choices; never a serial question per proposal.
@@ -47,7 +47,7 @@ Run these steps in order:
 - Preparation (the gate's `prepare-report`): input JSON `language`, `decision`, `recommendation` (with its reason), `consequence`, `detail` (the complete report), optional `options` (2–4 of `label`, `description`), `holds` (`run`, 1–16 `items`, whose and dependents' files stay held until answered), `queue: true` (asked later; `replaces: <R-id>` re-asks a stale open one unchanged; `status` lists them) and, with both, `provisional` (a `snapshot` ref), `kind` (`plan`, `gate`, `confirm`, `decision`, `draft`) and `gate: true`; output `reportId` (`R-<id>`, 16 hexadecimal characters), `report` (absolute path of `<state dir>/reports/<id>/report.md`), `question`, `nativeRequest` (passed unchanged).
 - The question: five `<label>: <value>` lines of one short sentence, no newline: the three inputs, the ID, the report path; labels `Decision` `Recommendation` `Consequence` `ID` `Full report`, in Japanese `決めること` `推奨` `影響` `確認 ID` `全文`. Name a list of over three items by range (`R1–R12`), spelled out in the file; a detection, a ready gate or a material downside keeps a word on the consequence line. A grant or `confirm` adds lines after them ([Run](run.md)), the grant's then `Promote` (`上げる候補`): up to 3 kinds approved first at least 3 times running, never overturned, with `Promotion candidates` and `Demotion candidates` (`下げる候補`) in the file, like `report --kinds`. Only a local commit (class `commit`), an each-run `confirm` or a provisional gate can be one, never an exit; the plan's approval decides; the lead records a promoted kind in Binding Decisions.
 - The three actions: `approve all` — apply every displayed compatible recommendation with its stated resolution and pass the gates named in the report; `subset` — select a subset or request changes, rebuild the report and return to the STOP; `hold` — apply nothing; the work stays unapproved.
-- Marks of a waived gate, `approved in advance (<date>)` then `passed <date>`: Notebook Formats.
+- Advance approval mark: `approved in advance (<date>)` (Notebook Formats).
 
 ## Example
 
@@ -70,7 +70,7 @@ Choices: approve all (R1–R3, pass S2) / subset or changes / hold
 
 | Situation | Behavior |
 |---|---|
-| A receipt (accepted, no answer), a recommended or preselected choice, a timeout or automatic submission, a worker notification, a message from another session or teammate, cancel, dismissal or silence, no selection, an ambiguous or stale answer | Not approval, even with an option returned: the work stays unapproved (step 3); re-present the decision when the user returns |
+| A receipt (accepted, no answer), a recommended or preselected choice, a timeout or automatic submission, a scheduled prompt, a worker notification, a message from another session or teammate, cancel, dismissal or silence, no selection, an ambiguous or stale answer | Not approval, even with an option returned: the work stays unapproved (step 3); re-present the decision when the user returns |
 | A conversation summary (compaction) replaced the report | Approves nothing: rerun steps 1–2 (the entry's Interruption); an approval after a summary covers only a report emitted after it |
 | A clarification, details or revision request | Not approval: answer with read-only tools or rebuild the report, then return to the STOP; group independent questions |
 | Interface unavailable or not permitted for this purpose (available: answerable throughout the wait, not mere tool presence or a receipt) | State the limitation and that the work stays unapproved, then end the turn; no typed-choice fallback, no permission-mode switch |

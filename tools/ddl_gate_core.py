@@ -146,7 +146,9 @@ Decisions (JSON on stdout; the exit status is always 0):
   user-prompt-submit  first records the answers the record already holds, then removes the marker (a human
                       spoke); on Claude a prompt that starts like a worker's completion notice or another
                       envelope (NOT_HUMAN_PREFIXES) is no human: it keeps the marker, the epoch and the
-                      asked questions and is logged as `prompt` with rule `notification`; prints nothing
+                      asked questions and is logged as `prompt` with rule `notification`; so is a prompt the
+                      host fired on a schedule (the record's newest `user` entry is `isMeta`, turnOrigin
+                      `scheduled`, with the same text), with rule `scheduled`; prints nothing
   session-start       compact/resume while CLOSED -> additionalContext with a notice (naming the
                       pending ID and report when known);
                       codex also gets design.md injected (claude imports it through CLAUDE.md)
@@ -156,7 +158,10 @@ authoritative for Claude; Codex keeps a pending marker authoritative even over a
 until the marker is cleared. An answered AskUserQuestion and an approved plan count as human input
 (toolUseResult / permissionDecision from the user), and so does a message the human typed mid-turn (a
 queued_command attachment of human origin). A prepared ID older than the session's
-`.git-epoch` (resume, compaction, fork, clear, or a new prompt) covers nothing. Claude Code writes
+`.git-epoch` (resume, compaction, fork, clear, or a new prompt) covers nothing. A grant without confirmations,
+asked alone and not queued, is the exception (approved_report): typed text after the human's submitted first
+option does not void it, nor does an epoch that moved after that answer, unless a later close of any question
+follows it or the report predates `.session-epoch` (resume, compaction, fork, clear). Claude Code writes
 the transcript asynchronously, so a continuation in the same turn can escape the gate; the rule then holds as
 an instruction. A marker file `<state dir>/<session_id>.pending` carries the signal across
 turns and for runtimes whose record is unreadable, and `<state dir>/<session_id>.warned` makes
@@ -252,6 +257,7 @@ PUSH_FORM_REASON = ("DDL gate: this Git push form cannot be read as one plain `g
                     "discard required options; explain the limitation instead. No command was rewritten.")
 NOT_HUMAN_PREFIXES = ("Another Claude session sent a message", "<task-notification>", "<system-reminder>",
                       "<local-command", "<command-name>", "[Request interrupted")
+SCHEDULED_LINES = 64  # record lines, from the end, in which a prompt's own scheduled entry is looked for (Claude)
 ASSIGNMENT = _Pattern("ASSIGNMENT", r"[A-Za-z_][A-Za-z0-9_]*=")
 REDIRECT = _Pattern("REDIRECT", r">>?")
 # A whole token that is a harmless redirect (`2>&1`, `2>/dev/null`, `<in`) or a bare operator (`>`, `2>>`, `<`).
@@ -335,9 +341,9 @@ PREDATES = "DDL STOP: {} predates the latest user message, resume or compaction;
 # A report's optional keys are hashed into its ID only when given, so a report without them keeps its bytes.
 REPORT_OPTIONAL_KEYS = ("holds", "queue", "provisional", "replaces")
 # The marks preparation adds beside them: the report's kind, a design.md gate, a plan's promotion candidates, and a
-# grant's commit that the repository's hooks send to a Git review. Each is hashed into the ID when present, like the
-# optional keys, so a report without them keeps its bytes and ID, and one with them loads.
-REPORT_MARK_KEYS = ("kind", "gate", "promote", "commitHooks")
+# grant's commit that the repository's hooks (or a second Git directory's) send to a Git review. Each is hashed into
+# the ID when present, like the optional keys, so a report without them keeps its bytes and ID, and one with them loads.
+REPORT_MARK_KEYS = ("kind", "gate", "promote", "commitHooks", "secondHooks")
 HOLD_ITEMS = (1, 16)  # items one question may hold
 RUN_ID_SOURCE, ITEM_ID_SOURCE = r"N-[0-9a-f]{12}", r"[A-Za-z0-9][A-Za-z0-9._-]{0,31}"  # as tools/ddl_run.py reads them
 SNAPSHOT_REFS = "refs/ddl/snapshots/"
@@ -406,6 +412,14 @@ COMMIT_HOOKS_PART = {"ja": "commit は hook があるため Git の確認", "en"
 COMMIT_HOOKS_NOTE = {"ja": "このリポジトリにはコミットの `hook` があるため、許諾の内のコミットは通らず、Git の確認に回る。",
                      "en": "This repository runs a commit hook, so a commit inside this grant is not allowed and "
                            "goes to a Git review."}
+# The same for the project root's second Git directories that run one (record key secondHooks: their names, sorted),
+# after the commitHooks part and note when both; the names are joined by SECOND_HOOKS_JOIN.
+SECOND_HOOKS_PART = {"ja": "commit（{}）は hook があるため Git の確認", "en": "commit in {} goes to a Git review (commit hooks)"}
+SECOND_HOOKS_NOTE = {"ja": "第二の git ディレクトリ {} にはコミットの `hook` があるため、そこへの許諾の内のコミットは通らず、"
+                           "Git の確認に回る。",
+                     "en": "The second git directory {} runs a commit hook, so a commit inside this grant there is not "
+                           "allowed and goes to a Git review."}
+SECOND_HOOKS_JOIN = {"ja": "、", "en": ", "}
 # A report's confirmations: 1 to 4 {resource, action} for resources that ask each run, each used once.
 CONFIRM_ITEMS, CONFIRM_ACTION_LIMIT = (1, 4), 200
 CONFIRM_LABELS = {"ja": "確認", "en": "Confirm"}
@@ -1808,14 +1822,17 @@ def confirm_block(language, confirm):
     return "\n\n".join(parts)
 
 
-def grant_line(language, grant, hooks=False):
+def grant_line(language, grant, hooks=False, second=()):
     """The value of the question's generated grant line: sizes, command classes, budget and the expiry date; with
-    `hooks` (the record's commitHooks), the note that its commit goes to a Git review, right after the classes.
+    `hooks` (the record's commitHooks), the note that its commit goes to a Git review, right after the classes, and
+    with `second` (secondHooks: second Git directories that run a commit hook) the same for those, after it.
 
     Paths, machines and handed-over data are counted here and spelled out in the report's grant block."""
     budget, day = grant["budget"], grant["expires"][:10]
     paths, commands, machines, handover = (grant[key] for key in GRANT_KEYS[:4])
-    hooked = [COMMIT_HOOKS_PART["ja" if is_japanese(language) else "en"]] if hooks else []
+    lang = "ja" if is_japanese(language) else "en"
+    hooked = [COMMIT_HOOKS_PART[lang]] if hooks else []
+    hooked += [SECOND_HOOKS_PART[lang].format(SECOND_HOOKS_JOIN[lang].join(second))] if second else []
     if is_japanese(language):
         parts = ["編集 {} 範囲".format(len(paths)), "命令 " + "・".join(commands) if commands else "命令なし", *hooked,
                  "マシン {} 台".format(len(machines)) if machines else "マシンなし"]
@@ -1857,7 +1874,8 @@ def report_question(record, path):
     if record["grant"]:
         label = GRANT_LABELS["ja" if is_japanese(record["language"]) else "en"][0]
         hooks = record.get("commitHooks") is True
-        question += "\n" + label + ": " + grant_line(record["language"], record["grant"], hooks)
+        question += "\n" + label + ": " + grant_line(record["language"], record["grant"], hooks,
+                                                     record.get("secondHooks") or ())
         if (record.get("promote") or {}).get("line"):
             label = PROMOTE_LABELS["ja" if is_japanese(record["language"]) else "en"]
             question += "\n" + label + ": " + record["promote"]["line"]
@@ -2579,8 +2597,12 @@ def prepare_report(runtime, data):
     if data.get("gate") is not None and not isinstance(data["gate"], bool):
         raise ValueError("gate is true or false: whether the report asks a design.md human gate.")
     marks = {key: data[key] for key in ("kind", "gate") if data.get(key) is not None}
-    if grant is not None and "commit" in grant["commands"] and repository_hooks():
-        marks["commitHooks"] = True
+    if grant is not None and "commit" in grant["commands"]:
+        if repository_hooks():
+            marks["commitHooks"] = True
+        hooked = second_hooks()
+        if hooked:
+            marks["secondHooks"] = hooked
     promote = plan_promotion(language) if grant is not None else None
     optional = {key: data[key] for key in REPORT_OPTIONAL_KEYS if data.get(key) is not None}
     if optional:
@@ -2644,6 +2666,38 @@ def repository_hooks():
         return False
 
 
+def second_git_directory(root, git_dir):
+    """True when `git_dir` (resolved) is the project root's second Git directory as commit_allow accepts one: directly
+    in the root, not `.git`, not bare, its core.worktree the root, and ignored by the main repository."""
+    if os.path.dirname(git_dir) != root or git_dir == os.path.join(root, ".git"):
+        return False
+    bare = git_text(root, "--git-dir=" + git_dir, "config", "--bool", "core.bare", optional=True)
+    tree = git_text(root, "--git-dir=" + git_dir, "config", "core.worktree", optional=True)
+    return bare != "true" and bool(tree) and os.path.realpath(os.path.join(git_dir, tree)) == root \
+        and git_read(root, "check-ignore", "-q", os.path.relpath(git_dir, root), optional=True) is not None
+
+
+def second_hooks():
+    """For a plan whose grant names `commit`: the names (relative to the project root, sorted) of the root's second
+    Git directories whose commit may run a hook (commit_hooks with that directory and the root as its work tree), so
+    a commit inside the grant there goes to a Git review. Only the root's direct children are looked at, and only one
+    that holds HEAD and objects/ is asked of Git. Any error is none: the mark informs the plan, and each commit is
+    still checked when it runs."""
+    try:
+        root = os.path.realpath(project_root(project_decision(os.getcwd())))
+        found = set()
+        for name in os.listdir(root):
+            git_dir = os.path.realpath(os.path.join(root, name))
+            if not os.path.isfile(os.path.join(git_dir, "HEAD")) \
+                    or not os.path.isdir(os.path.join(git_dir, "objects")) or not second_git_directory(root, git_dir):
+                continue
+            if commit_hooks(root, root, {"gitDir": git_dir, "workTree": root}) is True:
+                found.add(os.path.basename(git_dir))  # a link to one is found under its own name
+        return sorted(name for name in found if name.isprintable())  # one line of the question
+    except Exception:
+        return []
+
+
 def plan_promotion(language):
     """For a plan (a report with a grant): what ddl_run.promotion reads in the project's ledger, {block, line}, or
     None when it names no candidate. A preparation is a subcommand: it may load ddl_run, which no hook event does."""
@@ -2663,11 +2717,13 @@ def plan_promotion(language):
 
 def report_head(record, question):
     """What the gate writes at the top of report.md: the question, the grant's block (and the commit hooks' sentence
-    when the record carries commitHooks) and the confirmations' block when the report carries them; the detail
-    follows."""
+    when the record carries commitHooks, then the second Git directories' when it carries secondHooks) and the
+    confirmations' block when the report carries them; the detail follows."""
+    lang = "ja" if is_japanese(record["language"]) else "en"
     block = grant_block(record["language"], record["grant"]) + "\n\n" if record["grant"] else ""
-    block += COMMIT_HOOKS_NOTE["ja" if is_japanese(record["language"]) else "en"] + "\n\n" \
-        if record["grant"] and record.get("commitHooks") is True else ""
+    block += COMMIT_HOOKS_NOTE[lang] + "\n\n" if record["grant"] and record.get("commitHooks") is True else ""
+    block += SECOND_HOOKS_NOTE[lang].format(SECOND_HOOKS_JOIN[lang].join(record["secondHooks"])) + "\n\n" \
+        if record["grant"] and record.get("secondHooks") else ""
     block += "\n".join(record["promote"]["block"]) + "\n\n" if (record.get("promote") or {}).get("block") else ""
     block += confirm_block(record["language"], record["confirm"]) + "\n\n" if record["confirm"] else ""
     block += hold_block(record["language"], record) + "\n\n" if record.get("holds") else ""
@@ -2705,10 +2761,18 @@ def prepared_location(kind, prepared_id):
     return (report_directory() if kind == "R" else review_directory()) / prepared_id / "report.md"
 
 
-def predates_epoch(session_id, created_at):
-    """True when the preparation is not newer than the session's last resume, compaction, fork, clear or prompt."""
-    epoch = session_file(session_id, ".git-epoch")
+def predates_epoch(session_id, created_at, suffix=".git-epoch"):
+    """True when the preparation is not newer than the session's last resume, compaction, fork, clear or prompt;
+    with suffix ".session-epoch", than its last resume, compaction, fork or clear alone (handle_session_start writes
+    both)."""
+    epoch = session_file(session_id, suffix)
     return epoch.exists() and created_at <= float(epoch.read_text())
+
+
+def epoch_after(session_id, seconds):
+    """True when the session's epoch moved after `seconds` (the time of an answer); False when either is missing."""
+    epoch = session_file(session_id, ".git-epoch")
+    return seconds is not None and epoch.exists() and float(epoch.read_text()) > seconds
 
 
 def codex_git_reply(text):
@@ -2794,6 +2858,89 @@ def native_git_choice(runtime, path):
     return None
 
 
+def answer_past_input(runtime, path):
+    """(question request, answer, the answer's time in seconds or None) for the latest submitted native answer to one
+    question, read as native_git_choice reads it except that a later human input that answers nothing does not void
+    it: typed text, a message typed mid-turn, and on Codex a plain UserMessage and the turn it starts. A later close
+    of any question (an answer, a rejection or cancel, a timeout, a plan's result; on Codex any output of a question
+    call but its plain receipt), a human input between the question and its answer, a compaction or an unreadable
+    record still does. approved_report proves only a grant alone, asked alone and not queued, from it."""
+    stats = {"lines": 0, "parsed": 0}
+    answer, request_id, title, stamp, typed, closed = None, None, None, None, False, {}
+    try:
+        for entry in iter_entries_reversed(path, stats):
+            if entry.get("isSidechain"):
+                continue
+            if entry.get("isCompactSummary") or entry.get("type") == "compacted":
+                return None
+            if runtime == "claude":
+                blocks = entry_blocks(entry)
+                if entry.get("type") == "assistant":
+                    uses = [block for block in blocks if block.get("type") == "tool_use"]
+                    if any(block.get("id") in closed and block.get("id") != request_id
+                           and block.get("name") in QUESTION_TOOLS["claude"] | {"ExitPlanMode"} for block in uses):
+                        return None  # another question with a result: answered, rejected, cancelled or timed out
+                    for block in uses if answer is not None else []:
+                        if block.get("id") == request_id:
+                            if block.get("name") != "AskUserQuestion":
+                                return None
+                            return block.get("input", {}), answer, stamp
+                    continue
+                refs = [b.get("tool_use_id") for b in blocks if b.get("type") == "tool_result"]
+                closed.update((ref, None) for ref in refs if isinstance(ref, str))
+                result = entry.get("toolUseResult")
+                closes = isinstance(result, dict) and ("answers" in result or "plan" in result)
+                if answer is not None:
+                    if closes or is_human_prompt_claude(entry):
+                        return None  # between the question and its answer
+                    continue
+                if not closes:
+                    continue  # typed text, a message typed mid-turn, another tool's result, or no input at all
+                answers = result.get("answers")
+                if not is_dialog_answer_claude(entry) or not isinstance(answers, dict) or len(answers) != 1 \
+                        or len(refs) != 1 or not refs[0]:
+                    return None
+                answer, request_id, stamp = next(iter(answers.values())), refs[0], iso_seconds(entry.get("timestamp"))
+                continue
+            payload = entry.get("payload")
+            payload = payload if isinstance(payload, dict) else {}
+            kind, typ, item = entry.get("type"), payload.get("type"), payload.get("item")
+            if kind == "event_msg" and typ == "task_started" and answer is None:
+                if not typed:
+                    return None  # a turn whose human input this walk did not read
+                typed = False
+            if kind == "event_msg" and typ == "item_completed" and isinstance(item, dict) \
+                    and item.get("type") == "UserMessage":
+                if answer is not None:
+                    return None
+                reply = codex_git_reply(codex_text(item))
+                if not reply:
+                    typed = True  # typed text, or a message sent while the turn ran
+                    continue
+                (request_id, title, answer), stamp = reply, iso_seconds(entry.get("timestamp"))
+            if kind == "response_item" and typ in ("function_call_output", "custom_tool_call_output"):
+                closed.setdefault(payload.get("call_id"), payload.get("output"))
+            if kind == "response_item" and typ == "function_call" and payload.get("call_id") != request_id \
+                    and payload.get("name") in QUESTION_TOOLS["codex"] and payload.get("call_id") in closed:
+                output = closed[payload.get("call_id")]
+                if payload.get("name") != "request_user_input_async" or not isinstance(output, str) \
+                        or json.loads(output) != {"accepted": True}:
+                    return None  # another question's answer, refusal or failure; its plain receipt closes nothing
+            if kind == "response_item" and typ == "function_call" and answer is not None \
+                    and payload.get("call_id") == request_id:
+                if payload.get("name") != "request_user_input_async":
+                    return None
+                request = json.loads(payload.get("arguments", "{}"))
+                asked = request.get("questions", [{}])[0].get("title")
+                if not isinstance(asked, str) or not isinstance(title, str) or \
+                        asked.replace("\r\n", "\n") != title.replace("\r\n", "\n"):
+                    return None
+                return request, answer, stamp
+    except (OSError, ValueError, TypeError, KeyError, IndexError, AttributeError):
+        return None
+    return None
+
+
 def approved_git_review(runtime, payload):
     proof = native_git_choice(runtime, payload.get("transcript_path"))
     if not proof:
@@ -2842,10 +2989,20 @@ def approved_report(runtime, payload, ident=None):
     the first option of the unchanged prepared question, for a report that carries a grant or confirmations, is
     not older than the session's epoch, and whose grant has not expired. The proof records a grant and the
     confirmations; it permits nothing. With `ident`, a question asked in a batch of queued questions (Claude) is
-    proved from its own answer in that batch's submission."""
-    proof = native_git_choice(runtime, payload.get("transcript_path"))
+    proved from its own answer in that batch's submission.
+
+    A grant without confirmations, asked alone and not queued, is proved also from the latest submitted answer that
+    later typed text or a message typed mid-turn follows (answer_past_input), and may predate the epoch when the epoch
+    moved after that answer's time, never when it predates the last resume, compaction, fork or clear
+    (`.session-epoch`)."""
+    path, session = payload.get("transcript_path"), payload.get("session_id")
+    proof = native_git_choice(runtime, path)
     if not proof and ident and runtime == "claude":
-        proof = native_batch_choice(payload.get("transcript_path"), ident)
+        proof = native_batch_choice(path, ident)
+    past = answer_past_input(runtime, path) if not proof or len(proof) == 2 else None
+    later = not proof and past is not None  # a human input that answers nothing came after the answer
+    answered_at = past[2] if past and (later or past[:2] == proof) else None
+    proof = past[:2] if later else proof
     if not proof:
         raise ValueError("no submitted native answer to a prepared report question is recorded.")
     request, answer = proof[:2]
@@ -2860,10 +3017,16 @@ def approved_report(runtime, payload, ident=None):
         raise ValueError("the question does not match the prepared report.")
     if not (record["grant"] or record["confirm"]) or record["multiSelect"]:
         raise ValueError("the report carries no grant and no confirmation.")
+    alone = bool(record["grant"]) and not record["confirm"] and len(proof) == 2 and record.get("queue") is not True
+    if later and not alone:  # a grant alone, asked alone and not queued, is the only report proved past later input
+        raise ValueError("a human input came after the answer; confirmations and queued questions need it to be the "
+                         "latest one.")
     if answer != record["options"][0]["label"]:
         raise ValueError("the selected option does not approve the plan.")
-    if predates_epoch(payload.get("session_id"), record["createdAt"]):
+    if predates_epoch(session, record["createdAt"]) and not (alone and epoch_after(session, answered_at)):
         raise ValueError("the report predates the latest user message, resume or compaction.")
+    if alone and predates_epoch(session, record["createdAt"], ".session-epoch"):
+        raise ValueError("the report predates the latest resume or compaction.")
     if record["grant"]:
         validated_grant(record["grant"], time.time())  # a record written by hand passes no weaker check; expiry included
     if record["confirm"]:
@@ -5837,9 +6000,10 @@ def entry_blocks(entry):
     return [block for block in content if isinstance(block, dict)] if isinstance(content, list) else []
 
 
-def armed_close_claude(path, ident):
+def armed_close_claude(path, ident, typed=False):
     """How the latest question carrying `ident` was closed: {toolUseId, label, timeout, ts}; False when it
-    closed without an answer; None while it is open or lies before the last typed prompt or compaction."""
+    closed without an answer; None while it is open or lies before the last typed prompt or compaction. With `typed`
+    (a grant alone, asked alone, not queued: answer_past_input proves it) the walk goes on past a typed prompt."""
     results = {}
     for entry in iter_entries_reversed(path, {"lines": 0, "parsed": 0}):
         if entry.get("isSidechain"):
@@ -5851,7 +6015,7 @@ def armed_close_claude(path, ident):
             refs = [block.get("tool_use_id") for block in blocks if block.get("type") == "tool_result"]
             for ref in refs:
                 results.setdefault(ref, entry)
-            if not refs and is_human_prompt_claude(entry):
+            if not refs and not typed and is_human_prompt_claude(entry):
                 return None
         elif entry.get("type") == "assistant":
             for block in blocks:
@@ -5889,8 +6053,9 @@ def claude_batch_close(entry, text):
     return label, False
 
 
-def armed_close_codex(path, ident):
-    """Same contract as armed_close_claude for a Codex rollout: the reply envelope to the question's call."""
+def armed_close_codex(path, ident, typed=False):
+    """Same contract as armed_close_claude for a Codex rollout: the reply envelope to the question's call. With
+    `typed` the walk goes on past typed text after the reply."""
     reply = stamp = None
     for entry in iter_entries_reversed(path, {"lines": 0, "parsed": 0}):
         payload = entry.get("payload")
@@ -5903,6 +6068,8 @@ def armed_close_codex(path, ident):
             if reply is not None:
                 return None
             reply, stamp = codex_git_reply(codex_text(item)), entry.get("timestamp")
+            if not reply and typed:
+                continue
             if not reply or question_id(reply[1]) != ident:
                 return None  # typed text, or the reply to another question
         elif kind == "response_item" and ptype == "function_call" and payload.get("name") in QUESTION_TOOLS["codex"]:
@@ -5979,13 +6146,17 @@ def observe_answers(runtime, payload, root):
     record when the proof holds. It decides nothing, and it closes a question at most once.
 
     With nothing armed this is one stat. A question whose answer the record does not hold yet stays armed,
-    also behind a question asked after it, until a typed prompt, a compaction or a resume retires them all."""
+    also behind a question asked after it, until a typed prompt, a compaction or a resume retires them all. The
+    answer to a grant without confirmations, not queued, is found also behind typed text (that prompt's own record
+    entry included), since its proof reads past it."""
     session = payload.get("session_id")
     if not os.path.exists(asked_marker(session)):
         return
     find = armed_close_codex if runtime == "codex" else armed_close_claude
     armed = armed_questions(session)
-    closes = [find(payload.get("transcript_path"), tuple(entry["id"].split("-"))) for entry in armed]
+    closes = [find(payload.get("transcript_path"), tuple(entry["id"].split("-")),
+                   bool(entry.get("grant")) and not entry.get("confirm") and not entry.get("queued"))
+              for entry in armed]
     if armed and all(close is None for close in closes):
         return
     # First, so that a failure below is never retried on every later call.
@@ -6162,12 +6333,7 @@ def commit_allow(runtime, payload, project, note):
     root, main = os.path.realpath(project_root(project)), ledger_root(project)
     if ctx:  # the project's second Git directory: inside the root, not bare, its work tree the root, ignored by the main one
         top, git_dir = os.path.realpath(ctx["workTree"]), os.path.realpath(ctx["gitDir"])
-        if top != root or os.path.dirname(git_dir) != root or git_dir == os.path.join(root, ".git"):
-            return None
-        bare = git_text(root, "--git-dir=" + git_dir, "config", "--bool", "core.bare", optional=True)
-        tree = git_text(root, "--git-dir=" + git_dir, "config", "core.worktree", optional=True)
-        if bare == "true" or not tree or os.path.realpath(os.path.join(git_dir, tree)) != root \
-                or git_read(root, "check-ignore", "-q", os.path.relpath(git_dir, root), optional=True) is None:
+        if top != root or not second_git_directory(root, git_dir):
             return None
         second = True
     else:
@@ -7215,6 +7381,28 @@ def handle_stop(runtime, payload):
     return None
 
 
+def scheduled_prompt(path, prompt):
+    """True when Claude's record shows `prompt` as one the host fired on a schedule (cron, /loop: a new turn while
+    the session is idle): its newest `user` entry, sidechains aside, is `isMeta` with turnOrigin "scheduled" and
+    carries that text. At most SCHEDULED_LINES lines are read from the end; anything else is False, a human prompt
+    (an entry not written yet costs at worst a preparation)."""
+    try:
+        for n, line in enumerate(iter_lines_reversed(path)):
+            if n >= SCHEDULED_LINES:
+                return False
+            try:
+                entry = json.loads(line) if line.strip() else None
+            except ValueError:
+                continue
+            if not isinstance(entry, dict) or entry.get("isSidechain") or entry.get("type") != "user":
+                continue
+            return entry.get("isMeta") is True and entry.get("turnOrigin") == "scheduled" \
+                and claude_text(entry).strip() == prompt.strip()
+    except (OSError, TypeError, AttributeError):
+        return False
+    return False
+
+
 def prompt_note(runtime, payload, project, answered):
     """The ledger's share of one submitted prompt. `answered` is (ID, reply, option labels) when the prompt
     is Codex's reply envelope to the unchanged prepared question, else None: typed text."""
@@ -7250,11 +7438,14 @@ def handle_user_prompt_submit(runtime, payload):
         observe_answers(runtime, payload, ledger_root(project))
     except Exception:
         pass
-    prompt = payload.get("prompt")
-    if runtime == "claude" and isinstance(prompt, str) and prompt.lstrip().startswith(NOT_HUMAN_PREFIXES):
-        # A background worker's completion notice, or another envelope the host submits as a prompt: no human
-        # spoke, so the marker, the epoch and the asked questions stay as they are.
-        ledger_event(ledger_root(project), runtime, session, "prompt", rule="notification")
+    prompt, rule = payload.get("prompt"), None
+    if runtime == "claude" and isinstance(prompt, str):
+        # A background worker's completion notice, or another envelope the host submits as a prompt, and a prompt the
+        # host fires on a schedule: no human spoke, so the marker, the epoch and the asked questions stay as they are.
+        rule = "notification" if prompt.lstrip().startswith(NOT_HUMAN_PREFIXES) else \
+            "scheduled" if scheduled_prompt(payload.get("transcript_path"), prompt) else None
+    if rule:
+        ledger_event(ledger_root(project), runtime, session, "prompt", rule=rule)
         return None
     marker_path(session).unlink(missing_ok=True)
     # Revoke older preparations immediately, even if the new prompt has not reached the
@@ -7313,7 +7504,9 @@ def handle_session_start(runtime, payload):
         return None
     parts, source = [], payload.get("source")
     if source in ("compact", "resume", "fork", "clear"):
-        session_file(payload.get("session_id"), ".git-epoch").write_text(str(time.time()))
+        now = str(time.time())
+        session_file(payload.get("session_id"), ".git-epoch").write_text(now)
+        session_file(payload.get("session_id"), ".session-epoch").write_text(now)  # no later prompt's epoch hides it
         disarm(payload.get("session_id"))  # the asked report now predates the epoch; a recorded grant stays
     try:
         ledger_event(ledger_root(project), runtime, payload.get("session_id"), "session-start",

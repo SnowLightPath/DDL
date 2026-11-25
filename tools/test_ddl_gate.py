@@ -427,6 +427,18 @@ def queued(origin, mode="prompt", kind="queued_command", **fields):
 
 TYPED_MID_TURN = queued({"kind": "human"}, humanTurn=True)
 TASK_MID_TURN = queued({"kind": "task-notification", "producer": "session-task"}, "task-notification")
+
+
+def scheduled(text):
+    """A prompt Claude Code fires on a schedule (cron, /loop) while the session is idle, as it records it: the fire,
+    then the prompt as a meta `user` entry of scheduled origin."""
+    return [{"type": "system", "subtype": "scheduled_task_fire", "timestamp": "2026-11-25T12:54:00.590Z",
+             "isSidechain": False},
+            user(text, isMeta=True, turnOrigin="scheduled", promptSource="system", timestamp="2026-11-25T12:54:00.605Z",
+                 isSidechain=False)]
+
+
+SCHEDULED_PROMPT = "Check the build and report what changed."
 HUMAN_ORIGIN = {"origin": {"kind": "human"}, "turnOrigin": "human", "promptSource": "typed"}
 DIALOG = {"permissionDecision": {"decision": "accept", "source": "user_temporary"}}
 APPROVED = [{"type": "tool_result", "tool_use_id": "t", "content": "User has approved your plan. Start coding."}]
@@ -488,6 +500,7 @@ HUMAN_CASES = [  # (description, entry, is human)
     ("attachment not an object", dict(TYPED_MID_TURN, attachment="queued_command"), False),
     ("message typed mid-turn marked meta", dict(TYPED_MID_TURN, isMeta=True), False),
     ("message typed mid-turn marked compact summary", dict(TYPED_MID_TURN, isCompactSummary=True), False),
+    ("scheduled prompt", scheduled(SCHEDULED_PROMPT)[1], False),
 ]
 
 
@@ -1803,6 +1816,22 @@ class GitReviewTest(GateTest):
         self.passed("claude", self.check("claude"), review)  # a task notification delivered mid-turn is no human
         self.record("claude", review, mutate=lambda rows: rows.append(TYPED_MID_TURN))
         self.assertIn("DDL Git review", self.blocked(self.check("claude")))
+        # Whatever typed text follows the answer, on either host, while a grant alone is proved past it (LaterInputTest).
+        later = {"claude": [[TYPED_MID_TURN], [TYPED_LATER]],
+                 "codex": [[codex_message("Next, please.")], [CODEX_TURN, codex_message("Next.", "later-turn")]]}
+        for runtime, cases in later.items():
+            for rows in cases:
+                with self.subTest(runtime=runtime, rows=rows):
+                    review = self.prepare(runtime)
+                    self.record(runtime, review)
+                    self.passed(runtime, self.check(runtime), review)
+                    self.record(runtime, review, mutate=lambda record: record.extend(rows))
+                    self.assertIn("DDL Git review", self.blocked(self.check(runtime)))
+                    with mock.patch.dict(os.environ, {"DDL_GATE_STATE_DIR": self.state}):
+                        with self.assertRaisesRegex(ValueError, "no submitted native answer"):
+                            ddl_gate.approved_git_review(runtime, {"transcript_path": str(self.transcript)})
+                        with self.assertRaisesRegex(ValueError, "not for a prepared report"):
+                            ddl_gate.approved_report(runtime, {"transcript_path": str(self.transcript)})
 
     def test_a_workers_notice_before_the_answer_keeps_the_review(self):
         for runtime in ("claude", "codex"):
@@ -3334,6 +3363,40 @@ class ConfirmationTest(GrantFlowTest):
                 self.assert_allowed(self.stop(runtime, self.flow(runtime, late, "answered"), session))
                 self.assertEqual(self.confirmation(late)["session"], session)
 
+    def test_a_confirmation_needs_its_answer_to_be_the_latest_human_input(self):
+        """Typed text after the answer leaves a grant alone its record (LaterInputTest); a report that carries
+        confirmations, with a grant or without, records nothing from behind it, nor does its grant."""
+        text = TYPED_MID_TURN["attachment"]["prompt"]
+        for with_grant in (False, True):
+            with self.subTest(grant=with_grant):
+                prepared = self.confirmed("claude", grant=grant() if with_grant else None)
+                session = "confirm-typed-{}".format(with_grant)
+                ident = prepared["reportId"]
+                self.assert_allowed(self.ask("claude", prepared, session))
+                record = self.record_of(session, self.rows("claude", prepared, "answered") + [TYPED_MID_TURN])
+                self.assert_allowed(self.prompt("claude", record, text, session))
+                self.assertIsNone(self.confirmation(prepared))
+                self.assertIsNone(self.record(prepared))
+                self.assertEqual([(row["kind"], row.get("rule")) for row in events(self.root, session=session)],
+                                 [("asked", None), ("answered", None)]
+                                 + [("warn", "grant-proof")] * with_grant + [("warn", "confirm-proof"), ("prompt", None)])
+                with mock.patch.dict(os.environ, {"DDL_GATE_STATE_DIR": self.state, "DDL_GATE_GRANT_DIR": self.grants}):
+                    with self.assertRaisesRegex(ValueError, "confirmations and queued questions need it to be the latest"):
+                        ddl_gate.approved_report("claude", {"session_id": "fresh", "transcript_path": record})
+                    self.assertEqual(ddl_gate.approved_report("claude", {"session_id": "fresh", "transcript_path":
+                                     self.flow("claude", prepared, "answered")})["id"], ident[2:])
+        # Codex: a plain UserMessage after the reply leaves the question of a confirmation unclosed, and unproved.
+        prepared, session = self.confirmed("codex", grant=grant()), "codex-confirm-typed"
+        self.assert_allowed(self.ask("codex", prepared, session))
+        self.assert_allowed(self.reply(prepared, 0, session))
+        record = self.record_of(session, self.rows("codex", prepared, "answered") + [codex_message("Next, please.")])
+        self.assert_allowed(self.tool("codex", record, session))
+        self.assertIsNone(self.confirmation(prepared))
+        self.assertIsNone(self.record(prepared))
+        with mock.patch.dict(os.environ, {"DDL_GATE_STATE_DIR": self.state, "DDL_GATE_GRANT_DIR": self.grants}):
+            with self.assertRaisesRegex(ValueError, "confirmations and queued questions need it to be the latest"):
+                ddl_gate.approved_report("codex", {"session_id": "fresh", "transcript_path": record})
+
     def test_nothing_is_recorded_unless_the_first_option_is_submitted(self):
         for runtime in ("claude", "codex"):
             with self.subTest(runtime=runtime, case="unanswered"):
@@ -3488,6 +3551,55 @@ class NoticeTest(GrantFlowTest):
         self.assertIsNotNone(self.record(later))
         self.assertEqual([row["kind"] for row in events(self.root, session=session)], ["asked", "prompt", "answered", "granted"])
 
+    def test_a_scheduled_prompt_is_no_human(self):
+        """Claude Code fires a cron or /loop prompt as a new turn and records it as a meta entry of scheduled origin
+        before UserPromptSubmit runs; only that entry, newest of the `user` entries and carrying the prompt's text,
+        makes the prompt no human."""
+        side = user("subagent", isSidechain=True, **HUMAN_ORIGIN)
+        assistant = {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}}
+        cases = [("scheduled", scheduled(SCHEDULED_PROMPT), SCHEDULED_PROMPT, True),
+                 ("scheduled, spaces around the prompt", scheduled(SCHEDULED_PROMPT), "\n" + SCHEDULED_PROMPT + " ", True),
+                 ("scheduled, then a sidechain entry", scheduled(SCHEDULED_PROMPT) + [side], SCHEDULED_PROMPT, True),
+                 ("scheduled, as text blocks", scheduled([{"type": "text", "text": SCHEDULED_PROMPT}]),
+                  SCHEDULED_PROMPT, True),
+                 ("the same text typed", [user(SCHEDULED_PROMPT, **HUMAN_ORIGIN)], SCHEDULED_PROMPT, False),
+                 ("scheduled origin, not meta", [dict(scheduled(SCHEDULED_PROMPT)[1], isMeta=False)], SCHEDULED_PROMPT,
+                  False),
+                 ("meta, another origin", [dict(scheduled(SCHEDULED_PROMPT)[1], turnOrigin="human")], SCHEDULED_PROMPT,
+                  False),
+                 ("another text", scheduled(SCHEDULED_PROMPT), "Something else.", False),
+                 ("no entry yet", [], SCHEDULED_PROMPT, False),
+                 ("an older scheduled entry behind a tool result",
+                  scheduled(SCHEDULED_PROMPT) + [user([{"type": "tool_result", "tool_use_id": "t", "content": "ok"}])],
+                  SCHEDULED_PROMPT, False),
+                 ("beyond the lines read", scheduled(SCHEDULED_PROMPT) + [assistant] * ddl_gate.SCHEDULED_LINES,
+                  SCHEDULED_PROMPT, False)]
+        for n, (name, rows, text, kept) in enumerate(cases):
+            with self.subTest(case=name):
+                prepared, session = self.prepared("claude"), "scheduled-{}".format(n)
+                ident = prepared["reportId"]
+                self.assert_allowed(self.ask("claude", prepared, session))
+                marker, epoch = self.marker_and_epoch(session)
+                record = self.record_of("scheduled-{}".format(n), self.rows("claude", prepared, "asked") + rows)
+                self.assert_allowed(self.prompt("claude", record, text, session))
+                lines = [(row["kind"], row.get("id"), row.get("rule")) for row in events(self.root, session=session)]
+                if kept:  # the marker, the epoch and the asked question stay: the prepared question can still be asked
+                    self.assertEqual((marker.read_text(), epoch.read_text()), ("1", "12345"))
+                    self.assertEqual(self.armed_ids(session), [ident])
+                    self.assertEqual(lines, [("asked", ident, None), ("prompt", None, "scheduled")])
+                else:  # a human prompt, as before
+                    self.assertFalse(marker.exists())
+                    self.assertNotEqual(epoch.read_text(), "12345")
+                    self.assertFalse(self.armed(session))
+                    self.assertEqual(lines, [("asked", ident, None), ("prompt", None, None)])
+        # Codex fires no scheduled prompt: a prompt there is typed whatever its record shows.
+        prepared, session = self.prepared("codex"), "codex-scheduled"
+        self.assert_allowed(self.ask("codex", prepared, session))
+        marker, epoch = self.marker_and_epoch(session)
+        self.assert_allowed(self.prompt("codex", self.flow("codex", prepared, "asked"), SCHEDULED_PROMPT, session))
+        self.assertFalse(marker.exists())
+        self.assertNotEqual(epoch.read_text(), "12345")
+
     def test_on_codex_a_prompt_shaped_like_a_notice_is_typed(self):
         prepared, session = self.prepared("codex"), "codex-notice"
         self.assert_allowed(self.ask("codex", prepared, session))
@@ -3574,6 +3686,31 @@ class MidTurnMessageTest(GrantFlowTest):
                 self.assert_allowed(self.call("claude", typed, *self.WRITE, "typed-" + stage, cwd=self.cwd))
                 self.assert_reason(self.call("claude", told, *self.WRITE, "told-" + stage, cwd=self.cwd), waiting)
 
+    def test_a_codex_message_sent_mid_turn_ends_the_pending_stop(self):
+        """Codex records a message sent while a turn runs as one more UserMessage of that turn, plain or wrapping
+        what the human said (a voice transcript, the in-app browser's context); each ends a pending STOP."""
+        texts = {"plain": "閲覧しました。すすめてください。",
+                 "voice": "<realtime_delegation>\nPlease go ahead with the plan.\n</realtime_delegation>",
+                 "browser": "<in-app-browser-context>\nhttps://example.invalid/page\n</in-app-browser-context>\n\n"
+                            "## My request:\nPlease go ahead with the plan."}
+        write = WRITES["codex"][0]
+        for name, text in texts.items():
+            with self.subTest(form=name):
+                prepared = self.prepare_report("codex", cwd=self.cwd)
+                pending = {"id": prepared["reportId"], "report": prepared["report"]}
+                rows = self.rows("codex", prepared, "asked")[:7]  # prepared and asked; the turn still runs
+                before = self.record_of("codex-before-" + name, rows)
+                self.assertEqual(self.scan("codex", before), (True, pending))
+                self.assert_reason(self.call("codex", before, *write, "before-" + name, cwd=self.cwd),
+                                   ddl_gate.WAITING_REASON.format(prepared["reportId"], prepared["report"]))
+                sent = self.record_of("codex-sent-" + name, rows + [codex_message(text, "report-turn")])
+                self.assertEqual(self.scan("codex", sent), (False, None))
+                with mock.patch.dict(os.environ, {"DDL_GATE_STATE_DIR": self.state}):
+                    self.assertIs(ddl_gate.record_state_codex(sent), False)
+                    self.assertIs(ddl_gate.record_state_codex(before), True)
+                self.assert_allowed(self.call("codex", sent, *write, "sent-" + name, cwd=self.cwd))
+                self.assertEqual(self.scan("codex", before), (True, pending))  # the rows before it read as they did
+
     def test_a_typed_approval_mid_turn_is_an_input_boundary(self):
         """The reported flow: UserPromptSubmit moves the epoch for the typed message, so the old report predates it;
         the record agrees, so writes go on and the report is prepared again rather than asked."""
@@ -3604,18 +3741,299 @@ class MidTurnMessageTest(GrantFlowTest):
         self.assertIsNotNone(self.record(prepared))
         self.assertEqual([line[0] for line in self.lines(session)], ["asked", "answered", "granted", "prompt"])
         # The record holds the message after the answer when the answer is first read (at that message's
-        # UserPromptSubmit): the question closes with its answer (the close reads `user` entries only), but the
-        # grant's proof, like a Git review's, needs the answer to be the latest human input, so no grant is recorded.
+        # UserPromptSubmit): the question closes with its answer (the close reads `user` entries only), and a grant
+        # without confirmations is proved from the latest submitted answer past the message, so it is recorded.
         prepared, session = self.prepared("claude"), "unobserved-mid-turn"
         ident = prepared["reportId"]
         self.assert_allowed(self.ask("claude", prepared, session))
         record = self.record_of("unobserved", self.rows("claude", prepared, "answered") + [TYPED_MID_TURN])
         self.assert_allowed(self.prompt("claude", record, text, session))
-        self.assertIsNone(self.record(prepared))
+        self.assertEqual(self.record(prepared)["session"], session)
         self.assertFalse(self.armed(session))
-        self.assertEqual(self.lines(session)[:3], [("asked", ident, None, None), ("answered", ident, 0, False),
-                                                   ("warn", ident, None, None)])
-        self.assertEqual(events(self.root, session=session, kind="warn")[0]["rule"], "grant-proof")
+        self.assertEqual(self.lines(session), [("asked", ident, None, None), ("answered", ident, 0, False),
+                                               ("granted", ident, None, None), ("prompt", None, None, None)])
+
+
+def codex_message(text, turn="answer-turn"):
+    """A UserMessage Codex records in a turn: the first of the turn, or one sent while the turn runs."""
+    return {"type": "event_msg", "payload": {"type": "item_completed", "turn_id": turn, "item": {
+        "type": "UserMessage", "id": "later", "content": [{"type": "text", "text": text}]}}}
+
+
+TYPED_LATER = user("Next, please.", **HUMAN_ORIGIN)
+CODEX_TURN = {"type": "event_msg", "payload": {"type": "task_started", "turn_id": "later-turn"}}
+
+
+class LaterInputTest(GrantFlowTest):
+    """A grant without confirmations, asked alone, is recorded from the human's submitted first option although
+    typed text follows it (a prompt, a message typed mid-turn; on Codex a later UserMessage) and although the epoch
+    moved after that answer; a later answer, a compaction or a resume after it still voids it, and a confirmation
+    (ConfirmationTest), a batch and a Git review (GitReviewTest) keep the latest human input as their proof."""
+
+    ANSWER = {"claude": 4, "codex": 9}  # the answer's row in the answered flow
+
+    def created(self, prepared):
+        return json.loads((pathlib.Path(prepared["report"]).parent / "report.json").read_text(encoding="utf-8"))["createdAt"]
+
+    def epoch(self, session, suffix=".git-epoch"):
+        return pathlib.Path(self.state) / (session + suffix)
+
+    def answered(self, runtime, prepared, later, at=None, name=None):
+        """The answered flow of `prepared` followed by `later` rows, the answer stamped `at` seconds after the
+        preparation when given."""
+        rows = self.rows(runtime, prepared, "answered")
+        if at is not None:
+            rows[self.ANSWER[runtime]]["timestamp"] = ddl_gate.utc_stamp(self.created(prepared) + at)
+        return self.record_of(name or "{}-later-{}".format(runtime, len(later)), rows + later)
+
+    def proof(self, runtime, transcript, session):
+        with mock.patch.dict(os.environ, {"DDL_GATE_STATE_DIR": self.state, "DDL_GATE_GRANT_DIR": self.grants}):
+            return ddl_gate.approved_report(runtime, {"session_id": session, "transcript_path": transcript})
+
+    def test_typed_text_after_the_answer_leaves_the_grant_its_record(self):
+        mid, typed = TYPED_MID_TURN["attachment"]["prompt"], TYPED_LATER["message"]["content"]
+        cases = [("claude", "a message typed mid-turn", [TYPED_MID_TURN], mid),
+                 ("claude", "a typed prompt", [TYPED_LATER], typed),
+                 ("codex", "a message sent mid-turn", [codex_message(typed)], typed),
+                 ("codex", "a typed prompt", [CODEX_TURN, codex_message(typed, "later-turn")], typed)]
+        for runtime, name, later, text in cases:
+            with self.subTest(runtime=runtime, case=name):
+                prepared, session = self.prepared(runtime), "{}-{}".format(runtime, name.replace(" ", "-"))
+                ident = prepared["reportId"]
+                self.assert_allowed(self.ask(runtime, prepared, session))
+                if runtime == "codex":
+                    self.assert_allowed(self.reply(prepared, 0, session))
+                record = self.answered(runtime, prepared, later, 0, name=session)
+                # Read at that input's own UserPromptSubmit, its entry already in the record: recorded first.
+                self.assert_allowed(self.prompt(runtime, record, text, session))
+                self.assertEqual(self.record(prepared)["session"], session)
+                self.assertFalse(self.armed(session))
+                self.assertEqual([line[:2] for line in self.lines(session)],
+                                 [("asked", ident), ("answered", ident), ("granted", ident), ("prompt", None)])
+                # Read by a tool call after the epoch moved past the answer: the same proof holds.
+                self.assertEqual(self.proof(runtime, record, session)["id"], ident[2:])
+
+    def test_an_epoch_that_moved_after_the_answer_leaves_the_grant_its_record(self):
+        for runtime, later in (("claude", [TYPED_MID_TURN]), ("codex", [codex_message("Next, please.")])):
+            with self.subTest(runtime=runtime):
+                prepared, session = self.prepared(runtime), runtime + "-moved"
+                self.assert_allowed(self.ask(runtime, prepared, session))
+                if runtime == "codex":
+                    self.assert_allowed(self.reply(prepared, 0, session))
+                self.epoch(session).write_text(str(self.created(prepared) + 2))
+                self.assert_allowed(self.tool(runtime, self.answered(runtime, prepared, later, 1), session))
+                self.assertEqual(self.record(prepared)["session"], session)
+                self.assertEqual([line[0] for line in self.lines(session)][-1], "granted")
+        # The answer's time decides: an answer without one, one that cannot be read, or one after the epoch (the epoch
+        # moved before the human answered) is held to the epoch as before.
+        for runtime in ("claude", "codex"):
+            for at in (None, "unreadable", 3):
+                with self.subTest(runtime=runtime, at=at):
+                    prepared, session = self.prepared(runtime), "{}-held-{}".format(runtime, at)
+                    record = self.answered(runtime, prepared, [], None if at == "unreadable" else at,
+                                           name=session)
+                    if at == "unreadable":
+                        rows = [json.loads(line) for line in pathlib.Path(record).read_text(encoding="utf-8").splitlines()]
+                        rows[self.ANSWER[runtime]]["timestamp"] = "2026-11-25 12:54"
+                        write_rows(record, rows)
+                    self.epoch(session).write_text(str(self.created(prepared) + 2))
+                    with self.assertRaisesRegex(ValueError, "predates the latest user message"):
+                        self.proof(runtime, record, session)
+                    self.assertEqual(self.proof(runtime, record, session + "-fresh")["id"], prepared["reportId"][2:])
+
+    def test_a_later_answer_a_compaction_or_a_resume_still_voids_it(self):
+        for runtime in ("claude", "codex"):
+            with self.subTest(runtime=runtime, case="compaction"):
+                prepared = self.prepared(runtime)
+                compacted = (user("This session is being continued", isCompactSummary=True) if runtime == "claude" else
+                             {"type": "compacted", "payload": {"message": "summary"}})
+                later = [compacted, TYPED_LATER] if runtime == "claude" else [compacted, codex_message("Next, please.")]
+                with self.assertRaisesRegex(ValueError, "no submitted native answer"):
+                    self.proof(runtime, self.answered(runtime, prepared, later, 1), "fresh")
+            with self.subTest(runtime=runtime, case="resume"):
+                prepared, session = self.prepared(runtime), runtime + "-resumed"
+                record = self.answered(runtime, prepared, [] if runtime == "codex" else [TYPED_MID_TURN], 0)
+                self.start(runtime, record, "resume", session)  # after the answer: both epochs move past it
+                self.assertTrue(self.epoch(session, ".session-epoch").exists())
+                with self.assertRaisesRegex(ValueError, "predates the latest resume or compaction"):
+                    self.proof(runtime, record, session)
+                self.epoch(session, ".session-epoch").unlink()  # a prompt alone would have moved only .git-epoch
+                self.assertEqual(self.proof(runtime, record, session)["id"], prepared["reportId"][2:])
+        # A later answer to another question is the latest answer: the first grant is not proved from behind it.
+        first, second, session = self.prepared("claude"), self.prepare_report("claude", cwd=self.cwd), "two-answers"
+        self.ask_behind(first, second, session)
+        both = self.record_of("two-answers", self.rows("claude", first, "answered")
+                              + self.rows("claude", second, "answered", call="second-question")[1:] + [TYPED_MID_TURN])
+        self.assert_allowed(self.tool("claude", both, session))
+        self.assertIsNone(self.record(first))
+        self.assertEqual([(row["kind"], row["id"], row.get("rule")) for row in events(self.root, session=session)][-3:],
+                         [("answered", first["reportId"], None), ("warn", first["reportId"], "grant-proof"),
+                          ("answered", second["reportId"], None)])
+        # A question that timed out after the answer closes a question too: no proof from behind it.
+        def timed_out(rows):
+            rows.append(user([{"type": "tool_result", "tool_use_id": "q2", "content": "Timed out"}],
+                             toolUseResult={"answers": {"Q": "Yes"}, "afkTimeoutMs": 60000}, **DIALOG))
+            rows.append(TYPED_MID_TURN)
+
+        with self.assertRaisesRegex(ValueError, "no submitted native answer"):
+            self.proof("claude", self.flow("claude", self.prepared("claude"), "answered", mutate=timed_out), "fresh")
+        # Every SessionStart that moves the epoch writes the mark; a new session writes neither.
+        for source in ("compact", "resume", "fork", "clear", "startup"):
+            with self.subTest(source=source):
+                self.start("claude", fixture("claude_open.jsonl"), source, "start-" + source)
+                self.assertEqual(self.epoch("start-" + source, ".session-epoch").exists(), source != "startup")
+                self.assertEqual(self.epoch("start-" + source).exists(), source != "startup")
+
+    def test_a_human_input_between_the_question_and_its_answer_voids_it(self):
+        def between(rows):
+            rows.insert(4, TYPED_MID_TURN)
+            rows.append(TYPED_LATER)
+
+        with self.assertRaisesRegex(ValueError, "no submitted native answer"):
+            self.proof("claude", self.flow("claude", self.prepared("claude"), "answered", mutate=between), "fresh")
+
+        def typed_turn(rows):
+            rows[8:8] = [codex_message("Wait.", "report-turn")]
+            rows.append(codex_message("Next, please."))
+
+        with self.assertRaisesRegex(ValueError, "no submitted native answer"):
+            self.proof("codex", self.flow("codex", self.prepared("codex"), "answered", mutate=typed_turn), "fresh")
+        # A Codex turn whose human input the walk does not read voids it too.
+        record = self.answered("codex", self.prepared("codex"), [CODEX_TURN], name="unread-turn")
+        with self.assertRaisesRegex(ValueError, "no submitted native answer"):
+            self.proof("codex", record, "fresh")
+
+    def test_a_later_close_of_any_question_voids_it(self):
+        """After the answer, another question that closed (answered, rejected, cancelled, timed out, a plan's result)
+        voids the proof, whatever typed text follows; a later tool result of any other tool does not."""
+        rejected = "The user doesn't want to proceed with this tool use. The tool use was rejected."
+
+        def asked(ident, name, given):
+            return {"type": "assistant", "message": {"role": "assistant", "content": [
+                {"type": "tool_use", "id": ident, "name": name, "input": given}]}}
+
+        def result(ident, content, outcome, error=False):
+            block = dict({"type": "tool_result", "tool_use_id": ident, "content": content}, **({"is_error": True} if error else {}))
+            return user([block], toolUseResult=outcome)
+
+        other = {"questions": [{"question": "Which file first?", "header": "Order", "multiSelect": False,
+                                "options": [{"label": "a", "description": "a"}, {"label": "b", "description": "b"}]}]}
+        claude = {"a rejected question": [asked("q2", "AskUserQuestion", other),
+                                          result("q2", rejected, "User rejected tool use", True)],
+                  "a rejected plan": [asked("p2", "ExitPlanMode", {"plan": "x"}), result("p2", rejected, "Error: rejected", True)],
+                  "an answered question": [asked("q2", "AskUserQuestion", other),
+                                           user([{"type": "tool_result", "tool_use_id": "q2", "content": "answered"}],
+                                                toolUseResult={"questions": [], "answers": {"Which file first?": "a"},
+                                                               "annotations": {}}, **DIALOG)]}
+        question = {"type": "response_item", "payload": {"type": "function_call", "call_id": "q2", "arguments": json.dumps(
+            {"questions": [{"title": "Which file first?", "options": ["a", "b"]}]})}}
+
+        def codex_asked(name, output):
+            return [{"type": "response_item", "payload": dict(question["payload"], name=name)},
+                    {"type": "response_item", "payload": {"type": "function_call_output", "call_id": "q2", "output": output}}]
+
+        codex = {"an answered sync question": codex_asked("request_user_input", "a"),
+                 "a refused question": codex_asked("request_user_input_async", '{"accepted":false}'),
+                 "a failed question": codex_asked("request_user_input_async", "error: the call was cancelled")}
+        typed = {"claude": TYPED_LATER, "codex": codex_message("Next, please.")}
+        for runtime, cases in (("claude", claude), ("codex", codex)):
+            for name, rows in cases.items():
+                with self.subTest(runtime=runtime, case=name):
+                    prepared, session = self.prepared(runtime), "{}-closed-{}".format(runtime, name.replace(" ", "-"))
+                    ident = prepared["reportId"]
+                    self.assert_allowed(self.ask(runtime, prepared, session))
+                    if runtime == "codex":
+                        self.assert_allowed(self.reply(prepared, 0, session))
+                    record = self.answered(runtime, prepared, rows + [typed[runtime]], 0, name=session)
+                    if runtime == "claude":
+                        self.assert_allowed(self.prompt(runtime, record, "Next, please.", session))
+                    else:
+                        self.assert_allowed(self.tool(runtime, record, session))
+                    self.assertIsNone(self.record(prepared))
+                    self.assertIn(("warn", ident), [line[:2] for line in self.lines(session)])
+                    found = ddl_gate.answer_past_input(runtime, record)  # nothing, or the later question's own answer
+                    self.assertTrue(found is None or found[0] != prepared["nativeRequest"], found)
+                    with self.assertRaises(ValueError):
+                        self.proof(runtime, record, "fresh")
+        # Another tool's result, and on Codex a later question's plain receipt, close no question.
+        bash = [asked("b2", "Bash", {"command": "ls"}), result("b2", "a\nb\n", {"stdout": "a\nb\n", "stderr": ""})]
+        receipt = codex_asked("request_user_input_async", '{"accepted":true}')
+        for runtime, rows in (("claude", bash), ("codex", receipt)):
+            with self.subTest(runtime=runtime, case="no question closed"):
+                prepared = self.prepared(runtime)
+                record = self.answered(runtime, prepared, rows + [typed[runtime]], 0, name=runtime + "-open-question")
+                self.assertEqual(self.proof(runtime, record, "fresh")["id"], prepared["reportId"][2:])
+
+    def test_the_walk_takes_only_a_submitted_answer(self):
+        """answer_past_input itself refuses an answer the host resolved after the idle wait (afkTimeoutMs) and one
+        whose permission decision is not the user's, as it refuses a later close of them."""
+        prepared = self.prepared("claude")
+        cases = {"submitted": (lambda row: None, True),
+                 "resolved after the idle wait": (lambda row: row["toolUseResult"].update(afkTimeoutMs=60000), False),
+                 "a non-user permission decision": (lambda row: row.update(permissionDecision={
+                     "decision": "accept", "source": "config"}), False),
+                 "no permission decision": (lambda row: row.pop("permissionDecision"), False)}
+        for name, (change, taken) in cases.items():
+            for later in ([], [TYPED_MID_TURN]):
+                with self.subTest(case=name, later=bool(later)):
+                    rows = self.rows("claude", prepared, "answered")
+                    change(rows[4])
+                    record = self.record_of("walk-{}-{}".format(name.replace(" ", "-"), len(later)), rows + later)
+                    found = ddl_gate.answer_past_input("claude", record)
+                    if taken:
+                        self.assertEqual(found, (prepared["nativeRequest"], option_label(prepared), None))
+                    else:
+                        self.assertIsNone(found)
+
+    def test_a_queued_report_asked_alone_keeps_the_latest_human_input(self):
+        """A queued report asked alone, not in a batch, keeps the strict rule however later input arrives: a message
+        typed mid-turn (the close reads past it, the proof refuses), a typed prompt (the close stops there), and an
+        epoch that moved after its answer."""
+        for name, later, text in (("a message typed mid-turn", TYPED_MID_TURN, TYPED_MID_TURN["attachment"]["prompt"]),
+                                  ("a typed prompt", TYPED_LATER, "Next, please.")):
+            with self.subTest(case=name):
+                prepared, session = self.prepared("claude", queue=True), "queued-" + name.replace(" ", "-")
+                self.assert_allowed(self.ask("claude", prepared, session))
+                record = self.answered("claude", prepared, [later], 0, name=session)
+                self.assert_allowed(self.prompt("claude", record, text, session))
+                self.assertIsNone(self.record(prepared))
+                lines = [(row["kind"], row.get("rule")) for row in events(self.root, session=session)]
+                self.assertEqual(lines, [("asked", None), ("answered", None), ("warn", "grant-proof"), ("prompt", None)]
+                                 if later is TYPED_MID_TURN else [("asked", None), ("prompt", None)])
+                with self.assertRaisesRegex(ValueError, "queued questions need it to be the latest"):
+                    self.proof("claude", record, "fresh")
+        for runtime in ("claude", "codex"):
+            with self.subTest(runtime=runtime, case="an epoch after the answer"):
+                prepared, session = self.prepared(runtime, queue=True), runtime + "-queued-moved"
+                record = self.answered(runtime, prepared, [], 0, name=session)
+                self.epoch(session).write_text(str(time.time() + 60))
+                with self.assertRaisesRegex(ValueError, "predates the latest user message"):
+                    self.proof(runtime, record, session)
+                self.assertEqual(self.proof(runtime, record, "fresh")["id"], prepared["reportId"][2:])
+        prepared = self.prepared("codex", queue=True)
+        with self.assertRaisesRegex(ValueError, "queued questions need it to be the latest"):
+            self.proof("codex", self.answered("codex", prepared, [codex_message("Next, please.")], 0), "fresh")
+
+    def test_a_plain_report_and_a_batch_keep_the_latest_human_input(self):
+        plain = self.prepare_report("claude", cwd=self.cwd)
+        with self.assertRaisesRegex(ValueError, "carries no grant"):
+            self.proof("claude", self.answered("claude", plain, [TYPED_MID_TURN], name="plain"), "fresh")
+        # A batch of queued questions: each answer is proved from the batch's own result, never past later input.
+        first, second = (self.prepared("claude", queue=True) for _ in range(2))
+        request = {"questions": first["nativeRequest"]["questions"] + second["nativeRequest"]["questions"]}
+        answers = {first["question"]: option_label(first), second["question"]: option_label(second)}
+        rows = self.rows("claude", first, "asked")
+        rows[3]["message"]["content"][0]["input"] = request
+        batch = rows + [user([{"type": "tool_result", "tool_use_id": "report-question", "content": "answered"}],
+                             toolUseResult={"questions": [], "answers": answers, "annotations": {}}, **DIALOG)]
+        ident = tuple(first["reportId"].split("-"))
+        with mock.patch.dict(os.environ, {"DDL_GATE_STATE_DIR": self.state, "DDL_GATE_GRANT_DIR": self.grants}):
+            payload_of = {"session_id": "fresh", "transcript_path": self.record_of("batch", batch)}
+            self.assertEqual(ddl_gate.approved_report("claude", payload_of, ident)["id"], ident[1])
+            payload_of["transcript_path"] = self.record_of("batch-typed", batch + [TYPED_MID_TURN])
+            with self.assertRaisesRegex(ValueError, "no submitted native answer"):
+                ddl_gate.approved_report("claude", payload_of, ident)
+            self.assertIsNone(ddl_gate.answer_past_input("claude", payload_of["transcript_path"]))
 
 
 class GrantStoreTest(GrantFlowTest):
@@ -7420,11 +7838,24 @@ class CommitHooksReportTest(GrantFlowTest):
         self.write_hook("pre-commit.sample")  # a sample is no hook
         self.given = grant(commands=["commit", "test"])
 
-    def write_hook(self, name):
-        path = self.hooks / name
+    def write_hook(self, name, hooks=None):
+        path = (hooks or self.hooks) / name
         path.write_text("#!/bin/sh\n")
         path.chmod(0o755)
         return path
+
+    def second(self, name=".second.git", ignored=True):
+        """A second Git directory in the root as commit_allow accepts one (its work tree the root, ignored by the main
+        repository); its hooks directory."""
+        for args in (["init", "-q", "-b", "main"], ["config", "core.worktree", str(self.root)]):
+            subprocess.run(["git", "-C", str(self.root), "--git-dir=" + name, "--work-tree=.", *args], check=True,
+                           capture_output=True, env=self.git_env)
+        if ignored:
+            with open(str(self.root / ".gitignore"), "a", encoding="utf-8") as fh:
+                fh.write(name + "\n")
+        hooks = self.root / name / "hooks"
+        hooks.mkdir(exist_ok=True)
+        return hooks
 
     def stored(self, out):
         return json.loads((pathlib.Path(out["report"]).parent / "report.json").read_text(encoding="utf-8"))
@@ -7462,6 +7893,99 @@ class CommitHooksReportTest(GrantFlowTest):
                     self.load(changed)
                 self.assert_reason(self.ask(runtime, changed, session="unhooked-" + runtime),
                                    ddl_gate.NOT_PREPARED.format(changed["reportId"]))
+
+    def test_a_second_git_directorys_commit_hook_is_named_in_the_plan(self):
+        self.write_hook("post-commit", self.second())
+        part = {"ja": "commit（.second.git）は hook があるため Git の確認、",
+                "en": "commit in .second.git goes to a Git review (commit hooks); "}
+        note = {"ja": "第二の git ディレクトリ .second.git にはコミットの `hook` があるため、そこへの許諾の内のコミットは通らず、"
+                      "Git の確認に回る。",
+                "en": "The second git directory .second.git runs a commit hook, so a commit inside this grant there is not "
+                      "allowed and goes to a Git review."}
+        for runtime, language in (("claude", "ja"), ("codex", "en")):
+            with self.subTest(runtime=runtime):
+                out = self.prepared(runtime, language=language, grant=self.given)
+                record = self.stored(out)
+                self.assertNotIn("commitHooks", record)  # the main repository runs none
+                self.assertEqual(record["secondHooks"], [".second.git"])
+                self.assertEqual(out["question"].split("\n")[5],
+                                 self.LINE[language].format(part[language], self.given["expires"][:10]))
+                text = pathlib.Path(out["report"]).read_text(encoding="utf-8")
+                block = ddl_gate.grant_block(language, self.given)
+                self.assertEqual(text, out["question"] + "\n\n" + block + "\n\n" + note[language] + "\n\n" + self.DETAIL)
+                self.assertEqual(self.load(out), record)
+                self.assert_allowed(self.ask(runtime, out, session="second-" + runtime))
+                # The ID binds the mark: dropped or changed in report.json, the report no longer loads.
+                for name, change in (("dropped", lambda stored: stored.pop("secondHooks")),
+                                     ("renamed", lambda stored: stored.update(secondHooks=[".other.git"]))):
+                    changed = self.prepared(runtime, language=language, grant=self.given)
+                    stored = self.stored(changed)
+                    change(stored)
+                    (pathlib.Path(changed["report"]).parent / "report.json").write_text(json.dumps(stored),
+                                                                                       encoding="utf-8")
+                    with self.assertRaises(ValueError):
+                        self.load(changed)
+                    self.assert_reason(self.ask(runtime, changed, session="{}-{}".format(name, runtime)),
+                                       ddl_gate.NOT_PREPARED.format(changed["reportId"]))
+        # With the main repository's hook too: its part and note first; two second directories, sorted.
+        self.write_hook("post-commit")
+        self.write_hook("pre-commit", self.second(".notes.git"))
+        for runtime, language in (("claude", "ja"), ("codex", "en")):
+            with self.subTest(runtime=runtime, both=True):
+                out = self.prepared(runtime, language=language, grant=self.given)
+                record = self.stored(out)
+                self.assertEqual((record["commitHooks"], record["secondHooks"]), (True, [".notes.git", ".second.git"]))
+                both = {"ja": "commit は hook があるため Git の確認、commit（.notes.git、.second.git）は hook があるため Git の確認、",
+                        "en": "commit goes to a Git review (commit hooks); commit in .notes.git, .second.git goes to a Git "
+                              "review (commit hooks); "}[language]
+                self.assertEqual(out["question"].split("\n")[5],
+                                 self.LINE[language].format(both, self.given["expires"][:10]))
+                names = {"ja": ".notes.git、.second.git", "en": ".notes.git, .second.git"}[language]
+                notes = ddl_gate.COMMIT_HOOKS_NOTE[language] + "\n\n" + note[language].replace(".second.git", names)
+                text = pathlib.Path(out["report"]).read_text(encoding="utf-8")
+                block = ddl_gate.grant_block(language, self.given)
+                self.assertEqual(text, out["question"] + "\n\n" + block + "\n\n" + notes + "\n\n" + self.DETAIL)
+                self.assertEqual(self.load(out), record)
+
+    def test_a_second_git_directory_without_a_hook_or_not_accepted_adds_nothing(self):
+        hooks = self.second()
+        self.write_hook("pre-commit.sample", hooks)
+        cases = [("only a sample hook", self.given, None, False),
+                 ("a hook, no commit in the grant", grant(), None, True),
+                 ("not ignored by the main repository", self.given, lambda: (self.root / ".gitignore").write_text("\n"),
+                  True),
+                 ("bare", self.given, lambda: self.git_config("core.bare", "true"), True),
+                 ("its work tree elsewhere", self.given, lambda: self.git_config("core.worktree", str(self.root / "tools")),
+                  True),
+                 ("the main repository's hook only", self.given, lambda: self.write_hook("post-commit"), False)]
+        for description, given, change, hooked in cases:
+            with self.subTest(case=description):
+                if hooked:
+                    self.write_hook("post-commit", hooks)
+                elif (hooks / "post-commit").exists():
+                    (hooks / "post-commit").unlink()
+                if change:
+                    change()
+                out = self.prepared("claude", grant=given)
+                record = self.stored(out)
+                self.assertNotIn("secondHooks", record)
+                self.assertEqual("commitHooks" in record, description == "the main repository's hook only")
+                text = pathlib.Path(out["report"]).read_text(encoding="utf-8")
+                self.assertNotIn("第二の git ディレクトリ", text)
+                self.assertNotIn("commit（", out["question"])
+                self.assertEqual(self.load(out), record)
+                (self.root / ".gitignore").write_text(".second.git\n")
+                self.git_config("core.bare", "false")
+                self.git_config("core.worktree", str(self.root))
+        # A Git directory below the root's direct children is not looked at.
+        (self.root / "tools").mkdir(exist_ok=True)
+        deep = self.second("tools/.deep.git")
+        self.write_hook("post-commit", deep)
+        self.assertNotIn("secondHooks", self.stored(self.prepared("claude", grant=self.given)))
+
+    def git_config(self, key, value, name=".second.git"):
+        subprocess.run(["git", "--git-dir=" + str(self.root / name), "config", key, value], check=True,
+                       capture_output=True, env=self.git_env)
 
     def test_no_hook_or_no_commit_adds_nothing(self):
         hook = self.hooks / "post-commit"

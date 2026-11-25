@@ -13,9 +13,9 @@ Read before a STOP or design.md human gate, with Approval; names the choice tool
 | Receipt | Async `accepted: true` is a receipt, not an answer. |
 | Timeout | A host that clears its question at turn completion cannot collect approval (`interface unavailable`). |
 | Mutating tools | `apply_patch`, writing shell commands, starting, messaging or resuming an agent (MCP: entry's Pending STOP). |
-| Human input boundary | The `UserMessage` reply is the boundary recognized by `UserPromptSubmit`. |
+| Human input boundary | An `item_completed` `UserMessage`: the reply, recognized by `UserPromptSubmit`, or a mid-turn message (Observed). |
 | Prepare | `python3 "$HOME/.codex/hooks/ddl_gate.py" prepare-report --runtime codex <<'EOF'`, input JSON (Formats), `EOF`; or project copy (start: Adapter paths). |
-| Hook | `.codex/hooks/ddl_gate.py` in `.codex/hooks.json` (`--runtime codex`; also PermissionRequest and PostToolUse); while pending permits `view_image`, `list_agents`, both choice tools above, input-free polling (`wait`, `wait_agent`, `write_stdin` with empty `chars`, no `terminate`), and `shell`, `exec_command`, `local_shell`, `shell_command` or `Bash` for preparation and literal reads (Approval Implementation). |
+| Hook | `.codex/hooks/ddl_gate.py` in `.codex/hooks.json` (`--runtime codex`; also PermissionRequest); while pending permits `view_image`, `list_agents`, both choice tools above, input-free polling (`wait`, `wait_agent`, `write_stdin` with empty `chars`, no `terminate`), and `shell`, `exec_command`, `local_shell`, `shell_command` or `Bash` for preparation and literal reads (Approval Implementation). |
 
 ## Observed
 
@@ -24,8 +24,8 @@ Read before a STOP or design.md human gate, with Approval; names the choice tool
 | `codex exec`: same-turn `apply_patch` and `echo hi > file` denied with a visible reason; `git status --short` passed | codex-cli 0.163.0 | 2026-10-18 |
 | Default's async question and receipt were real; its selector cleared at turn completion before any answer | Codex CLI 0.166.0 | 2026-11-01 |
 | GUI click replies arrived after turn completion as `send_user_message_question_reply` (question ID, question, answer) and a `UserMessage` boundary | Codex GUI (version unrecorded) | 2026-11-01 |
-| Async reached `PreToolUse`: an ID-less question was denied; the exact prepared question passed. The user saw all five lines; the reply's `question` equaled the prepared `title`, including LF | Codex Desktop 0.167.0-alpha.3.2 | 2026-11-07 |
-| `apply_patch` and `echo hi > file` denied under the pending report, then passed after the native answer | Codex Desktop 0.167.0-alpha.3.2 | 2026-11-07 |
+| Async reached `PreToolUse`: an ID-less question was denied; the exact prepared question passed. The user saw all five lines; the reply's `question` equaled the prepared `title`, including LF; `apply_patch` and `echo hi > file` were denied under the pending report, then passed after the native answer | Codex Desktop 0.167.0-alpha.3.2 | 2026-11-07 |
+| Local rollouts from 2026-11-01 held mid-turn messages as further `UserMessage`s of their turn: 86 plain, 43 question replies, 17 wrapping human input (`<realtime_delegation>`, a voice transcript; `<in-app-browser-context>`, then the request) | codex-cli 0.166.0 to 0.171.0 | 2026-11-25 |
 
 ## Coverage
 

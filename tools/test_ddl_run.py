@@ -28,6 +28,7 @@ import contextlib
 import importlib.util
 import inspect
 import io
+import itertools
 import json
 import os
 import pathlib
@@ -2616,11 +2617,15 @@ class OutsideGrantTest(RunFixture):
     NOT_COVERED = [("tools/*", "tools/**", "tools/sub/x.py"), ("*", "**", "a/b.txt"),
                    ("docs/?", "docs/*", "docs/readme.md"), ("tools/*/x.py", "tools/**/x.py", "tools/a/b/x.py"),
                    ("src/a?", "src/a*", "src/abc"), ("tools/*.py", "tools/**", "tools/a/b.py"),
-                   ("a?", "a*", "a"), ("?", "*", "ab"), ("tools/**", "Tools/a.py", "Tools/a.py")]
+                   ("a?", "a*", "a"), ("?", "*", "ab"), ("tools/**", "Tools/a.py", "Tools/a.py"),
+                   ("a", "a/**", "a/b")]
+    # The exact decision also holds what a segment-by-segment reading missed: `*/**` and `**/*` name every path, and
+    # the gate's `**` takes zero segments, so `**/b` names `b` and `a/**` names `a`.
     COVERED = [("tools/**", "tools/**/x.py"), ("*.py", "test_*.py"), ("a*", "a*"), ("a*", "a?"), ("**", "**"),
                ("**", "a/**/b?/*.c"), ("tools/**", "tools/test_*.py"), ("tools/*.py", "tools/test_*.py"),
                ("tools/**/x.py", "tools/**/x.py"), ("docs/**", "docs/a/*.md"), ("a?c", "a?c"), ("*", "?"),
-               ("**/x.py", "tools/**/x.py"), ("a/**", "a/b/**"), ("*b*", "a*b?c")]
+               ("**/x.py", "tools/**/x.py"), ("a/**", "a/b/**"), ("*b*", "a*b?c"),
+               ("*/**", "**"), ("**/*", "**"), ("**", "*/**"), ("a*/**", "a*/b"), ("**/b", "b"), ("a/**", "a")]
 
     def test_a_grant_glob_covers_an_owner_glob_only_when_it_matches_every_path_the_owner_names(self):
         for grant, owner, path in self.NOT_COVERED:
@@ -2675,6 +2680,102 @@ class OutsideGrantTest(RunFixture):
             {"id": "I3", "kind": "write", "files": ["tools/x.py"]}])
         self.assertEqual(started["outside"], [{"item": "I1", "files": ["tools/**", "tools/sub/x.py"]},
                                               {"item": "I2", "files": ["Tools/a.py"]}])  # case for case, as the gate
+
+    def test_each_outside_answer_carries_a_path_the_owner_names_and_the_grant_does_not(self):
+        for grant, owner, _ in self.NOT_COVERED:
+            with self.subTest(grant=grant, owner=owner):
+                covered, witness = ddl_run.glob_witness(grant, owner)
+                self.assertFalse(covered)
+                self.assertTrue(ddl_gate_core.glob_matches(owner, witness.split("/")), witness)
+                self.assertFalse(ddl_gate_core.glob_matches(grant, witness.split("/")), witness)
+        for grant, owner in self.COVERED:
+            self.assertEqual(ddl_run.glob_witness(grant, owner), (True, None), (grant, owner))
+        # The shortest such path, every other character spelled by one neither glob names.
+        self.assertEqual(ddl_run.glob_witness("*", "**"), (False, "x/x"))
+        self.assertEqual(ddl_run.glob_witness("x*", "*"), (False, "y"))
+        self.assertEqual(ddl_run.glob_witness("tools/*", "tools/**"), (False, "tools"))  # `**` takes zero segments
+        # A resolved name is literal: its `*` is a character, which a grant's `?` takes.
+        self.assertTrue(ddl_run.glob_covers("a?/**", [("a*", True), ("**", False)]))
+        self.assertEqual(ddl_run.glob_witness("a?/**", "a*/**"), (False, "a"))
+        with mock.patch.object(ddl_run, "COVER_STATES", 1):  # past the cap: not covered, the safe side, no witness
+            self.assertEqual(ddl_run.glob_witness("**", "**"), (False, None))
+
+    def test_the_decision_agrees_with_every_path_up_to_six_characters(self):
+        """Exhaustive: globs of one to three segments over `**`, `*`, `?`, `.` and two letters against every valid path
+        of up to six characters over those letters, `.` and `x` (none of the globs', standing for every other
+        character). A covered pair has no path the owner names and the grant does not; an outside pair's witness is
+        one, no longer than the shortest found here, and one of six characters or fewer is found here."""
+        tokens, middle = "*?.ab", ["**", "*", "?", ".", "a", "b", "a*", "*a", "?b", "b?", ".*", "*."]
+        globs = list(dict.fromkeys([a + b for a in tokens for b in ("",) + tuple(tokens)]
+                                   + ["/".join(p) for p in itertools.product(middle, repeat=2)]
+                                   + ["/".join(p) for p in itertools.product(("**", "*", "?", "a"), repeat=3)]))
+        paths = [path for n in range(1, 7) for path in map("".join, itertools.product("ab.x/", repeat=n))
+                 if not path.startswith("/") and not path.endswith("/") and "//" not in path]  # shortest first
+        text, where = "\n".join("/" + path for path in paths), {"/" + path: i for i, path in enumerate(paths)}
+
+        def named(glob):  # the paths the glob names, as bits: glob_matches as one expression over "/" + path
+            expression = re.compile("^" + "".join("(?:/[^/\n]*)*" if part == "**" else "/" + "".join(
+                "[^/\n]*" if c == "*" else "[^/\n]" if c == "?" else re.escape(c) for c in part)
+                for part in glob.split("/")) + "$", re.M)
+            return sum(1 << where[found.group(0)] for found in expression.finditer(text))
+
+        bits = {glob: named(glob) for glob in globs}
+        for glob in globs:  # the expression is the gate's matcher
+            for i in range(0, len(paths), 53):
+                self.assertEqual(bool(bits[glob] >> i & 1), ddl_gate_core.glob_matches(glob, paths[i].split("/")),
+                                 (glob, paths[i]))
+        unsound, failed, counts = [], [], [0, 0]
+        for owner in globs:
+            for grant in globs:
+                covered, witness = ddl_run.glob_witness(grant, owner)
+                missing = bits[owner] & ~bits[grant]
+                counts[covered] += 1
+                if covered:
+                    if missing:
+                        unsound.append((grant, owner, paths[(missing & -missing).bit_length() - 1]))
+                    continue
+                parts = (witness or "").split("/")
+                shortest = len(paths[(missing & -missing).bit_length() - 1]) if missing else 6
+                if witness is None or not ddl_gate_core.glob_matches(owner, parts) or \
+                        ddl_gate_core.glob_matches(grant, parts) or (len(witness) > shortest if missing else
+                                                                     len(witness) <= shortest):
+                    failed.append((grant, owner, witness))
+        self.assertEqual((unsound[:5], failed[:5]), ([], []))
+        self.assertEqual(sum(counts), len(globs) ** 2)
+        self.assertGreater(min(counts), 1000)  # both answers occur often
+
+    def test_an_owner_prefix_is_resolved_as_the_gate_resolves_an_edit(self):
+        (self.project / "real").mkdir()
+        os.symlink("real", str(self.project / "link"))  # a directory inside the root
+        os.symlink(str(self.tmp / "elsewhere"), str(self.project / "ext"))  # one outside it
+        self.grant([], commands=(), handover=(), paths=("link/**", "tools/**"))
+        items = [{"id": "I1", "kind": "write", "files": ["link/*.py", "link/sub/a.txt", "tools/**"]},
+                 {"id": "I2", "kind": "write", "files": ["ext/**", "ext/a.py"]},
+                 {"id": "I3", "kind": "write", "files": [".claude/**", "CLAUDE.md", ".github/workflows/*.yml",
+                                                         "a/.ddl/*"]}]
+        # An edit of link/x.py lands at real/x.py, outside link/**: listed, as the plan wrote it. One below ext/ or in
+        # a protected place is the host's, which no grant decides: not listed.
+        self.assertEqual(self.run_started(items)["outside"], [{"item": "I1", "files": ["link/*.py", "link/sub/a.txt"]}])
+        with mock.patch.dict(os.environ, self.env, clear=True):  # the gate itself: denied, then the host's
+            project = ddl_gate_core.project_decision(str(self.project))
+            place = ddl_gate_core.Place(project, ddl_gate_core.project_root(project))
+            grants, notes = ddl_gate_core.active_grants(project), ({}, {}, {})
+            for path, note in zip(("link/x.py", "ext/a.py", "tools/x.py"), notes):
+                ddl_gate_core.edit_grant([path], False, str(self.project), place, grants, note)
+        self.assertEqual([note.get("rule") or ("allowed" in note) for note in notes], ["grant-paths", False, True])
+        # An error in resolving compares each glob as written: link/ under link/**, the rest under no grant path.
+        with mock.patch.object(ddl_gate_core.Place, "locate", side_effect=OSError("unreadable")):
+            self.assertEqual(self.run_started(items)["outside"],
+                             [{"item": item["id"], "files": item["files"]} for item in items[1:]])
+
+    def test_an_owner_prefix_that_resolves_into_a_grant_path_is_covered(self):
+        (self.project / "real").mkdir()
+        os.symlink("real", str(self.project / "link"))
+        os.symlink(".", str(self.project / "here"))  # the root itself: the glob below it compared alone
+        self.grant([], commands=(), handover=(), paths=("real/**", "*.txt"))
+        started = self.run_started([{"id": "I1", "kind": "write",
+                                     "files": ["link/*.py", "link/sub/**", "here/*.txt", "here/x.py", "Real/a.py"]}])
+        self.assertEqual(started["outside"], [{"item": "I1", "files": ["here/x.py", "Real/a.py"]}])  # case for case
 
     def test_no_key_when_every_owner_is_covered_or_no_grant_is_active(self):
         self.grant([], commands=(), handover=(), paths=("tools/**", "design.md"))
@@ -3233,9 +3334,10 @@ class KindsTest(RunFixture):
         path.parent.mkdir(exist_ok=True)
         path.write_text("\n".join(lines[:100000]) + "\n")
         with mock.patch.dict(os.environ, self.env, clear=True):
-            start = time.monotonic()
+            # This process's own CPU time, not wall time: suites running beside it must not count.
+            start = time.process_time()
             found = ddl_run.promotion(self.root, "en")
-            took = time.monotonic() - start
+            took = time.process_time() - start
         self.assertEqual(found["line"], None)  # the records are gone: no kind is known
         self.assertLess(took, 3.0)  # one pass: well under a second on a developer machine
 

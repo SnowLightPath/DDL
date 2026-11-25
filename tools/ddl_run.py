@@ -35,13 +35,17 @@ Usage (from inside the project; the project and its `.ddl/` ledger come from the
 compute, or close: the lead's records and push, which takes no slot and which the runner never starts. An item's `files` are owner globs below the
 project root: a leading `./` is dropped, and an empty glob or segment, an absolute path, `..`, a trailing slash or
 a bare existing directory (write `<dir>/**`) is refused, naming the entry. When the project has an active grant,
-the output gains `outside: [{item, files}]` (item order; absent when none is) with each item's owner globs that no
-active grant's path glob covers: the gate would deny those edits mid-Run. A grant glob covers an owner glob when it
-matches every path the owner may name, both read as the gate reads a grant's glob: segment by segment, a grant `**`
-takes any number of owner segments (an owner `**` among them), an owner `**` lies only under a grant `**`, and any
-other grant segment takes one owner segment, its literal the same literal, its `?` one literal or a `?`, its `*`
-any run of literals, `?` and `*` (`tools/test_*.py` lies under `tools/*.py`, `tools/**` under neither `tools/*` nor
-`tools/*.py`). The Run starts all the same; the lead asks for a revised plan. `run-item` sets one item's status (under a
+the output gains `outside: [{item, files}]` (item order; absent when none is) with each item's owner globs, as
+written, that no active grant's path glob covers: the gate would deny those edits mid-Run. An owner glob is
+resolved as the gate resolves an edit's target: its literal prefix (the leading segments with no `*` or `?`) goes
+through realpath against the project root and the gate's `Place.locate`, as `edit_grant` does (a prefix that does
+not exist stays itself); a glob whose prefix resolves outside the root or to a protected place is not listed (the
+gate leaves those edits to the host), and an error in resolving leaves the glob as written. A grant glob covers it
+when every path it names, the grant names, both read as the gate reads a glob (`*` and `?` within one segment,
+`**` alone zero or more whole segments; a path is one or more non-empty segments). That is decided exactly, by a
+search over both globs' automata; a search that passes its cap of states lists the glob (`*/**` covers `**`,
+`tools/*.py` covers `tools/test_*.py`, `tools/*` does not cover `tools/**`). The Run starts all the same; the lead
+asks for a revised plan. `run-item` sets one item's status (under a
 lock on the Run's directory) and prints {run, item, status}, and writes an `item` event (run, item, status, itemKind).
 `report` prints four lines: questions (with `open <n>` for those asked and never answered, counted in no other
 bucket; for one ID only its latest ask, open until an answer to that ID; then by kind: plan (a report with a
@@ -677,55 +681,185 @@ def owner_glob(item_id, glob, root):
     return glob
 
 
-def segment_covers(grant, owner):
-    """True when the grant segment matches every name the owner segment may match, both read as segment_glob reads
-    a segment (`*` and `?` within it, every other character literal). The grant's characters take the owner's: a
-    literal the same literal, `?` one literal or an owner `?`, `*` any run of them (literals, `?`, `*`); so an owner
-    `*` is taken only by a grant `*`, an owner `?` only by a grant `?` or `*`. Sound, not complete."""
-    reach = [True] + [False] * len(owner)  # reach[j]: the grant's characters so far take owner[:j]
-    for char in grant:
-        if char == "*":
-            for j in range(1, len(owner) + 1):
-                reach[j] = reach[j] or reach[j - 1]
-        else:
-            reach = [False] + [reach[j - 1] and (owner[j - 1] != "*" if char == "?" else owner[j - 1] == char)
-                               for j in range(1, len(owner) + 1)]
-    return reach[-1]
+COVER_STATES = 20000  # product states one comparison explores; past them the owner glob counts as not covered
+SEP, OTHER = "/", ""  # the symbols beside the globs' literal characters: the separator, every other character
+SPARE = ("xyzq", "abcdefghijklmnopqrstuvwxyz0123456789", range(0xc0, 0xd800), range(0xe000, 0x110000))
+
+
+def glob_segments(glob, literal=False):
+    """A path glob as [(segment, literal)]: a written segment reads `*` and `?` as segment_glob reads them and `**`
+    alone as glob_matches does; a literal one (a resolved name) reads every character as itself."""
+    return [(part, literal) for part in glob.split("/")]
+
+
+def glob_automaton(segments):
+    """The glob as an NFA reading "/" + path one symbol at a time: (moves, accept, closure). moves[q] holds
+    (wants, r), wants a character, SEP, or None for any symbol but SEP; closure[q] is q with the states its empty
+    moves reach. A segment reads SEP, then its characters (`*` a run of non-SEP, `?` one); `**` alone reads SEP and
+    a run of non-SEP any number of times, so it takes zero or more whole segments, as glob_matches does."""
+    moves, empty = [[]], [[]]
+
+    def state():
+        moves.append([])
+        empty.append([])
+        return len(moves) - 1
+
+    here = 0
+    for part, literal in segments:
+        if part == "**" and not literal:
+            loop, inner = state(), state()
+            empty[here].append(loop)
+            moves[loop].append((SEP, inner))
+            moves[inner].append((None, inner))
+            empty[inner].append(loop)
+            here = loop
+            continue
+        there = state()
+        moves[here].append((SEP, there))
+        for char in part:
+            here, there = there, state()
+            if not literal and char == "*":
+                empty[here].append(there)
+                moves[there].append((None, there))
+            else:
+                moves[here].append((None if not literal and char == "?" else char, there))
+        here = there
+    closure = []
+    for first in range(len(moves)):
+        seen, stack = {first}, [first]
+        while stack:
+            for nxt in empty[stack.pop()]:
+                if nxt not in seen:
+                    seen.add(nxt)
+                    stack.append(nxt)
+        closure.append(frozenset(seen))
+    return moves, here, closure
+
+
+def spare_character(chars):
+    """A character outside `chars` (and no `/`, `*` or `?`): OTHER as a witness spells it."""
+    for block in SPARE:
+        for char in block:
+            char = char if isinstance(char, str) else chr(char)
+            if char not in chars:
+                return char
+    raise ValueError("no character is spare")
+
+
+def glob_witness(grant, owner):
+    """(covered, witness): covered when the grant glob names every path the owner glob names, both read as
+    glob_matches reads a glob, a path being one or more non-empty segments. `owner` is a glob or glob_segments'
+    list. Exact: the alphabet is both globs' literal characters, SEP, and OTHER for every other character (neither
+    glob tells those apart); a breadth-first search runs over the owner's NFA, a check that the owner reads a valid
+    path (no empty segment, no leading or trailing `/`) and the subset construction of the grant's NFA, for a state
+    where the owner accepts and no grant state does. Not covered: the witness is the shortest such path, OTHER
+    spelled by spare_character; None when COVER_STATES states were explored first (not covered, the safe side)."""
+    import collections
+    owner = glob_segments(owner) if isinstance(owner, str) else owner
+    owner_moves, owner_accept, owner_closure = glob_automaton(owner)
+    grant_moves, grant_accept, grant_closure = glob_automaton(glob_segments(grant))
+    chars = {char for part, literal in owner + glob_segments(grant) for char in part if literal or char not in "*?"}
+    symbols, steps = [SEP, OTHER] + sorted(chars), {}
+
+    def takes(wants, symbol):
+        return symbol != SEP if wants is None else wants == symbol
+
+    def grant_step(subset, symbol):
+        if (subset, symbol) not in steps:
+            steps[subset, symbol] = frozenset(after for q in subset for wants, r in grant_moves[q]
+                                              if takes(wants, symbol) for after in grant_closure[r])
+        return steps[subset, symbol]
+
+    # A valid path read as "/" + path: 0 before the first SEP, 1 after a SEP (a character must follow), 2 in a segment.
+    valid = {(0, True): 1, (1, False): 2, (2, False): 2, (2, True): 1}
+    came = {(q, 0, grant_closure[0]): None for q in sorted(owner_closure[0])}
+    queue = collections.deque(came)
+    while queue:
+        node = queue.popleft()
+        q, where, subset = node
+        if q == owner_accept and where == 2 and grant_accept not in subset:
+            path = []
+            while came[node] is not None:
+                node, symbol = came[node]
+                path.append(symbol)
+            spare = spare_character(chars)
+            return False, "".join(spare if symbol == OTHER else symbol for symbol in reversed(path))[1:]
+        for symbol in symbols:
+            ahead = valid.get((where, symbol == SEP))
+            targets = [r for wants, r in owner_moves[q] if takes(wants, symbol)] if ahead else []
+            if not targets:
+                continue
+            following = grant_step(subset, symbol)
+            for after in sorted({after for r in targets for after in owner_closure[r]}):
+                if (after, ahead, following) not in came:
+                    if len(came) >= COVER_STATES:
+                        return False, None
+                    came[after, ahead, following] = (node, symbol)
+                    queue.append((after, ahead, following))
+    return True, None
 
 
 def glob_covers(grant, owner):
-    """True when the grant path glob matches every path the owner glob may name, both read as glob_matches reads a
-    grant's glob (`**` a whole segment for any number of segments). Segment by segment: a grant `**` takes any number
-    of owner segments, an owner `**` among them; an owner `**` lies only under a grant `**`; any other grant segment
-    takes one owner segment it covers (segment_covers). Sound, not complete: `tools/test_*.py` lies under `tools/**`
-    and `tools/*.py`, `tools/**/x.py` under `tools/**`; `tools/**` under neither `tools/*` nor `tools/*.py`."""
-    owners = owner.split("/")
-    reach = [True] + [False] * len(owners)  # reach[j]: the grant's segments so far take owners[:j]
-    for part in grant.split("/"):
-        if part == "**":
-            for j in range(1, len(owners) + 1):
-                reach[j] = reach[j] or reach[j - 1]
-        else:
-            reach = [False] + [reach[j - 1] and owners[j - 1] != "**" and segment_covers(part, owners[j - 1])
-                               for j in range(1, len(owners) + 1)]
-    return reach[-1]
+    """True when the grant glob names every path the owner glob (or glob_segments' list) names (glob_witness)."""
+    return glob_witness(grant, owner)[0]
+
+
+def owner_compared(owner, place):
+    """The owner glob as the gate compares an edit it names, as glob_segments' list, or None when the gate leaves
+    those edits to the host. Its literal prefix (the leading segments with no `*` or `?`) is resolved as edit_grant
+    resolves a target, `place.locate(realpath(root/prefix))` (a prefix that does not exist stays itself), and
+    stands as the resolved names; None when it resolves outside the root or to a protected place: the target, or
+    for a prefix with segments after it every path below it. Any error in resolving leaves the glob as written."""
+    segments = owner.split("/")
+    count = next((i for i, part in enumerate(segments) if "*" in part or "?" in part), len(segments))
+    if not count or place is None:
+        return glob_segments(owner)
+    try:
+        parts, compared = place.locate(os.path.realpath(os.path.join(place.root, *segments[:count])))
+        if parts is None:
+            return None
+        rest = segments[count:]
+        # Below a directory prefix, an empty name stands for any name: only the rules that hold for all of them hit.
+        if (not rest and not parts) or place.protected(compared + [""] if rest else compared):
+            return None
+        return [(part, True) for part in parts] + [(part, False) for part in rest]
+    except Exception:  # noqa: BLE001 - the hint is only advice: compare the glob as written
+        return glob_segments(owner)
 
 
 def outside_grants(items):
-    """[{item, files}] in item order of the owner globs no active grant of the working directory's project covers,
-    or [] when none is active or the grants cannot be read (the hint is only advice). During a Run the gate denies
-    an edit inside the root that no active grant's path covers: owners outside them would be denied mid-Run. An owner
-    glob is covered when one grant path glob matches every path it may name (glob_covers)."""
+    """[{item, files}] in item order of the owner globs, as written, no active grant of the working directory's
+    project covers, or [] when none is active or the grants cannot be read (the hint is only advice). During a Run
+    the gate denies an edit inside the root that no active grant's path covers: owners outside them would be
+    denied mid-Run. Each owner glob is first resolved as the gate resolves an edit (owner_compared), against the
+    project's place as grant_decision builds it, and is not listed when the gate leaves its edits to the host; it
+    is covered when one grant path glob names every path it names (glob_covers, exact); a comparison that fails
+    lists it."""
     try:
-        globs = [glob for record in gate.active_grants(gate.project_decision(os.getcwd()))
-                 for glob in record["grant"]["paths"]]
+        project = gate.project_decision(os.getcwd())
+        globs = [glob for record in gate.active_grants(project) for glob in record["grant"]["paths"]]
     except Exception:  # noqa: BLE001 - any failure leaves the Run as it would be without the hint
         return []
     if not globs:
         return []
+    try:
+        place = gate.Place(project, gate.project_root(project))
+    except Exception:  # noqa: BLE001 - no place: every glob compared as written
+        place = None
+
+    def covered(owner):
+        try:
+            return any(glob_covers(glob, owner) for glob in globs)
+        except Exception:  # noqa: BLE001 - a glob that cannot be compared is listed, the safe side
+            return False
+
     outside = []
     for item in items:
-        files = [owner for owner in item["files"] if not any(glob_covers(glob, owner) for glob in globs)]
+        files = []
+        for owner in item["files"]:
+            compared = owner_compared(owner, place)
+            if compared is not None and not covered(compared):
+                files.append(owner)
         if files:
             outside.append({"item": item["id"], "files": files})
     return outside
@@ -743,7 +877,8 @@ def run_slots(slots):
 
 def run_start(data, runtime=None):
     """`run-start`: write `.ddl/runs/<N-id>/run.json` for one approved plan's report and print {run, path,
-    outside?}: `outside` lists the owner globs no active grant covers (outside_grants), absent when there is none.
+    outside?}: `outside` lists the owner globs, as written, no active grant covers once resolved as the gate resolves an
+    edit (outside_grants), absent when there is none.
 
     The Run names the grant only when the store holds that grant's record, and keeps the plan's language,
     in which `report --run` prints. It is a record for people and reports. No hook reads it: an item's
